@@ -363,6 +363,26 @@ def create_backup(library: str | Path, backups_dir: Path, timestamp: str | None 
     return target
 
 
+def restore_metadata_backup(
+    library: str | Path,
+    backup_path: str | Path,
+    backups_dir: Path,
+    timestamp: str | None = None,
+) -> Path:
+    """Obnovi metadata.db ze zalohy a nejdriv ulozi aktualni stav jako nouzovou zalohu."""
+    source = Path(backup_path)
+    if not source.exists():
+        raise FileNotFoundError(source)
+
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    current_db = metadata_db_path(library)
+    safety_backup = backups_dir / f"metadata-before-restore-{stamp}.db"
+    shutil.copy2(current_db, safety_backup)
+    shutil.copy2(source, current_db)
+    return safety_backup
+
+
 def backup_matches_csv(matches_path: Path, backups_dir: Path, timestamp: str | None = None) -> Path | None:
     """Zkopiruje stary matches.csv pred rebuildem, aby slo vratit rucni upravy."""
     if not matches_path.exists():
@@ -720,6 +740,27 @@ def run_repair_links(args: argparse.Namespace) -> int:
     return 1 if counts["failed"] else 0
 
 
+def run_restore_backup(args: argparse.Namespace) -> int:
+    """Obnovi Calibre metadata.db z vybrane zalohy."""
+    library = Path(args.library)
+    sidecars = find_sqlite_sidecars(library)
+    if sidecars:
+        print("Databaze ma vedlejsi SQLite soubory. Zavri Calibre a zkus znovu:")
+        for sidecar in sidecars:
+            print(f"- {sidecar}")
+        return 1
+
+    try:
+        safety_backup = restore_metadata_backup(library, Path(args.backup), Path("backups"))
+    except Exception as exc:
+        print(f"Rollback selhal: {exc}")
+        return 1
+
+    print(f"Obnoveno z: {Path(args.backup)}")
+    print(f"Nouzova zaloha pred rollbackem: {safety_backup}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Doplni do Calibre komentaru odkazy na Databazi knih.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -747,6 +788,11 @@ def build_parser() -> argparse.ArgumentParser:
     repair_parser.add_argument("--sleep", type=float, default=1.0)
     repair_parser.add_argument("--overwrite", action="store_true")
     repair_parser.set_defaults(func=run_repair_links)
+
+    restore_parser = subparsers.add_parser("restore-backup", help="Obnovi metadata.db z vybrane zalohy.")
+    restore_parser.add_argument("--library", default=DEFAULT_LIBRARY)
+    restore_parser.add_argument("--backup", required=True)
+    restore_parser.set_defaults(func=run_restore_backup)
     return parser
 
 

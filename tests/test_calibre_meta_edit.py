@@ -239,6 +239,44 @@ class CsvAndFilesystemTests(unittest.TestCase):
             self.assertEqual(backup_path.read_bytes(), b"db")
             self.assertEqual(backup_path.name, "metadata-20260526-161500.db")
 
+    def test_restore_metadata_backup_makes_safety_backup_then_replaces_metadata_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp) / "library"
+            library.mkdir()
+            (library / "metadata.db").write_bytes(b"current db")
+            backups = Path(tmp) / "backups"
+            backups.mkdir()
+            selected_backup = backups / "metadata-20260529-120000.db"
+            selected_backup.write_bytes(b"old db")
+
+            safety_backup = cme.restore_metadata_backup(
+                library,
+                selected_backup,
+                backups,
+                timestamp="20260529-130000",
+            )
+
+            self.assertEqual(safety_backup, backups / "metadata-before-restore-20260529-130000.db")
+            self.assertEqual(safety_backup.read_bytes(), b"current db")
+            self.assertEqual((library / "metadata.db").read_bytes(), b"old db")
+
+    def test_run_restore_backup_refuses_when_sqlite_sidecar_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp) / "library"
+            library.mkdir()
+            (library / "metadata.db").write_bytes(b"current db")
+            (library / "metadata.db-wal").write_bytes(b"wal")
+            selected_backup = Path(tmp) / "metadata-20260529-120000.db"
+            selected_backup.write_bytes(b"old db")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = cme.run_restore_backup(SimpleNamespace(library=library, backup=selected_backup))
+
+            self.assertEqual(result, 1)
+            self.assertEqual((library / "metadata.db").read_bytes(), b"current db")
+            self.assertIn("Databaze ma vedlejsi SQLite soubory", output.getvalue())
+
     def test_backup_matches_csv_copies_old_matches_to_matches_backup_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             matches_path = Path(tmp) / "matches.csv"

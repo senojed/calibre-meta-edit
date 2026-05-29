@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.7`
+Aktualni verze: `0.0.8`
 
 Nejjednodussi pouziti:
 
@@ -20,12 +20,12 @@ V appce:
 
 - pri startu se samo nacte `matches.csv`
 - pri startu se zepta, jestli ma rovnou nacist nove knihy
-- pole `Knihovna` ukazuje, s jakou Calibre knihovnou appka pracuje
-- `Zmenit` vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
-- `Pouzit z Calibre` vezme aktualni knihovnu z Calibre configu
+- pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
+- `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
+- `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
-- `Rebuild CSV` - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
-- `Opravit stare odkazy` - docasne tlacitko, doplni `target="_blank"` ke starsim odkazum v komentarich
+- `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
+- `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
 - klik na hlavicku sloupce seradi tabulku
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
@@ -51,6 +51,13 @@ Kdyz pri zapisu neco selze, appka vypise `Failed zapisy` ve spodnim vystupu.
 1. zkopiruje stary `matches.csv` do `backups\matches\`
 2. vytvori novy `matches.csv`
 3. knihy, ktere uz maji v komentari odkaz na Databazi knih, znovu nehleda
+
+`Rollback` udela:
+
+1. zepta se na soubor zalohy, treba `backups\metadata-20260527-143012.db`
+2. pokusi se zavrit Calibre
+3. ulozi aktualni `metadata.db` jako nouzovou zalohu `metadata-before-restore-YYYYMMDD-HHMMSS.db`
+4. obnovi vybranou zalohu do Calibre knihovny
 
 ## 1. Otevri PowerShell
 

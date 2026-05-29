@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.7")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.7")
+        self.assertEqual(app.APP_VERSION, "0.0.8")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.8")
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
         calls = []
@@ -77,6 +77,7 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(app.button_colors("skip")["bg"], "#757575")
         self.assertEqual(app.button_colors("apply")["bg"], "#c62828")
         self.assertEqual(app.button_colors("rebuild")["bg"], "#c62828")
+        self.assertEqual(app.button_colors("rollback")["bg"], "#c62828")
 
     def test_toolbar_spacing_adds_large_gap_before_approve(self):
         spacing = app.toolbar_spacing()
@@ -85,10 +86,16 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(spacing["between_status"], 6)
         self.assertGreaterEqual(spacing["after_skip"], 18)
 
-    def test_primary_toolbar_order_saves_before_rebuild(self):
+    def test_primary_toolbar_order_keeps_csv_actions_up_top(self):
         self.assertEqual(
             app.primary_toolbar_order(),
-            ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV", "Rebuild CSV"),
+            ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV"),
+        )
+
+    def test_bottom_library_bar_order_contains_library_rebuild_and_rollback(self):
+        self.assertEqual(
+            app.bottom_library_bar_order(),
+            ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback"),
         )
 
     def test_url_bar_button_order_opens_after_use_link(self):
@@ -474,29 +481,55 @@ class AppModelTests(unittest.TestCase):
         self.assertTrue(args.overwrite)
         self.assertIn("Zaloha matches.csv:", output.getvalue())
 
-    def test_make_repair_links_action_quits_then_repairs(self):
-        args = app.make_script_args("D:\\Knihy")
+    def test_make_rollback_action_quits_then_restores_backup(self):
+        backup_path = Path("backups") / "metadata-20260529-120000.db"
         calls = []
 
         def quit_runner(allow_force):
             calls.append(("quit", allow_force))
             return 0
 
-        def repair_runner(received_args):
-            calls.append(("repair", received_args))
-            return 0
+        def restore_runner(library, received_backup_path):
+            calls.append(("restore", library, received_backup_path))
+            return Path("backups") / "metadata-before-restore-20260529-130000.db"
 
-        action = app.make_repair_links_action(
-            args=args,
+        action = app.make_rollback_action(
+            library="D:\\Knihy",
+            backup_path=backup_path,
             allow_force=True,
             quit_runner=quit_runner,
-            repair_runner=repair_runner,
+            restore_runner=restore_runner,
         )
 
-        result = action()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = action()
 
         self.assertEqual(result, 0)
-        self.assertEqual(calls, [("quit", True), ("repair", args)])
+        self.assertEqual(calls, [("quit", True), ("restore", "D:\\Knihy", backup_path)])
+        self.assertIn("Obnoveno z:", output.getvalue())
+        self.assertIn("Nouzova zaloha pred rollbackem:", output.getvalue())
+
+    def test_make_rollback_action_uses_backend_restore_by_default(self):
+        backup_path = Path("backups") / "metadata-20260529-120000.db"
+        calls = []
+        original_run_restore_backup = app.cme.run_restore_backup
+        try:
+            app.cme.run_restore_backup = lambda args: calls.append(args) or 0
+            action = app.make_rollback_action(
+                library="D:\\Knihy",
+                backup_path=backup_path,
+                allow_force=False,
+                quit_runner=lambda allow_force: 0,
+            )
+
+            result = action()
+        finally:
+            app.cme.run_restore_backup = original_run_restore_backup
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls[0].library, "D:\\Knihy")
+        self.assertEqual(calls[0].backup, backup_path)
 
 
 if __name__ == "__main__":

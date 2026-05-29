@@ -21,8 +21,9 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.7"
+APP_VERSION = "0.0.8"
 SETTINGS_PATH = APP_DIR / "settings.json"
+BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
 BUTTON_COLOR_MAP = {
@@ -31,9 +32,11 @@ BUTTON_COLOR_MAP = {
     "skip": {"bg": "#757575", "fg": "white", "activebackground": "#616161", "activeforeground": "white"},
     "apply": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
     "rebuild": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
+    "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
 TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
-PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV", "Rebuild CSV")
+PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV")
+BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 
 
@@ -50,6 +53,11 @@ def toolbar_spacing() -> dict[str, int]:
 def primary_toolbar_order() -> tuple[str, ...]:
     """Vrati poradi hlavnich tlacitek v prvni radce."""
     return PRIMARY_TOOLBAR_LABELS
+
+
+def bottom_library_bar_order() -> tuple[str, ...]:
+    """Vrati poradi tlacitek ve spodni radce u pole Knihovna."""
+    return BOTTOM_LIBRARY_BAR_LABELS
 
 
 def url_bar_button_order() -> tuple[str, ...]:
@@ -324,21 +332,27 @@ def make_rebuild_action(
     return action
 
 
-def make_repair_links_action(
-    args: SimpleNamespace,
+def make_rollback_action(
+    library: str,
+    backup_path: Path,
     allow_force: bool,
     quit_runner: Callable[[bool], int] | None = None,
-    repair_runner: Callable[[SimpleNamespace], int] | None = None,
+    restore_runner: Callable[[str, Path], Path] | None = None,
 ) -> Callable[[], int]:
-    """Pripravi docasnou opravu starych odkazu v Calibre komentarich."""
+    """Pripravi rollback: zavre Calibre a obnovi metadata.db ze zalohy."""
     quit_action = quit_runner or (lambda force: quit_calibre(allow_force=force))
-    repair_action = repair_runner or cme.run_repair_links
 
     def action() -> int:
         quit_result = quit_action(allow_force)
         if quit_result != 0:
             return quit_result
-        return repair_action(args)
+        if restore_runner is None:
+            return cme.run_restore_backup(SimpleNamespace(library=library, backup=backup_path))
+
+        safety_backup = restore_runner(library, backup_path)
+        print(f"Obnoveno z: {backup_path}")
+        print(f"Nouzova zaloha pred rollbackem: {safety_backup}")
+        return 0
 
     return action
 
@@ -372,22 +386,12 @@ class CalibreMetaApp:
         self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[0], self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[1], self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[2], self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_colored_button(toolbar, PRIMARY_TOOLBAR_LABELS[3], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
         spacing = toolbar_spacing()
         ttk.Frame(toolbar, width=spacing["before_approve"]).pack(side=tk.LEFT)
         self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
         self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
-        self._add_colored_button(toolbar, "Opravit stare odkazy", self.run_repair_old_links, "apply").pack(side=tk.RIGHT, padx=(0, 6))
-
-        library_bar = ttk.Frame(toolbar_container)
-        library_bar.pack(fill=tk.X, pady=(8, 0))
-        ttk.Label(library_bar, text="Knihovna").pack(side=tk.LEFT, padx=(0, 6))
-        library_entry = ttk.Entry(library_bar, textvariable=self.library_var, state="readonly")
-        library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        self._add_button(library_bar, "Zmenit", self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_button(library_bar, "Pouzit z Calibre", self.use_calibre_library).pack(side=tk.LEFT)
 
         url_bar = ttk.Frame(toolbar_container)
         url_bar.pack(fill=tk.X, pady=(8, 0))
@@ -444,6 +448,16 @@ class CalibreMetaApp:
         status_bar = ttk.Label(self.root, textvariable=self.status_var, padding=(8, 4))
         status_bar.pack(fill=tk.X)
 
+        library_bar = ttk.Frame(self.root, padding=(8, 0, 8, 8))
+        library_bar.pack(fill=tk.X)
+        ttk.Label(library_bar, text="Knihovna").pack(side=tk.LEFT, padx=(0, 6))
+        library_entry = ttk.Entry(library_bar, textvariable=self.library_var, state="readonly")
+        library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[0], self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[1], self.use_calibre_library).pack(side=tk.LEFT, padx=(0, 18))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[3], self.run_rollback, "rollback").pack(side=tk.LEFT)
+
     def _add_button(self, parent: tk.Widget, text: str, command: Callable[[], object]) -> ttk.Button:
         button = ttk.Button(parent, text=text, command=command)
         self.buttons.append(button)
@@ -470,7 +484,7 @@ class CalibreMetaApp:
             self.run_preview()
 
     def library_path(self) -> str:
-        """Vrati aktualni knihovnu z horniho pole appky."""
+        """Vrati aktualni knihovnu z pole Knihovna."""
         return self.library_var.get().strip() or cme.DEFAULT_LIBRARY
 
     def choose_library(self) -> None:
@@ -681,13 +695,34 @@ class CalibreMetaApp:
         action = make_apply_action(args=args, allow_force=allow_force)
         self._run_background("Zapis do Calibre", action, reload_after=True)
 
-    def run_repair_old_links(self) -> None:
-        confirmed, allow_force = self.ask_repair_confirmation()
+    def choose_rollback_backup(self) -> Path | None:
+        """Necha uzivatele vybrat metadata.db zalohu pro rollback."""
+        BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+        selected = filedialog.askopenfilename(
+            parent=self.root,
+            title="Vyber zalohu metadata.db",
+            initialdir=BACKUPS_DIR,
+            filetypes=[
+                ("Calibre metadata zalohy", "metadata*.db"),
+                ("SQLite DB", "*.db"),
+                ("Vsechny soubory", "*.*"),
+            ],
+        )
+        return Path(selected) if selected else None
+
+    def run_rollback(self) -> None:
+        backup_path = self.choose_rollback_backup()
+        if backup_path is None:
+            return
+        confirmed, allow_force = self.ask_rollback_confirmation(backup_path)
         if not confirmed:
             return
-        args = make_script_args(self.library_path())
-        action = make_repair_links_action(args=args, allow_force=allow_force)
-        self._run_background("Oprava starych odkazu", action, reload_after=False)
+        action = make_rollback_action(
+            library=self.library_path(),
+            backup_path=backup_path,
+            allow_force=allow_force,
+        )
+        self._run_background("Rollback zalohy", action, reload_after=False)
 
     def ask_apply_confirmation(self) -> tuple[bool, bool]:
         dialog = tk.Toplevel(self.root)
@@ -735,9 +770,9 @@ class CalibreMetaApp:
         dialog.wait_window()
         return result["confirmed"], bool(allow_force_var.get())
 
-    def ask_repair_confirmation(self) -> tuple[bool, bool]:
+    def ask_rollback_confirmation(self, backup_path: Path) -> tuple[bool, bool]:
         dialog = tk.Toplevel(self.root)
-        dialog.title("Opravit stare odkazy")
+        dialog.title("Rollback zalohy")
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.resizable(False, False)
@@ -750,8 +785,9 @@ class CalibreMetaApp:
         message = (
             "Appka udela:\n"
             "1. pokusi se zavrit Calibre\n"
-            "2. vytvori zalohu metadata.db\n"
-            "3. doplni target _blank ke starym Databaze knih odkazum"
+            "2. ulozi aktualni metadata.db jako nouzovou zalohu\n"
+            "3. obnovi vybranou zalohu:\n"
+            f"{backup_path}"
         )
         ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
         ttk.Checkbutton(
@@ -772,9 +808,12 @@ class CalibreMetaApp:
 
         cancel_button = ttk.Button(buttons, text="Zrusit", command=cancel)
         cancel_button.pack(side=tk.RIGHT, padx=(6, 0))
-        confirm_button = ttk.Button(buttons, text="Pokracovat", command=confirm)
+        confirm_button = ttk.Button(buttons, text="Obnovit", command=confirm)
         confirm_button.pack(side=tk.RIGHT)
-        bind_default_dialog_actions(dialog, confirm, cancel, confirm_button)
+        # Rollback je destruktivni, proto Enter nechava bezpecnou volbu Zrusit.
+        cancel_button.focus_set()
+        dialog.bind("<Return>", lambda event: cancel())
+        dialog.bind("<Escape>", lambda event: cancel())
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         center_dialog(dialog, self.root)
         dialog.wait_window()
