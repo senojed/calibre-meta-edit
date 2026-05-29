@@ -14,8 +14,19 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.4")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.4")
+        self.assertEqual(app.APP_VERSION, "0.0.5")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.5")
+
+    def test_open_url_in_new_window_uses_new_window_opener(self):
+        calls = []
+
+        result = app.open_url_in_new_window(
+            "https://www.databazeknih.cz/knihy/foo-123",
+            opener=lambda url: calls.append(url) or True,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(calls, ["https://www.databazeknih.cz/knihy/foo-123"])
 
     def test_initial_library_path_prefers_saved_settings_then_calibre_config(self):
         with tempfile.TemporaryDirectory() as tmp:

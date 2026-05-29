@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.4"
+APP_VERSION = "0.0.5"
 SETTINGS_PATH = APP_DIR / "settings.json"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
@@ -55,6 +55,11 @@ def primary_toolbar_order() -> tuple[str, ...]:
 def url_bar_button_order() -> tuple[str, ...]:
     """Vrati poradi tlacitek u pole s odkazem."""
     return URL_BAR_BUTTON_LABELS
+
+
+def open_url_in_new_window(url: str, opener: Callable[[str], bool] = webbrowser.open_new) -> bool:
+    """Otevre odkaz v novem okne prohlizece, pokud to prohlizec dovoli."""
+    return opener(url)
 
 
 def bind_default_dialog_actions(
@@ -625,7 +630,7 @@ class CalibreMetaApp:
         if not url:
             messagebox.showinfo("Bez odkazu", "Vybrany radek nema odkaz.")
             return
-        webbrowser.open(url)
+        open_url_in_new_window(url)
 
     def run_preview(self) -> None:
         if not self.save_csv(show_message=False):
