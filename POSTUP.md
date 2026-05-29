@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.2`
+Aktualni verze: `0.0.3`
 
 Nejjednodussi pouziti:
 
@@ -24,6 +24,7 @@ V appce:
 - `Zmenit` vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
+- `Rebuild CSV` - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
 - klik na hlavicku sloupce seradi tabulku
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
@@ -43,6 +44,12 @@ V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.
 
 Kdyz pri zapisu neco selze, appka vypise `Failed zapisy` ve spodnim vystupu.
+
+`Rebuild CSV` udela:
+
+1. zkopiruje stary `matches.csv` do `backups\matches\`
+2. vytvori novy `matches.csv`
+3. knihy, ktere uz maji v komentari odkaz na Databazi knih, znovu nehleda
 
 ## 1. Otevri PowerShell
 

@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.2")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.2")
+        self.assertEqual(app.APP_VERSION, "0.0.3")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.3")
 
     def test_initial_library_path_prefers_saved_settings_then_calibre_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,6 +54,11 @@ class AppModelTests(unittest.TestCase):
         self.assertIsNone(args.limit)
         self.assertEqual(args.sleep, 1.0)
         self.assertFalse(args.overwrite)
+
+    def test_make_script_args_can_request_overwrite(self):
+        args = app.make_script_args("D:\\Knihy", overwrite=True)
+
+        self.assertTrue(args.overwrite)
 
     def test_button_colors_define_requested_status_and_apply_colors(self):
         self.assertEqual(app.button_colors("approve")["bg"], "#2e7d32")
@@ -417,6 +422,35 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(calls, [("quit", True), ("apply", args)])
         self.assertIn("Failed zapisy:", output.getvalue())
         self.assertIn("Spatny zapis", output.getvalue())
+
+    def test_make_rebuild_action_backs_up_matches_then_runs_overwrite_preview(self):
+        args = app.make_script_args("D:\\Knihy", overwrite=True)
+        calls = []
+
+        def backup_func(matches_path, backups_dir):
+            calls.append(("backup", matches_path, backups_dir))
+            return backups_dir / "matches-20260529-120000.csv"
+
+        def preview_runner(received_args):
+            calls.append(("preview", received_args))
+            return 0
+
+        action = app.make_rebuild_action(
+            args=args,
+            matches_path=Path("matches.csv"),
+            backups_dir=Path("backups") / "matches",
+            backup_func=backup_func,
+            preview_runner=preview_runner,
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls[0], ("backup", Path("matches.csv"), Path("backups") / "matches"))
+        self.assertEqual(calls[1], ("preview", args))
+        self.assertTrue(args.overwrite)
+        self.assertIn("Zaloha matches.csv:", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.2"
+APP_VERSION = "0.0.3"
 SETTINGS_PATH = APP_DIR / "settings.json"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
@@ -113,14 +113,14 @@ def save_library_path(library: str, settings_path: Path = SETTINGS_PATH) -> None
     )
 
 
-def make_script_args(library: str) -> SimpleNamespace:
+def make_script_args(library: str, overwrite: bool = False) -> SimpleNamespace:
     """Sestavi parametry pro backend skript ze zvolene knihovny."""
     return SimpleNamespace(
         library=library,
         book_id=None,
         limit=None,
         sleep=1.0,
-        overwrite=False,
+        overwrite=overwrite,
     )
 
 
@@ -285,6 +285,27 @@ def make_apply_action(
     )
 
 
+def make_rebuild_action(
+    args: SimpleNamespace,
+    matches_path: Path,
+    backups_dir: Path = APP_DIR / "backups" / "matches",
+    backup_func: Callable[[Path, Path], Path | None] = cme.backup_matches_csv,
+    preview_runner: Callable[[SimpleNamespace], int] = cme.run_preview,
+) -> Callable[[], int]:
+    """Pripravi rebuild matches.csv: zaloha stareho CSV a novy preview od nuly."""
+    args.overwrite = True
+
+    def action() -> int:
+        backup_path = backup_func(matches_path, backups_dir)
+        if backup_path is None:
+            print("Zaloha matches.csv: neni co zalohovat.")
+        else:
+            print(f"Zaloha matches.csv: {backup_path}")
+        return preview_runner(args)
+
+    return action
+
+
 class CalibreMetaApp:
     def __init__(self, root: tk.Tk, matches_path: Path | None = None) -> None:
         self.root = root
@@ -313,6 +334,7 @@ class CalibreMetaApp:
 
         self._add_button(toolbar, "Nacist CSV", self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(toolbar, "Nacist nove knihy", self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, "Rebuild CSV", self.run_rebuild).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(toolbar, "Ulozit CSV", self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
         spacing = toolbar_spacing()
         self._add_button(toolbar, "Otevrit odkaz", self.open_selected_url).pack(side=tk.LEFT, padx=(0, spacing["before_approve"]))
@@ -470,7 +492,9 @@ class CalibreMetaApp:
         yes_button = ttk.Button(buttons, text="Ano", command=confirm)
         yes_button.pack(side=tk.RIGHT)
         default_button = yes_button if default_yes else no_button
-        bind_default_dialog_actions(dialog, confirm, cancel, default_button)
+        default_button.focus_set()
+        dialog.bind("<Return>", lambda event: confirm() if default_yes else cancel())
+        dialog.bind("<Escape>", lambda event: cancel())
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         center_dialog(dialog, self.root)
         dialog.wait_window()
@@ -594,6 +618,19 @@ class CalibreMetaApp:
             return
         args = make_script_args(self.library_path())
         self._run_background("Nacitani novych knih", lambda: cme.run_preview(args), reload_after=True)
+
+    def run_rebuild(self) -> None:
+        message = (
+            "Rebuild prepise matches.csv.\n"
+            "Stary matches.csv ulozim do backups\\matches.\n"
+            "Knihy s existujicim odkazem nebudu hledat znovu.\n"
+            "Pokracovat?"
+        )
+        if not self.ask_yes_no("Rebuild CSV", message, default_yes=False):
+            return
+        args = make_script_args(self.library_path(), overwrite=True)
+        action = make_rebuild_action(args, self.matches_path)
+        self._run_background("Rebuild CSV", action, reload_after=True)
 
     def run_apply(self) -> None:
         confirmed, allow_force = self.ask_apply_confirmation()

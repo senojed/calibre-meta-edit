@@ -226,6 +226,27 @@ class CsvAndFilesystemTests(unittest.TestCase):
             self.assertEqual(backup_path.read_bytes(), b"db")
             self.assertEqual(backup_path.name, "metadata-20260526-161500.db")
 
+    def test_backup_matches_csv_copies_old_matches_to_matches_backup_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            matches_path.write_text("old csv", encoding="utf-8")
+            backups = Path(tmp) / "backups" / "matches"
+
+            backup_path = cme.backup_matches_csv(matches_path, backups, timestamp="20260529-120000")
+
+            self.assertEqual(backup_path, backups / "matches-20260529-120000.csv")
+            self.assertEqual(backup_path.read_text(encoding="utf-8"), "old csv")
+
+    def test_backup_matches_csv_returns_none_when_matches_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backup_path = cme.backup_matches_csv(
+                Path(tmp) / "missing.csv",
+                Path(tmp) / "backups" / "matches",
+                timestamp="20260529-120000",
+            )
+
+            self.assertIsNone(backup_path)
+
     def test_sqlite_sidecar_detection_finds_wal_shm_and_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             library = Path(tmp)

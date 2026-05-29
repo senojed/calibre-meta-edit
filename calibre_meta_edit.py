@@ -347,6 +347,17 @@ def create_backup(library: str | Path, backups_dir: Path, timestamp: str | None 
     return target
 
 
+def backup_matches_csv(matches_path: Path, backups_dir: Path, timestamp: str | None = None) -> Path | None:
+    """Zkopiruje stary matches.csv pred rebuildem, aby slo vratit rucni upravy."""
+    if not matches_path.exists():
+        return None
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = backups_dir / f"{matches_path.stem}-{stamp}{matches_path.suffix}"
+    shutil.copy2(matches_path, target)
+    return target
+
+
 def find_sqlite_sidecars(library: str | Path) -> list[Path]:
     base = metadata_db_path(library)
     return [Path(str(base) + suffix) for suffix in ("-wal", "-shm", "-journal") if Path(str(base) + suffix).exists()]
