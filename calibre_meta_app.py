@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.3"
+APP_VERSION = "0.0.4"
 SETTINGS_PATH = APP_DIR / "settings.json"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
@@ -30,8 +30,11 @@ BUTTON_COLOR_MAP = {
     "review": {"bg": "#ef6c00", "fg": "white", "activebackground": "#bf5b00", "activeforeground": "white"},
     "skip": {"bg": "#757575", "fg": "white", "activebackground": "#616161", "activeforeground": "white"},
     "apply": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
+    "rebuild": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
-TOOLBAR_SPACING = {"before_approve": 18, "between_status": 6, "after_skip": 18}
+TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
+PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV", "Rebuild CSV")
+URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 
 
 def button_colors(kind: str) -> dict[str, str]:
@@ -42,6 +45,16 @@ def button_colors(kind: str) -> dict[str, str]:
 def toolbar_spacing() -> dict[str, int]:
     """Vrati mezery mezi hlavnim toolbar tlacitky."""
     return dict(TOOLBAR_SPACING)
+
+
+def primary_toolbar_order() -> tuple[str, ...]:
+    """Vrati poradi hlavnich tlacitek v prvni radce."""
+    return PRIMARY_TOOLBAR_LABELS
+
+
+def url_bar_button_order() -> tuple[str, ...]:
+    """Vrati poradi tlacitek u pole s odkazem."""
+    return URL_BAR_BUTTON_LABELS
 
 
 def bind_default_dialog_actions(
@@ -332,12 +345,12 @@ class CalibreMetaApp:
         toolbar = ttk.Frame(toolbar_container)
         toolbar.pack(fill=tk.X)
 
-        self._add_button(toolbar, "Nacist CSV", self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_button(toolbar, "Nacist nove knihy", self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_button(toolbar, "Rebuild CSV", self.run_rebuild).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_button(toolbar, "Ulozit CSV", self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[0], self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[1], self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[2], self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(toolbar, PRIMARY_TOOLBAR_LABELS[3], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
         spacing = toolbar_spacing()
-        self._add_button(toolbar, "Otevrit odkaz", self.open_selected_url).pack(side=tk.LEFT, padx=(0, spacing["before_approve"]))
+        ttk.Frame(toolbar, width=spacing["before_approve"]).pack(side=tk.LEFT)
         self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
@@ -356,7 +369,8 @@ class CalibreMetaApp:
         ttk.Label(url_bar, text="Odkaz").pack(side=tk.LEFT, padx=(0, 6))
         url_entry = ttk.Entry(url_bar, textvariable=self.edit_url_var)
         url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        self._add_button(url_bar, "Pouzit odkaz", self.apply_selected_url).pack(side=tk.LEFT)
+        self._add_button(url_bar, URL_BAR_BUTTON_LABELS[0], self.apply_selected_url).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(url_bar, URL_BAR_BUTTON_LABELS[1], self.open_selected_url).pack(side=tk.LEFT)
 
         table_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         table_frame.pack(fill=tk.BOTH, expand=True)

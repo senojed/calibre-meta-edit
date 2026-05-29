@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.3")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.3")
+        self.assertEqual(app.APP_VERSION, "0.0.4")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.4")
 
     def test_initial_library_path_prefers_saved_settings_then_calibre_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -65,12 +65,23 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(app.button_colors("review")["bg"], "#ef6c00")
         self.assertEqual(app.button_colors("skip")["bg"], "#757575")
         self.assertEqual(app.button_colors("apply")["bg"], "#c62828")
+        self.assertEqual(app.button_colors("rebuild")["bg"], "#c62828")
 
-    def test_toolbar_spacing_keeps_status_group_gaps_equal(self):
+    def test_toolbar_spacing_adds_large_gap_before_approve(self):
         spacing = app.toolbar_spacing()
 
-        self.assertEqual(spacing["before_approve"], spacing["after_skip"])
-        self.assertGreaterEqual(spacing["before_approve"], 18)
+        self.assertGreaterEqual(spacing["before_approve"], 54)
+        self.assertEqual(spacing["between_status"], 6)
+        self.assertGreaterEqual(spacing["after_skip"], 18)
+
+    def test_primary_toolbar_order_saves_before_rebuild(self):
+        self.assertEqual(
+            app.primary_toolbar_order(),
+            ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV", "Rebuild CSV"),
+        )
+
+    def test_url_bar_button_order_opens_after_use_link(self):
+        self.assertEqual(app.url_bar_button_order(), ("Pouzit odkaz", "Otevrit odkaz"))
 
     def test_bind_default_dialog_actions_focuses_default_and_binds_enter_escape(self):
         calls = []
