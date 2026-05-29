@@ -12,6 +12,10 @@ import calibre_meta_edit as cme
 
 
 class AppModelTests(unittest.TestCase):
+    def test_app_title_includes_version(self):
+        self.assertEqual(app.APP_VERSION, "0.0.1")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.1")
+
     def test_button_colors_define_requested_status_and_apply_colors(self):
         self.assertEqual(app.button_colors("approve")["bg"], "#2e7d32")
         self.assertEqual(app.button_colors("review")["bg"], "#ef6c00")

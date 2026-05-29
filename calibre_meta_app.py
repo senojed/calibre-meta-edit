@@ -20,6 +20,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
+APP_VERSION = "0.0.1"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
 BUTTON_COLOR_MAP = {
@@ -51,6 +52,11 @@ def bind_default_dialog_actions(
     default_button.focus_set()
     dialog.bind("<Return>", lambda event: confirm())
     dialog.bind("<Escape>", lambda event: cancel())
+
+
+def app_title() -> str:
+    """Vrati titulek hlavniho okna vcetne verze."""
+    return f"Calibre Meta Edit {APP_VERSION}"
 
 
 def center_dialog(dialog: object, parent: object) -> None:
@@ -226,7 +232,7 @@ class CalibreMetaApp:
         self.status_var = tk.StringVar(value="Pripraveno")
         self.edit_url_var = tk.StringVar(value="")
 
-        self.root.title("Calibre Meta Edit")
+        self.root.title(app_title())
         self.root.geometry("1200x760")
         self._build_ui()
         self.load_csv(show_message=True)
