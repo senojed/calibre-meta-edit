@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.5`
+Aktualni verze: `0.0.6`
 
 Nejjednodussi pouziti:
 

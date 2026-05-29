@@ -120,7 +120,7 @@ def build_search_url(title: str, authors: Sequence[str]) -> str:
 
 
 def format_link_html(url: str) -> str:
-    return f'<div>\n<p><a href="{url}"><span style="color: #6cb4ee">{url}</span></a></p></div>'
+    return f'<div>\n<p><a href="{url}" target="_blank"><span style="color: #6cb4ee">{url}</span></a></p></div>'
 
 
 def comment_has_databaze_link(comment: str | None) -> bool:

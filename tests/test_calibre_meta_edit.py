@@ -45,7 +45,7 @@ class CommentTests(unittest.TestCase):
         url = "https://www.databazeknih.cz/knihy/foo-123"
         self.assertEqual(
             cme.format_link_html(url),
-            '<div>\n<p><a href="https://www.databazeknih.cz/knihy/foo-123"><span style="color: #6cb4ee">https://www.databazeknih.cz/knihy/foo-123</span></a></p></div>',
+            '<div>\n<p><a href="https://www.databazeknih.cz/knihy/foo-123" target="_blank"><span style="color: #6cb4ee">https://www.databazeknih.cz/knihy/foo-123</span></a></p></div>',
         )
 
     def test_build_new_comment_returns_only_link_for_empty_comment(self):
