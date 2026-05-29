@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.6"
+APP_VERSION = "0.0.7"
 SETTINGS_PATH = APP_DIR / "settings.json"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
@@ -324,6 +324,25 @@ def make_rebuild_action(
     return action
 
 
+def make_repair_links_action(
+    args: SimpleNamespace,
+    allow_force: bool,
+    quit_runner: Callable[[bool], int] | None = None,
+    repair_runner: Callable[[SimpleNamespace], int] | None = None,
+) -> Callable[[], int]:
+    """Pripravi docasnou opravu starych odkazu v Calibre komentarich."""
+    quit_action = quit_runner or (lambda force: quit_calibre(allow_force=force))
+    repair_action = repair_runner or cme.run_repair_links
+
+    def action() -> int:
+        quit_result = quit_action(allow_force)
+        if quit_result != 0:
+            return quit_result
+        return repair_action(args)
+
+    return action
+
+
 class CalibreMetaApp:
     def __init__(self, root: tk.Tk, matches_path: Path | None = None) -> None:
         self.root = root
@@ -360,6 +379,7 @@ class CalibreMetaApp:
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
         self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
+        self._add_colored_button(toolbar, "Opravit stare odkazy", self.run_repair_old_links, "apply").pack(side=tk.RIGHT, padx=(0, 6))
 
         library_bar = ttk.Frame(toolbar_container)
         library_bar.pack(fill=tk.X, pady=(8, 0))
@@ -661,6 +681,14 @@ class CalibreMetaApp:
         action = make_apply_action(args=args, allow_force=allow_force)
         self._run_background("Zapis do Calibre", action, reload_after=True)
 
+    def run_repair_old_links(self) -> None:
+        confirmed, allow_force = self.ask_repair_confirmation()
+        if not confirmed:
+            return
+        args = make_script_args(self.library_path())
+        action = make_repair_links_action(args=args, allow_force=allow_force)
+        self._run_background("Oprava starych odkazu", action, reload_after=False)
+
     def ask_apply_confirmation(self) -> tuple[bool, bool]:
         dialog = tk.Toplevel(self.root)
         dialog.title("Zapsat do Calibre")
@@ -679,6 +707,51 @@ class CalibreMetaApp:
             "2. pokusi se zavrit Calibre\n"
             "3. zapise metadata\n"
             "4. nacte nove knihy"
+        )
+        ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
+        ttk.Checkbutton(
+            body,
+            text="Kdyz to nepujde normalne, vynutit zavreni Calibre pres /F",
+            variable=allow_force_var,
+        ).pack(anchor="w", pady=(12, 0))
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(14, 0))
+
+        def confirm() -> None:
+            result["confirmed"] = True
+            dialog.destroy()
+
+        def cancel() -> None:
+            dialog.destroy()
+
+        cancel_button = ttk.Button(buttons, text="Zrusit", command=cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=(6, 0))
+        confirm_button = ttk.Button(buttons, text="Pokracovat", command=confirm)
+        confirm_button.pack(side=tk.RIGHT)
+        bind_default_dialog_actions(dialog, confirm, cancel, confirm_button)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        center_dialog(dialog, self.root)
+        dialog.wait_window()
+        return result["confirmed"], bool(allow_force_var.get())
+
+    def ask_repair_confirmation(self) -> tuple[bool, bool]:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Opravit stare odkazy")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        allow_force_var = tk.BooleanVar(value=True)
+        result = {"confirmed": False}
+
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill=tk.BOTH, expand=True)
+        message = (
+            "Appka udela:\n"
+            "1. pokusi se zavrit Calibre\n"
+            "2. vytvori zalohu metadata.db\n"
+            "3. doplni target _blank ke starym Databaze knih odkazum"
         )
         ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
         ttk.Checkbutton(

@@ -59,6 +59,19 @@ class CommentTests(unittest.TestCase):
             cme.format_link_html(url) + "\n<p>Původní popis</p>",
         )
 
+    def test_add_target_blank_repairs_only_databaze_links(self):
+        comment = (
+            '<p><a href="https://www.databazeknih.cz/knihy/foo-123">db</a></p>'
+            '<p><a href="https://example.com/knihy/foo-123">web</a></p>'
+            '<p><a href="https://www.databazeknih.cz/knihy/bar-456" target="_blank">hotovo</a></p>'
+        )
+
+        repaired = cme.add_target_blank_to_databaze_links(comment)
+
+        self.assertIn('href="https://www.databazeknih.cz/knihy/foo-123" target="_blank"', repaired)
+        self.assertIn('<a href="https://example.com/knihy/foo-123">web</a>', repaired)
+        self.assertEqual(repaired.count('target="_blank"'), 2)
+
     def test_comment_has_databaze_link_detects_existing_link(self):
         self.assertTrue(cme.comment_has_databaze_link('<a href="https://www.databazeknih.cz/knihy/foo-123">x</a>'))
         self.assertFalse(cme.comment_has_databaze_link("<p>Bez odkazu</p>"))
@@ -330,6 +343,46 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             self.assertEqual(calls[0][0], r"C:\calibredb.exe")
             self.assertIn("--field", calls[0])
             self.assertIn("comments:", next(arg for arg in calls[0] if arg.startswith("comments:")))
+
+    def test_repair_book_comment_target_updates_old_databaze_link(self):
+        book = cme.Book(
+            1,
+            "Kniha",
+            ["Autor"],
+            '<p><a href="https://www.databazeknih.cz/knihy/foo-123">db</a></p>',
+        )
+        calls = []
+
+        result = cme.repair_book_comment_target(
+            book,
+            Path("library"),
+            r"C:\calibredb.exe",
+            lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(calls[0][0], r"C:\calibredb.exe")
+        field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn('target="_blank"', field)
+
+    def test_repair_book_comment_target_skips_when_no_change_needed(self):
+        book = cme.Book(
+            1,
+            "Kniha",
+            ["Autor"],
+            '<p><a href="https://www.databazeknih.cz/knihy/foo-123" target="_blank">db</a></p>',
+        )
+        calls = []
+
+        result = cme.repair_book_comment_target(
+            book,
+            Path("library"),
+            r"C:\calibredb.exe",
+            lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+        )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

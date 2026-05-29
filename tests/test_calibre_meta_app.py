@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.6")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.6")
+        self.assertEqual(app.APP_VERSION, "0.0.7")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.7")
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
         calls = []
@@ -473,6 +473,30 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(calls[1], ("preview", args))
         self.assertTrue(args.overwrite)
         self.assertIn("Zaloha matches.csv:", output.getvalue())
+
+    def test_make_repair_links_action_quits_then_repairs(self):
+        args = app.make_script_args("D:\\Knihy")
+        calls = []
+
+        def quit_runner(allow_force):
+            calls.append(("quit", allow_force))
+            return 0
+
+        def repair_runner(received_args):
+            calls.append(("repair", received_args))
+            return 0
+
+        action = app.make_repair_links_action(
+            args=args,
+            allow_force=True,
+            quit_runner=quit_runner,
+            repair_runner=repair_runner,
+        )
+
+        result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("quit", True), ("repair", args)])
 
 
 if __name__ == "__main__":

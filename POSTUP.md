@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.6`
+Aktualni verze: `0.0.7`
 
 Nejjednodussi pouziti:
 
@@ -25,6 +25,7 @@ V appce:
 - `Pouzit z Calibre` vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
 - `Rebuild CSV` - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
+- `Opravit stare odkazy` - docasne tlacitko, doplni `target="_blank"` ke starsim odkazum v komentarich
 - klik na hlavicku sloupce seradi tabulku
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham

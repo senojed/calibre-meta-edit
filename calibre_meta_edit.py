@@ -123,6 +123,22 @@ def format_link_html(url: str) -> str:
     return f'<div>\n<p><a href="{url}" target="_blank"><span style="color: #6cb4ee">{url}</span></a></p></div>'
 
 
+def add_target_blank_to_databaze_links(comment: str | None) -> str:
+    """Doplni target blank jen k existujicim odkazum na Databazi knih."""
+    text = comment or ""
+
+    def repair_anchor(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        href = re.search(r'\bhref\s*=\s*(["\'])(.*?)\1', tag, flags=re.IGNORECASE)
+        if href is None or "databazeknih.cz" not in href.group(2).lower():
+            return tag
+        if re.search(r"\btarget\s*=", tag, flags=re.IGNORECASE):
+            return tag
+        return tag[:-1] + ' target="_blank">'
+
+    return re.sub(r"<a\b[^>]*>", repair_anchor, text, flags=re.IGNORECASE)
+
+
 def comment_has_databaze_link(comment: str | None) -> bool:
     return "databazeknih.cz" in (comment or "").lower()
 
@@ -494,6 +510,34 @@ def apply_match_row(
     return ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
 
 
+def repair_book_comment_target(
+    book: Book,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] = run_command,
+) -> ApplyResult:
+    """Opravi jeden stary komentar tak, aby odkaz na Databazi knih mel target blank."""
+    repaired_comment = add_target_blank_to_databaze_links(book.comment)
+    url = extract_first_databaze_link(book.comment)
+    if repaired_comment == (book.comment or ""):
+        return ApplyResult(book.id, book.title, "skipped", url, "")
+
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(book.id),
+        "--with-library",
+        str(library),
+        "--field",
+        "comments:" + repaired_comment,
+    ]
+    result = runner(args)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "calibredb failed").strip()
+        return ApplyResult(book.id, book.title, "failed", url, error)
+    return ApplyResult(book.id, book.title, "updated", url, "")
+
+
 def write_apply_results(path: Path, rows: Iterable[ApplyResult]) -> None:
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=APPLY_RESULTS_FIELDS)
@@ -636,6 +680,46 @@ def run_apply(args: argparse.Namespace) -> int:
     return 1 if counts["failed"] else 0
 
 
+def run_repair_links(args: argparse.Namespace) -> int:
+    """Opravi stare Databaze knih odkazy v Calibre komentarich."""
+    library = Path(args.library)
+    sidecars = find_sqlite_sidecars(library)
+    if sidecars:
+        print("Databaze ma vedlejsi SQLite soubory. Zavri Calibre a zkus znovu:")
+        for sidecar in sidecars:
+            print(f"- {sidecar}")
+        return 1
+
+    calibredb_path = find_calibredb()
+    if not calibredb_path:
+        print("calibredb nenalezen. Nainstaluj Calibre nebo pridej calibredb do PATH.")
+        return 1
+
+    smoke = run_calibredb_smoke(calibredb_path, library)
+    if smoke.returncode != 0:
+        print("calibredb neumi pristoupit ke knihovne. Zavri Calibre nebo pouzij namapovanou cestu.")
+        print((smoke.stderr or smoke.stdout).strip())
+        return 1
+
+    books = read_books(args.library, book_id=args.book_id, limit=args.limit)
+    repairable_books = [
+        book
+        for book in books
+        if add_target_blank_to_databaze_links(book.comment) != (book.comment or "")
+    ]
+    if not repairable_books:
+        print("Neni co opravovat. updated=0")
+        return 0
+
+    backup_path = create_backup(library, Path("backups"))
+    print(f"Zaloha: {backup_path}")
+
+    results = [repair_book_comment_target(book, library, calibredb_path) for book in repairable_books]
+    counts = {status: sum(1 for result in results if result.status == status) for status in ("updated", "skipped", "failed")}
+    print(f"updated={counts['updated']} skipped={counts['skipped']} failed={counts['failed']}")
+    return 1 if counts["failed"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Doplni do Calibre komentaru odkazy na Databazi knih.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -655,6 +739,14 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--sleep", type=float, default=1.0)
     apply_parser.add_argument("--overwrite", action="store_true")
     apply_parser.set_defaults(func=run_apply)
+
+    repair_parser = subparsers.add_parser("repair-links", help="Opravi stare Databaze knih odkazy v komentarich.")
+    repair_parser.add_argument("--library", default=DEFAULT_LIBRARY)
+    repair_parser.add_argument("--limit", type=int)
+    repair_parser.add_argument("--book-id", type=int)
+    repair_parser.add_argument("--sleep", type=float, default=1.0)
+    repair_parser.add_argument("--overwrite", action="store_true")
+    repair_parser.set_defaults(func=run_repair_links)
     return parser
 
 
