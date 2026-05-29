@@ -1,0 +1,606 @@
+# Desktop appka pro pohodlne schvalovani navrhu z matches.csv bez Excelu.
+
+from __future__ import annotations
+
+import contextlib
+import csv
+import io
+import os
+import threading
+import webbrowser
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Callable, Sequence
+
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+import calibre_meta_edit as cme
+
+
+APP_DIR = Path(__file__).resolve().parent
+VALID_STATUSES = ("approve", "review", "skip")
+TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
+BUTTON_COLOR_MAP = {
+    "approve": {"bg": "#2e7d32", "fg": "white", "activebackground": "#1b5e20", "activeforeground": "white"},
+    "review": {"bg": "#ef6c00", "fg": "white", "activebackground": "#bf5b00", "activeforeground": "white"},
+    "skip": {"bg": "#757575", "fg": "white", "activebackground": "#616161", "activeforeground": "white"},
+    "apply": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
+}
+TOOLBAR_SPACING = {"before_approve": 18, "between_status": 6, "after_skip": 18}
+
+
+def button_colors(kind: str) -> dict[str, str]:
+    """Vrati barvy pro barevna tlacitka v appce."""
+    return dict(BUTTON_COLOR_MAP[kind])
+
+
+def toolbar_spacing() -> dict[str, int]:
+    """Vrati mezery mezi hlavnim toolbar tlacitky."""
+    return dict(TOOLBAR_SPACING)
+
+
+def bind_default_dialog_actions(
+    dialog: object,
+    confirm: Callable[[], None],
+    cancel: Callable[[], None],
+    default_button: object,
+) -> None:
+    """Nastavi Enter na potvrzeni a Escape na zruseni dialogu."""
+    default_button.focus_set()
+    dialog.bind("<Return>", lambda event: confirm())
+    dialog.bind("<Escape>", lambda event: cancel())
+
+
+def center_dialog(dialog: object, parent: object) -> None:
+    """Umisti dialog doprostred hlavniho okna appky."""
+    dialog.update_idletasks()
+    x = parent.winfo_rootx() + max((parent.winfo_width() - dialog.winfo_width()) // 2, 0)
+    y = parent.winfo_rooty() + max((parent.winfo_height() - dialog.winfo_height()) // 2, 0)
+    dialog.geometry(f"+{x}+{y}")
+
+
+def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
+    """Vrati upraveny radek, ale zachova vsechny ostatni hodnoty."""
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Neznamy status: {status}")
+    return replace(row, status=status, chosen_url=chosen_url.strip())
+
+
+def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status: str) -> list[cme.MatchRow]:
+    """Zmeni status u vsech vybranych knih podle jejich Calibre ID."""
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Neznamy status: {status}")
+    return [update_row(row, status, row.chosen_url) if row.book_id in book_ids else row for row in rows]
+
+
+def sort_rows(rows: Sequence[cme.MatchRow], column: str, descending: bool) -> list[cme.MatchRow]:
+    """Seradi radky podle sloupce stejne, jak to pak ukaze tabulka."""
+    if column not in TABLE_COLUMNS:
+        raise ValueError(f"Neznamy sloupec: {column}")
+
+    def key(row: cme.MatchRow) -> object:
+        value = getattr(row, column)
+        return value if column == "book_id" else str(value).casefold()
+
+    return sorted(rows, key=key, reverse=descending)
+
+
+def find_row_index(rows: Sequence[cme.MatchRow], book_id: int) -> int | None:
+    """Najde pozici knihy v nactenych radcich podle Calibre ID."""
+    for index, row in enumerate(rows):
+        if row.book_id == book_id:
+            return index
+    return None
+
+
+def status_summary(rows: Sequence[cme.MatchRow]) -> str:
+    """Spocte radky podle statusu pro spodni stavovy text."""
+    counts = {status: 0 for status in VALID_STATUSES}
+    for row in rows:
+        if row.status in counts:
+            counts[row.status] += 1
+    return (
+        f"Celkem {len(rows)} | approve {counts['approve']} | "
+        f"review {counts['review']} | skip {counts['skip']}"
+    )
+
+
+def quit_calibre(
+    runner: Callable[[Sequence[str]], cme.CommandResult] = cme.run_command,
+    allow_force: bool = False,
+) -> int:
+    """Pozada Windows o ukonceni Calibre; /F pouzije jen po povoleni v appce."""
+    tasklist = runner(["tasklist", "/FI", "IMAGENAME eq calibre.exe"])
+    tasklist_text = (tasklist.stdout + tasklist.stderr).lower()
+    if tasklist.returncode != 0:
+        print((tasklist.stderr or tasklist.stdout or "tasklist failed").strip())
+        return tasklist.returncode
+    if "calibre.exe" not in tasklist_text:
+        print("Calibre nebezi.")
+        return 0
+
+    print("Ukoncuju Calibre...")
+    taskkill = runner(["taskkill", "/IM", "calibre.exe", "/T"])
+    output = (taskkill.stdout or taskkill.stderr or "").strip()
+    if taskkill.returncode != 0 and allow_force:
+        print("Normalni ukonceni selhalo. Vynucuju zavreni Calibre pres /F...")
+        forced = runner(["taskkill", "/IM", "calibre.exe", "/T", "/F"])
+        forced_output = (forced.stdout or forced.stderr or "").strip()
+        if forced.returncode != 0 and output:
+            print(output)
+        if forced_output:
+            print(forced_output)
+        return forced.returncode
+    if output:
+        print(output)
+    return taskkill.returncode
+
+
+def format_failed_apply_results(path: Path) -> str:
+    """Z apply-results CSV udela citelny seznam neuspesnych zapisu."""
+    failed_rows: list[dict[str, str]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if row.get("status") == "failed":
+                failed_rows.append(row)
+
+    if not failed_rows:
+        return "Failed zapisy: 0"
+
+    lines = ["Failed zapisy:"]
+    for row in failed_rows:
+        book_id = row.get("book_id", "")
+        title = row.get("title", "")
+        error = row.get("error", "") or "bez detailu"
+        lines.append(f"- {book_id} {title}: {error}")
+    return "\n".join(lines)
+
+
+def format_new_failed_apply_results(base_dir: Path, known_paths: set[Path]) -> str:
+    """Najde novy apply-results soubor a vrati seznam failed radku."""
+    results_dir = base_dir / cme.APPLY_RESULTS_DIR
+    new_paths = [path for path in results_dir.glob("apply-results-*.csv") if path not in known_paths]
+    if not new_paths:
+        return ""
+    newest = max(new_paths, key=lambda path: path.stat().st_mtime)
+    return format_failed_apply_results(newest)
+
+
+def run_apply_then_preview(
+    quit_func: Callable[[], int],
+    apply_func: Callable[[], int],
+    preview_func: Callable[[], int],
+    failed_summary_func: Callable[[], str] | None = None,
+) -> int:
+    """Provede zapisovy workflow: zavrit Calibre, zapsat metadata, nacist nove knihy."""
+    quit_result = quit_func()
+    if quit_result != 0:
+        return quit_result
+
+    apply_result = apply_func()
+    if failed_summary_func is not None:
+        failed_summary = failed_summary_func()
+        if failed_summary:
+            print(failed_summary)
+    if apply_result != 0:
+        return apply_result
+
+    return preview_func()
+
+
+def make_apply_action(
+    args: SimpleNamespace,
+    allow_force: bool,
+    base_dir: Path = APP_DIR,
+    quit_runner: Callable[[bool], int] | None = None,
+    apply_runner: Callable[[SimpleNamespace], int] | None = None,
+    preview_runner: Callable[[SimpleNamespace], int] | None = None,
+) -> Callable[[], int]:
+    """Pripravi zapisovy workflow a zapamatuje apply-results soubory pred zapisem."""
+    results_dir = base_dir / cme.APPLY_RESULTS_DIR
+    known_apply_results = set(results_dir.glob("apply-results-*.csv"))
+    quit_action = quit_runner or (lambda force: quit_calibre(allow_force=force))
+    apply_action = apply_runner or cme.run_apply
+    preview_action = preview_runner or cme.run_preview
+
+    return lambda: run_apply_then_preview(
+        quit_func=lambda: quit_action(allow_force),
+        apply_func=lambda: apply_action(args),
+        preview_func=lambda: preview_action(args),
+        failed_summary_func=lambda: format_new_failed_apply_results(base_dir, known_apply_results),
+    )
+
+
+class CalibreMetaApp:
+    def __init__(self, root: tk.Tk, matches_path: Path | None = None) -> None:
+        self.root = root
+        self.matches_path = matches_path or (APP_DIR / cme.MATCHES_PATH)
+        self.rows: list[cme.MatchRow] = []
+        self.buttons: list[tk.Widget] = []
+        self.sort_descending: dict[str, bool] = {}
+        self.worker_running = False
+
+        self.status_var = tk.StringVar(value="Pripraveno")
+        self.edit_url_var = tk.StringVar(value="")
+
+        self.root.title("Calibre Meta Edit")
+        self.root.geometry("1200x760")
+        self._build_ui()
+        self.load_csv(show_message=True)
+        self.root.after(250, self.ask_preview_on_start)
+
+    def _build_ui(self) -> None:
+        toolbar_container = ttk.Frame(self.root, padding=8)
+        toolbar_container.pack(fill=tk.X)
+
+        toolbar = ttk.Frame(toolbar_container)
+        toolbar.pack(fill=tk.X)
+
+        self._add_button(toolbar, "Nacist CSV", self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, "Nacist nove knihy", self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, "Ulozit CSV", self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
+        spacing = toolbar_spacing()
+        self._add_button(toolbar, "Otevrit odkaz", self.open_selected_url).pack(side=tk.LEFT, padx=(0, spacing["before_approve"]))
+        self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
+        self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
+        self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
+        self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
+
+        url_bar = ttk.Frame(toolbar_container)
+        url_bar.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(url_bar, text="Odkaz").pack(side=tk.LEFT, padx=(0, 6))
+        url_entry = ttk.Entry(url_bar, textvariable=self.edit_url_var)
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self._add_button(url_bar, "Pouzit odkaz", self.apply_selected_url).pack(side=tk.LEFT)
+
+        table_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.tree = ttk.Treeview(table_frame, columns=TABLE_COLUMNS, show="headings", selectmode="extended")
+        vertical_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        horizontal_scroll = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vertical_scroll.set, xscrollcommand=horizontal_scroll.set)
+
+        widths = {
+            "book_id": 70,
+            "title": 260,
+            "authors": 190,
+            "status": 90,
+            "chosen_url": 420,
+            "reason": 160,
+        }
+        headings = {
+            "book_id": "ID",
+            "title": "Kniha",
+            "authors": "Autor",
+            "status": "Status",
+            "chosen_url": "Odkaz",
+            "reason": "Duvod",
+        }
+        for column in TABLE_COLUMNS:
+            self.tree.heading(column, text=headings[column], command=lambda selected_column=column: self.sort_by_column(selected_column))
+            self.tree.column(column, width=widths[column], minwidth=widths[column], stretch=column in {"title", "chosen_url"})
+
+        self.tree.tag_configure("approve", background="#e8f5e9")
+        self.tree.tag_configure("review", background="#fff8e1")
+        self.tree.tag_configure("skip", background="#f5f5f5")
+        self.tree.bind("<<TreeviewSelect>>", self.on_row_selected)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vertical_scroll.grid(row=0, column=1, sticky="ns")
+        horizontal_scroll.grid(row=1, column=0, sticky="ew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+
+        output_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
+        output_frame.pack(fill=tk.BOTH)
+        self.output = tk.Text(output_frame, height=7, wrap=tk.WORD)
+        self.output.pack(fill=tk.BOTH, expand=True)
+
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, padding=(8, 4))
+        status_bar.pack(fill=tk.X)
+
+    def _add_button(self, parent: tk.Widget, text: str, command: Callable[[], object]) -> ttk.Button:
+        button = ttk.Button(parent, text=text, command=command)
+        self.buttons.append(button)
+        return button
+
+    def _add_colored_button(self, parent: tk.Widget, text: str, command: Callable[[], object], kind: str) -> tk.Button:
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            padx=10,
+            pady=3,
+            relief=tk.RAISED,
+            borderwidth=1,
+            **button_colors(kind),
+        )
+        self.buttons.append(button)
+        return button
+
+    def ask_preview_on_start(self) -> None:
+        if self.worker_running:
+            return
+        if self.ask_yes_no("Nacist nove knihy", "Chces po startu rovnou nacist nove knihy?"):
+            self.run_preview()
+
+    def ask_yes_no(self, title: str, message: str, default_yes: bool = True) -> bool:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        result = {"confirmed": False}
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(14, 0))
+
+        def confirm() -> None:
+            result["confirmed"] = True
+            dialog.destroy()
+
+        def cancel() -> None:
+            dialog.destroy()
+
+        no_button = ttk.Button(buttons, text="Ne", command=cancel)
+        no_button.pack(side=tk.RIGHT, padx=(6, 0))
+        yes_button = ttk.Button(buttons, text="Ano", command=confirm)
+        yes_button.pack(side=tk.RIGHT)
+        default_button = yes_button if default_yes else no_button
+        bind_default_dialog_actions(dialog, confirm, cancel, default_button)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        center_dialog(dialog, self.root)
+        dialog.wait_window()
+        return result["confirmed"]
+
+    def load_csv(self, show_message: bool = True) -> None:
+        if not self.matches_path.exists():
+            self.rows = []
+            self._refresh_table()
+            self._set_status(f"Soubor nenalezen: {self.matches_path}")
+            return
+        try:
+            self.rows = cme.read_matches_csv(self.matches_path)
+        except Exception as exc:
+            messagebox.showerror("Chyba", f"CSV nejde nacist:\n{exc}")
+            return
+        self._refresh_table()
+        self._set_status(status_summary(self.rows))
+        if show_message:
+            self._write_output(f"Nacteno: {self.matches_path}\n{status_summary(self.rows)}")
+
+    def save_csv(self, show_message: bool = True) -> bool:
+        try:
+            cme.write_matches_csv(self.matches_path, self.rows, overwrite=True)
+        except Exception as exc:
+            messagebox.showerror("Chyba", f"CSV nejde ulozit:\n{exc}")
+            return False
+        self._set_status(f"Ulozeno. {status_summary(self.rows)}")
+        if show_message:
+            self._write_output(f"Ulozeno: {self.matches_path}")
+        return True
+
+    def _refresh_table(self) -> None:
+        selected_ids = self._selected_book_ids()
+        self.tree.delete(*self.tree.get_children())
+        for row in self.rows:
+            values = (row.book_id, row.title, row.authors, row.status, row.chosen_url, row.reason)
+            self.tree.insert("", tk.END, iid=str(row.book_id), values=values, tags=(row.status,))
+        for selected in selected_ids:
+            if self.tree.exists(str(selected)):
+                self.tree.selection_add(str(selected))
+                self.tree.see(str(selected))
+
+    def _selected_book_ids(self) -> set[int]:
+        selection = self.tree.selection() if hasattr(self, "tree") else ()
+        selected: set[int] = set()
+        for item in selection:
+            try:
+                selected.add(int(item))
+            except ValueError:
+                continue
+        return selected
+
+    def _selected_book_id(self) -> int | None:
+        selected = sorted(self._selected_book_ids())
+        if not selected:
+            return None
+        return selected[0]
+
+    def _selected_index(self) -> int | None:
+        selected = self._selected_book_id()
+        if selected is None:
+            return None
+        return find_row_index(self.rows, selected)
+
+    def on_row_selected(self, event: tk.Event | None = None) -> None:
+        index = self._selected_index()
+        if index is None:
+            return
+        row = self.rows[index]
+        self.edit_url_var.set(row.chosen_url)
+
+    def sort_by_column(self, column: str) -> None:
+        descending = not self.sort_descending.get(column, False)
+        self.sort_descending[column] = descending
+        self.rows = sort_rows(self.rows, column, descending)
+        self._refresh_table()
+        self._set_status(status_summary(self.rows))
+
+    def set_selected_status(self, status: str) -> None:
+        selected = self._selected_book_ids()
+        if not selected:
+            messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
+            return
+        try:
+            self.rows = update_rows_status(self.rows, selected, status)
+        except ValueError as exc:
+            messagebox.showerror("Chyba", str(exc))
+            return
+        self._refresh_table()
+        self._set_status(status_summary(self.rows))
+
+    def apply_selected_url(self) -> None:
+        selected = self._selected_book_ids()
+        if not selected:
+            messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
+            return
+        if len(selected) > 1:
+            messagebox.showinfo("Jeden radek", "Odkaz upravuj jen u jedne vybrane knihy.")
+            return
+        index = self._selected_index()
+        if index is None:
+            return
+        self.rows[index] = update_row(self.rows[index], self.rows[index].status, self.edit_url_var.get())
+        self._refresh_table()
+        self._set_status(status_summary(self.rows))
+
+    def open_selected_url(self) -> None:
+        index = self._selected_index()
+        if index is None:
+            messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
+            return
+        url = self.rows[index].chosen_url.strip()
+        if not url:
+            messagebox.showinfo("Bez odkazu", "Vybrany radek nema odkaz.")
+            return
+        webbrowser.open(url)
+
+    def run_preview(self) -> None:
+        if not self.save_csv(show_message=False):
+            return
+        args = SimpleNamespace(
+            library=cme.DEFAULT_LIBRARY,
+            book_id=None,
+            limit=None,
+            sleep=1.0,
+            overwrite=False,
+        )
+        self._run_background("Nacitani novych knih", lambda: cme.run_preview(args), reload_after=True)
+
+    def run_apply(self) -> None:
+        confirmed, allow_force = self.ask_apply_confirmation()
+        if not confirmed:
+            return
+        if not self.save_csv(show_message=False):
+            return
+        args = SimpleNamespace(
+            library=cme.DEFAULT_LIBRARY,
+            book_id=None,
+            limit=None,
+            sleep=1.0,
+            overwrite=False,
+        )
+        action = make_apply_action(args=args, allow_force=allow_force)
+        self._run_background("Zapis do Calibre", action, reload_after=True)
+
+    def ask_apply_confirmation(self) -> tuple[bool, bool]:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Zapsat do Calibre")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        allow_force_var = tk.BooleanVar(value=True)
+        result = {"confirmed": False}
+
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill=tk.BOTH, expand=True)
+        message = (
+            "Appka udela:\n"
+            "1. ulozi CSV\n"
+            "2. pokusi se zavrit Calibre\n"
+            "3. zapise metadata\n"
+            "4. nacte nove knihy"
+        )
+        ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
+        ttk.Checkbutton(
+            body,
+            text="Kdyz to nepujde normalne, vynutit zavreni Calibre pres /F",
+            variable=allow_force_var,
+        ).pack(anchor="w", pady=(12, 0))
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(14, 0))
+
+        def confirm() -> None:
+            result["confirmed"] = True
+            dialog.destroy()
+
+        def cancel() -> None:
+            dialog.destroy()
+
+        cancel_button = ttk.Button(buttons, text="Zrusit", command=cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=(6, 0))
+        confirm_button = ttk.Button(buttons, text="Pokracovat", command=confirm)
+        confirm_button.pack(side=tk.RIGHT)
+        bind_default_dialog_actions(dialog, confirm, cancel, confirm_button)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        center_dialog(dialog, self.root)
+        dialog.wait_window()
+        return result["confirmed"], bool(allow_force_var.get())
+
+    def _run_background(self, title: str, action: Callable[[], int], reload_after: bool) -> None:
+        if self.worker_running:
+            messagebox.showinfo("Bezi akce", "Pockej, az skonci aktualni akce.")
+            return
+        self.worker_running = True
+        self._set_buttons_enabled(False)
+        self._write_output(f"{title}...")
+        self._set_status(title)
+
+        def worker() -> None:
+            buffer = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                    result = action()
+                text = buffer.getvalue().strip()
+            except Exception as exc:
+                result = 1
+                text = f"Chyba: {exc}"
+            self.root.after(0, lambda: self._finish_background(title, result, text, reload_after))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_background(self, title: str, result: int, text: str, reload_after: bool) -> None:
+        self.worker_running = False
+        self._set_buttons_enabled(True)
+        if reload_after and result == 0:
+            self.load_csv(show_message=False)
+        suffix = "OK" if result == 0 else "CHYBA"
+        output = text or "(bez vystupu)"
+        self._write_output(f"{title}: {suffix}\n\n{output}")
+        self._set_status(f"{title}: {suffix}. {status_summary(self.rows)}")
+
+    def _set_buttons_enabled(self, enabled: bool) -> None:
+        state = tk.NORMAL if enabled else tk.DISABLED
+        for button in self.buttons:
+            button.configure(state=state)
+
+    def _write_output(self, text: str) -> None:
+        self.output.delete("1.0", tk.END)
+        self.output.insert(tk.END, text)
+
+    def _set_status(self, text: str) -> None:
+        self.status_var.set(text)
+
+
+def main() -> int:
+    # Dvojklik na .py nemusi startovat ve slozce projektu, proto se sem prepneme.
+    os.chdir(APP_DIR)
+    root = tk.Tk()
+    CalibreMetaApp(root)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,17 @@
+# Ignoruje lokalni data Calibre knihovny a generovane vystupy appky.
+
+matches.csv
+matches.bak
+settings.json
+
+backups/
+apply-results/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
