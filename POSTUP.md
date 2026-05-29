@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.8`
+Aktualni verze: `0.0.9`
 
 Nejjednodussi pouziti:
 
@@ -38,8 +38,9 @@ V appce:
 1. ulozi `matches.csv`
 2. pokusi se normalne zavrit Calibre
 3. zapise metadata
-4. po zapisu nacte nove knihy
-5. znovu nacte `matches.csv` do tabulky
+4. hotove `approve` radky zmeni na `skip`
+5. po zapisu nacte nove knihy
+6. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.

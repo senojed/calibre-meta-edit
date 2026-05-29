@@ -382,6 +382,60 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             self.assertIn("--field", calls[0])
             self.assertIn("comments:", next(arg for arg in calls[0] if arg.startswith("comments:")))
 
+    def test_run_apply_marks_finished_approved_rows_as_skip_in_matches_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            rows = [
+                cme.MatchRow(1, "Zapsana", "Autor", "approve", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
+                cme.MatchRow(2, "Chybna", "Autor", "approve", "https://www.databazeknih.cz/knihy/b-2", "", "manual", "manual"),
+                cme.MatchRow(3, "Uz mela odkaz", "Autor", "approve", "https://www.databazeknih.cz/knihy/c-3", "", "manual", "manual"),
+                cme.MatchRow(4, "Jen review", "Autor", "review", "https://www.databazeknih.cz/knihy/d-4", "", "manual", "manual"),
+                cme.MatchRow(5, "Spatny odkaz", "Autor", "approve", "https://example.com/spatne", "", "manual", "manual"),
+            ]
+            cme.write_matches_csv(matches_path, rows, overwrite=False)
+
+            original_matches_path = cme.MATCHES_PATH
+            original_find_sidecars = cme.find_sqlite_sidecars
+            original_find_calibredb = cme.find_calibredb
+            original_smoke = cme.run_calibredb_smoke
+            original_create_backup = cme.create_backup
+            original_apply_results_path = cme.apply_results_path
+            original_apply_match_row = cme.apply_match_row
+            try:
+                cme.MATCHES_PATH = matches_path
+                cme.find_sqlite_sidecars = lambda library: []
+                cme.find_calibredb = lambda: r"C:\calibredb.exe"
+                cme.run_calibredb_smoke = lambda calibredb_path, library: cme.CommandResult(0, "ok", "")
+                cme.create_backup = lambda library, backups_dir: Path(tmp) / "metadata-backup.db"
+                cme.apply_results_path = lambda timestamp: Path(tmp) / "apply-results.csv"
+
+                def fake_apply_match_row(row, library, calibredb_path):
+                    if row.book_id == 1:
+                        return cme.ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
+                    if row.book_id == 2:
+                        return cme.ApplyResult(row.book_id, row.title, "failed", row.chosen_url, "docasna chyba")
+                    if row.book_id == 3:
+                        return cme.ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+                    return cme.ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
+
+                cme.apply_match_row = fake_apply_match_row
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = cme.run_apply(SimpleNamespace(library="library", book_id=None, limit=None))
+            finally:
+                cme.MATCHES_PATH = original_matches_path
+                cme.find_sqlite_sidecars = original_find_sidecars
+                cme.find_calibredb = original_find_calibredb
+                cme.run_calibredb_smoke = original_smoke
+                cme.create_backup = original_create_backup
+                cme.apply_results_path = original_apply_results_path
+                cme.apply_match_row = original_apply_match_row
+
+            updated_rows = cme.read_matches_csv(matches_path)
+
+        self.assertEqual(result, 1)
+        self.assertEqual([row.status for row in updated_rows], ["skip", "approve", "skip", "review", "approve"])
+
     def test_repair_book_comment_target_updates_old_databaze_link(self):
         book = cme.Book(
             1,

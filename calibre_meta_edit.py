@@ -651,6 +651,34 @@ def _is_global_calibredb_error(error: str) -> bool:
     return any(word in lowered for word in ("lock", "locked", "spuštěn jiný", "database is locked", "library"))
 
 
+def _is_finished_apply_result(result: ApplyResult) -> bool:
+    """Pozna vysledek, ktery uz neni potreba znovu zkouset."""
+    return result.status == "updated" or (result.status == "skipped" and not result.error)
+
+
+def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence[ApplyResult]) -> list[MatchRow]:
+    """Po zapisu prepne hotove approve radky na skip, aby se priste znovu nenabizely."""
+    finished_ids = {result.book_id for result in results if _is_finished_apply_result(result)}
+    updated_rows: list[MatchRow] = []
+    for row in rows:
+        if row.status == "approve" and row.book_id in finished_ids:
+            updated_rows.append(
+                MatchRow(
+                    row.book_id,
+                    row.title,
+                    row.authors,
+                    "skip",
+                    row.chosen_url,
+                    row.candidate_urls,
+                    row.confidence,
+                    row.reason,
+                )
+            )
+            continue
+        updated_rows.append(row)
+    return updated_rows
+
+
 def run_apply(args: argparse.Namespace) -> int:
     library = Path(args.library)
     sidecars = find_sqlite_sidecars(library)
@@ -671,7 +699,8 @@ def run_apply(args: argparse.Namespace) -> int:
         print((smoke.stderr or smoke.stdout).strip())
         return 1
 
-    rows = select_match_rows(read_matches_csv(MATCHES_PATH), book_id=args.book_id, limit=args.limit)
+    all_rows = read_matches_csv(MATCHES_PATH)
+    rows = select_match_rows(all_rows, book_id=args.book_id, limit=args.limit)
     writable_rows = [row for row in rows if row.status == "approve" and is_valid_apply_url(row.chosen_url)]
     if not writable_rows:
         print("Neni co zapisovat. updated=0")
@@ -694,6 +723,11 @@ def run_apply(args: argparse.Namespace) -> int:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     results_path = apply_results_path(stamp)
     write_apply_results(results_path, results)
+    updated_all_rows = mark_finished_apply_rows_skipped(all_rows, results)
+    changed_rows = sum(1 for old, new in zip(all_rows, updated_all_rows) if old.status != new.status)
+    if changed_rows:
+        write_matches_csv(MATCHES_PATH, updated_all_rows, overwrite=True)
+        print(f"matches.csv: {changed_rows} hotovych radku zmeneno na skip")
     counts = {status: sum(1 for result in results if result.status == status) for status in ("updated", "skipped", "failed")}
     print(f"Vysledek: {results_path}")
     print(f"updated={counts['updated']} skipped={counts['skipped']} failed={counts['failed']}")

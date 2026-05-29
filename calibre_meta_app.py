@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.8"
+APP_VERSION = "0.0.9"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
