@@ -3,6 +3,7 @@
 import contextlib
 import csv
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +14,46 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.1")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.1")
+        self.assertEqual(app.APP_VERSION, "0.0.2")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.2")
+
+    def test_initial_library_path_prefers_saved_settings_then_calibre_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            calibre_config_path = Path(tmp) / "global.py.json"
+            settings_path.write_text(json.dumps({"library_path": "D:\\Knihy"}), encoding="utf-8")
+            calibre_config_path.write_text(json.dumps({"library_path": "E:\\Calibre"}), encoding="utf-8")
+
+            selected = app.initial_library_path(settings_path, calibre_config_path)
+
+        self.assertEqual(selected, "D:\\Knihy")
+
+    def test_initial_library_path_uses_calibre_config_when_settings_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calibre_config_path = Path(tmp) / "global.py.json"
+            calibre_config_path.write_text(json.dumps({"library_path": "E:\\Calibre"}), encoding="utf-8")
+
+            selected = app.initial_library_path(Path(tmp) / "missing.json", calibre_config_path)
+
+        self.assertEqual(selected, "E:\\Calibre")
+
+    def test_save_library_path_writes_settings_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+
+            app.save_library_path("D:\\Knihy", settings_path)
+
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(data, {"library_path": "D:\\Knihy"})
+
+    def test_make_script_args_uses_selected_library(self):
+        args = app.make_script_args("D:\\Knihy")
+
+        self.assertEqual(args.library, "D:\\Knihy")
+        self.assertIsNone(args.book_id)
+        self.assertIsNone(args.limit)
+        self.assertEqual(args.sleep, 1.0)
+        self.assertFalse(args.overwrite)
 
     def test_button_colors_define_requested_status_and_apply_colors(self):
         self.assertEqual(app.button_colors("approve")["bg"], "#2e7d32")

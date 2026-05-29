@@ -4,7 +4,7 @@ Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.1`
+Aktualni verze: `0.0.2`
 
 Nejjednodussi pouziti:
 
@@ -20,6 +20,9 @@ V appce:
 
 - pri startu se samo nacte `matches.csv`
 - pri startu se zepta, jestli ma rovnou nacist nove knihy
+- pole `Knihovna` ukazuje, s jakou Calibre knihovnou appka pracuje
+- `Zmenit` vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
+- `Pouzit z Calibre` vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
 - klik na hlavicku sloupce seradi tabulku
 - v tabulce vyber jednu nebo vic knih

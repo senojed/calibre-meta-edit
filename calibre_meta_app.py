@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import json
 import os
 import threading
 import webbrowser
@@ -14,13 +15,14 @@ from types import SimpleNamespace
 from typing import Callable, Sequence
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.1"
+APP_VERSION = "0.0.2"
+SETTINGS_PATH = APP_DIR / "settings.json"
 VALID_STATUSES = ("approve", "review", "skip")
 TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
 BUTTON_COLOR_MAP = {
@@ -57,6 +59,69 @@ def bind_default_dialog_actions(
 def app_title() -> str:
     """Vrati titulek hlavniho okna vcetne verze."""
     return f"Calibre Meta Edit {APP_VERSION}"
+
+
+def calibre_config_path(appdata: str | None = None) -> Path | None:
+    """Najde soubor, kam si Calibre uklada aktualni knihovnu."""
+    root = appdata or os.environ.get("APPDATA")
+    if not root:
+        return None
+    return Path(root) / "calibre" / "global.py.json"
+
+
+def read_library_path_from_json(path: Path) -> str | None:
+    """Precte `library_path` z maleho JSON configu."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("library_path") if isinstance(data, dict) else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def read_calibre_library_path(config_path: Path | None = None) -> str | None:
+    """Vrati knihovnu, kterou ma aktualne nastavenou Calibre."""
+    path = config_path if config_path is not None else calibre_config_path()
+    if path is None:
+        return None
+    return read_library_path_from_json(path)
+
+
+def initial_library_path(
+    settings_path: Path = SETTINGS_PATH,
+    calibre_global_config_path: Path | None = None,
+) -> str:
+    """Vybere knihovnu pro start appky: nase nastaveni, Calibre config, fallback."""
+    saved = read_library_path_from_json(settings_path)
+    if saved:
+        return saved
+    calibre_library = read_calibre_library_path(calibre_global_config_path)
+    return calibre_library or cme.DEFAULT_LIBRARY
+
+
+def save_library_path(library: str, settings_path: Path = SETTINGS_PATH) -> None:
+    """Ulozi vybranou knihovnu pro dalsi spusteni appky."""
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"library_path": library}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def make_script_args(library: str) -> SimpleNamespace:
+    """Sestavi parametry pro backend skript ze zvolene knihovny."""
+    return SimpleNamespace(
+        library=library,
+        book_id=None,
+        limit=None,
+        sleep=1.0,
+        overwrite=False,
+    )
 
 
 def center_dialog(dialog: object, parent: object) -> None:
@@ -231,6 +296,7 @@ class CalibreMetaApp:
 
         self.status_var = tk.StringVar(value="Pripraveno")
         self.edit_url_var = tk.StringVar(value="")
+        self.library_var = tk.StringVar(value=initial_library_path())
 
         self.root.title(app_title())
         self.root.geometry("1200x760")
@@ -254,6 +320,14 @@ class CalibreMetaApp:
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
         self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
+
+        library_bar = ttk.Frame(toolbar_container)
+        library_bar.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(library_bar, text="Knihovna").pack(side=tk.LEFT, padx=(0, 6))
+        library_entry = ttk.Entry(library_bar, textvariable=self.library_var, state="readonly")
+        library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self._add_button(library_bar, "Zmenit", self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(library_bar, "Pouzit z Calibre", self.use_calibre_library).pack(side=tk.LEFT)
 
         url_bar = ttk.Frame(toolbar_container)
         url_bar.pack(fill=tk.X, pady=(8, 0))
@@ -333,6 +407,41 @@ class CalibreMetaApp:
             return
         if self.ask_yes_no("Nacist nove knihy", "Chces po startu rovnou nacist nove knihy?"):
             self.run_preview()
+
+    def library_path(self) -> str:
+        """Vrati aktualni knihovnu z horniho pole appky."""
+        return self.library_var.get().strip() or cme.DEFAULT_LIBRARY
+
+    def choose_library(self) -> None:
+        current = self.library_path()
+        initial_dir = current if Path(current).exists() else str(Path.home())
+        selected = filedialog.askdirectory(
+            parent=self.root,
+            title="Vyber Calibre knihovnu",
+            initialdir=initial_dir,
+        )
+        if selected:
+            self.set_library_path(selected)
+
+    def use_calibre_library(self) -> None:
+        library = read_calibre_library_path()
+        if not library:
+            messagebox.showerror("Calibre", "Nenasel jsem aktualni knihovnu v Calibre configu.")
+            return
+        self.set_library_path(library)
+
+    def set_library_path(self, library: str) -> bool:
+        library = library.strip()
+        if not library:
+            messagebox.showerror("Knihovna", "Cesta ke knihovne je prazdna.")
+            return False
+        if not cme.metadata_db_path(library).exists():
+            messagebox.showerror("Knihovna", f"Ve slozce nevidim metadata.db:\n{library}")
+            return False
+        save_library_path(library)
+        self.library_var.set(library)
+        self._set_status(f"Knihovna: {library}")
+        return True
 
     def ask_yes_no(self, title: str, message: str, default_yes: bool = True) -> bool:
         dialog = tk.Toplevel(self.root)
@@ -483,13 +592,7 @@ class CalibreMetaApp:
     def run_preview(self) -> None:
         if not self.save_csv(show_message=False):
             return
-        args = SimpleNamespace(
-            library=cme.DEFAULT_LIBRARY,
-            book_id=None,
-            limit=None,
-            sleep=1.0,
-            overwrite=False,
-        )
+        args = make_script_args(self.library_path())
         self._run_background("Nacitani novych knih", lambda: cme.run_preview(args), reload_after=True)
 
     def run_apply(self) -> None:
@@ -498,13 +601,7 @@ class CalibreMetaApp:
             return
         if not self.save_csv(show_message=False):
             return
-        args = SimpleNamespace(
-            library=cme.DEFAULT_LIBRARY,
-            book_id=None,
-            limit=None,
-            sleep=1.0,
-            overwrite=False,
-        )
+        args = make_script_args(self.library_path())
         action = make_apply_action(args=args, allow_force=allow_force)
         self._run_background("Zapis do Calibre", action, reload_after=True)
 
