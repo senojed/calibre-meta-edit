@@ -3,11 +3,30 @@
 ## Summary
 
 - Vytvorit maly Python skript v `C:\Users\Honza\Nextcloud\Jan\PROJECTS\calibre-meta-edit`.
-- Cil: ke kniham v Calibre knihovne doplnit nahoru do komentare HTML odkaz na Databazi knih.
+- Cil: ke kniham v Calibre knihovne z Databaze knih doplnit odkaz, hodnoceni, text O knize a vybrana metadata.
 - Bezpecny rezim: nejdriv nahled do CSV, zapis az druhym prikazem.
 - Pred kazdym zapisem se vytvori zaloha databaze `metadata.db`.
 - Pouzit jen Python standard library; zadne externi balicky.
 - Testy psat pres `unittest` ze standard library.
+
+## Update 0.0.10 - metadata z detailu knihy
+
+- `apply` pro kazdy `approve` radek stahne detail knihy z `https://www.databazeknih.cz/prehled-knihy/...`.
+- Parser detailu bere:
+  - `datePublished` ze schema.org JSON-LD -> Calibre `pubdate`, jen rok
+  - `publisher` ze schema.org JSON-LD -> Calibre `publisher`
+  - `genre` ze schema.org JSON-LD -> prvni cast Calibre `tags`
+  - pravy box `Stitky knihy` -> prida za zanry do Calibre `tags`
+  - viditelne hodnoceni z `.ratValue` -> komentar jako samostatny bold radek
+  - sekci `O knize` z prehledu -> komentar pod hodnoceni
+- Duplicitni tagy se zahodi podle normalizovaneho textu, poradi zustane: zanry, potom spodní stitky.
+- Komentar se pri zapisu kompletne prepise. Novy format:
+  - odkaz na Databazi knih
+  - prazdny odstup
+  - bold hodnoceni, napr. `89 %`
+  - prazdny odstup
+  - text `O knize`
+- Kdyz detail nejde stahnout, kniha se nezapise, vysledek bude `failed` a radek zustane `approve`.
 
 ## Key Changes
 
@@ -39,11 +58,9 @@
   - existujici radky v `matches.csv` zustanou zachovane, vcetne rucnich uprav `status`
 - Zapis komentaru:
   - jen radky `status=approve`
-  - `apply` pred zapisem znovu nacte aktualni komentar knihy z Calibre databaze
-  - pokud aktualni komentar existuje, odkaz se vlozi nahoru
-  - pokud aktualni komentar uz obsahuje `databazeknih.cz`, kniha se preskoci
-  - pokud je aktualni komentar prazdny, novy komentar bude jen `link_html`
-  - jinak novy komentar bude `link_html + "\n" + aktualni_komentar.lstrip()`
+  - `apply` stahne detail Databaze knih a prepise komentar novym formatem
+  - puvodni komentar se nezachovava
+  - zapisuje se i kdyz aktualni komentar uz obsahuje `databazeknih.cz`
   - HTML format bude jako u `Lod osudu`:
 
 ```html
@@ -136,8 +153,8 @@
 - Pred zapisem skript provede read-only smoke test pres `calibredb list --with-library ... --limit 1`.
 - Volani `calibredb` musi jit pres `subprocess.run([...])` bez shellu, aby HTML komentare s `<`, `>`, uvozovkami a diakritikou nerozbilo Windows shell quotovani.
 - `apply` zapise jen radky, kde `status=approve` a `chosen_url` zacina presne `https://www.databazeknih.cz/knihy/`.
-- Pred kazdym zapisem `apply` znovu nacte aktualni komentar podle `book_id`; nepouziva komentar ulozeny z doby `preview`.
-- Kdyz aktualni komentar uz obsahuje `databazeknih.cz`, radek oznaci ve vysledku jako `skipped` a knihu nezapise.
+- Pred kazdym zapisem `apply` stahne aktualni detail knihy z Databaze knih.
+- Kdyz stazeni detailu selze, radek oznaci jako `failed` a knihu nezapise.
 - `--book-id` plati pro `preview` i `apply`; v `preview` filtruje knihy z databaze, v `apply` filtruje radky z `matches.csv`.
 - Kdyz jsou zadane `--book-id` i `--limit`, `--book-id` ma prednost a `--limit` se ignoruje.
 - Kazdy zapis knihy je samostatne volani `calibredb set_metadata`.
@@ -145,7 +162,7 @@
 - Kdyz selze zapis jedne knihy, skript zapise chybu do `apply-results-YYYYMMDD-HHMMSS.csv`, pokracuje dalsi knihou a na konci vypise souhrn `updated/skipped/failed`.
 - Kdyz chyba vypada jako globalni problem knihovny, napr. lock, nedostupna cesta nebo selhani smoke testu, skript ukonci zbytek batch bez dalsich zapisu.
 - Kdyz je Calibre spustene a `calibredb` odmitne pristup kvuli locku, skript skonci s jasnou hlaskou: zavrit Calibre GUI/server zapisujici do knihovny a spustit `apply` znovu.
-- Destruktivni prepis komentaru nebude. Jen vlozeni odkazu nahoru.
+- Komentar se prepisuje zamerne. Zaloha `metadata.db` pred zapisem je povinna.
 
 ## Test Plan
 
@@ -163,11 +180,11 @@
 - Unit test parseru proti ulozene HTML fixture bez site.
 - Unit test UNC read-only URI builderu:
   - UNC cesta se prevede na `file:////server/share/path/metadata.db?mode=ro`
-- Unit test vlozeni komentare:
-  - prazdny komentar
-  - existujici komentar
-  - komentar uz ma `databazeknih.cz`
-  - `apply` pouzije aktualni komentar nacteny pri zapisu, ne stav z `preview`
+- Unit test detailu knihy:
+  - parser vytahne rok, vydavatele, zanry, spodní stitky, hodnoceni a O knize
+  - komentare se skladaji jako odkaz + bold hodnoceni + O knize
+  - `apply` posila do `calibredb` pole `comments`, `pubdate`, `publisher`, `tags`
+  - pri chybe stazeni detailu se nezavola `calibredb`
 - Unit test nalezeni `calibredb`:
   - preferuje `PATH`
   - pouzije fallback `C:\Program Files\Calibre2\calibredb.exe`
@@ -201,7 +218,7 @@
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
-- Chces zachovat stare komentare.
+- Stare komentare se pri zapisu prepisuji novym formatem z Databaze knih.
 - Chces stejny styl odkazu jako vzorova `Lod osudu`.
 - Nejasne shody se nebudou zapisovat automaticky.
 - Pred kazdym zapisem chces lokalni zalohu `metadata.db`.

@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.9"
+APP_VERSION = "0.0.10"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -740,8 +740,9 @@ class CalibreMetaApp:
             "Appka udela:\n"
             "1. ulozi CSV\n"
             "2. pokusi se zavrit Calibre\n"
-            "3. zapise metadata\n"
-            "4. nacte nove knihy"
+            "3. stahne detail z Databaze knih\n"
+            "4. prepise komentar a metadata\n"
+            "5. nacte nove knihy"
         )
         ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
         ttk.Checkbutton(

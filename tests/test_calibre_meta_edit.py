@@ -22,6 +22,12 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.databazeknih.cz/knihy/foo-123",
         )
 
+    def test_book_url_converts_to_overview_url_for_detail_fetch(self):
+        self.assertEqual(
+            cme.book_url_to_overview_url("https://www.databazeknih.cz/knihy/foo-123"),
+            "https://www.databazeknih.cz/prehled-knihy/foo-123",
+        )
+
     def test_build_search_url_uses_quote_plus_for_all_authors(self):
         url = cme.build_search_url("Loď osudu", ["Robin Hobb", "Megan Lindholm"])
         self.assertEqual(
@@ -59,6 +65,23 @@ class CommentTests(unittest.TestCase):
             cme.format_link_html(url) + "\n<p>Původní popis</p>",
         )
 
+    def test_format_enriched_comment_overwrites_with_link_rating_and_about_text(self):
+        url = "https://www.databazeknih.cz/knihy/foo-123"
+        detail = cme.BookDetailMetadata(
+            published_year="2013",
+            publisher="Fantom Print",
+            tags=["Literatura svetova", "Romany"],
+            rating_percent="89 %",
+            about_text="Popis knihy & dalsi text.",
+        )
+
+        comment = cme.format_enriched_comment(url, detail)
+
+        self.assertIn('<a href="https://www.databazeknih.cz/knihy/foo-123" target="_blank">', comment)
+        self.assertIn("<p><strong>89 %</strong></p>", comment)
+        self.assertIn("<p>Popis knihy &amp; dalsi text.</p>", comment)
+        self.assertNotIn("Puvodni", comment)
+
     def test_add_target_blank_repairs_only_databaze_links(self):
         comment = (
             '<p><a href="https://www.databazeknih.cz/knihy/foo-123">db</a></p>'
@@ -88,6 +111,41 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(candidates[0].title, "Loď osudu")
         self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")
         self.assertIn("Robin Hobb", candidates[0].text)
+
+    def test_parse_book_detail_metadata_reads_json_ld_about_rating_and_user_tags(self):
+        html = """
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Book",
+          "datePublished": "2013-01-01",
+          "publisher": [{"@type": "Organization", "name": "Fantom Print"}],
+          "genre": ["Literatura svetova", "Romany", "Fantasy"],
+          "aggregateRating": {"ratingValue": "4.6", "bestRating": "5"}
+        }
+        </script>
+        <div class="rating_container">
+          <div class='ratValue'>89 <em>%</em></div>
+        </div>
+        <div class="gridMain">
+          <h2>O knize <em>Lod osudu</em></h2>
+          <p class='new2 odtop'>Prvni cast.
+          <span class='end_text'>Druha cast.</span><a class='show_hide_more'>... cely text</a></p>
+        </div>
+        <div class="whiteBoxLight">
+          <h3 class="lora"><a href='/seznam-stitku'>Stitky</a> knihy</h3>
+          <a class="tag" href="/stitky/draci-16">draci</a>
+          <a class="tag" href="/stitky/fantasy-18630">fantasy</a>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.published_year, "2013")
+        self.assertEqual(detail.publisher, "Fantom Print")
+        self.assertEqual(detail.rating_percent, "89 %")
+        self.assertEqual(detail.about_text, "Prvni cast. Druha cast.")
+        self.assertEqual(detail.tags, ["Literatura svetova", "Romany", "Fantasy", "draci"])
 
     def test_match_book_approves_exact_title_and_author(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
@@ -345,24 +403,37 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/knihy/foo-123"))
         self.assertFalse(cme.is_valid_apply_url("https://www.databazeknih.cz/prehled-knihy/foo-123"))
 
-    def test_apply_uses_current_comment_and_skips_already_linked_books(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "metadata.db"
-            connection = sqlite3.connect(db_path)
-            connection.execute("create table comments (book integer primary key, text text)")
-            connection.execute(
-                "insert into comments(book, text) values(?, ?)",
-                (1, '<a href="https://www.databazeknih.cz/knihy/existing-1">x</a>'),
-            )
-            connection.commit()
-            connection.close()
+    def test_apply_match_row_overwrites_comment_and_metadata_from_databaze_detail(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
+        calls = []
+        fetched_urls = []
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "2013-01-01", "publisher": [{"name": "Fantom Print"}], "genre": ["Fantasy"]}
+        </script>
+        <div class='ratValue'>89 <em>%</em></div>
+        <h2>O knize <em>Kniha</em></h2><p class='new2 odtop'>Novy popis.</p>
+        <h3><a>Stitky</a> knihy</h3><a class="tag">draci</a>
+        """
 
-            row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
-            calls = []
-            result = cme.apply_match_row(row, Path(tmp), r"C:\calibredb.exe", lambda args: calls.append(args) or cme.CommandResult(0, "", ""))
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: fetched_urls.append(url) or detail_html,
+        )
 
-            self.assertEqual(result.status, "skipped")
-            self.assertEqual(calls, [])
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(fetched_urls, ["https://www.databazeknih.cz/prehled-knihy/new-2"])
+        self.assertEqual(calls[0][0], r"C:\calibredb.exe")
+        self.assertIn("--field", calls[0])
+        self.assertIn("pubdate:2013", calls[0])
+        self.assertIn("publisher:Fantom Print", calls[0])
+        self.assertIn("tags:Fantasy,draci", calls[0])
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("<strong>89 %</strong>", comments_field)
+        self.assertIn("Novy popis.", comments_field)
 
     def test_apply_match_row_calls_calibredb_with_argument_list(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -375,12 +446,37 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
             row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
             calls = []
-            result = cme.apply_match_row(row, Path(tmp), r"C:\calibredb.exe", lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""))
+            result = cme.apply_match_row(
+                row,
+                Path(tmp),
+                r"C:\calibredb.exe",
+                runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+                fetcher=lambda url: "<script type='application/ld+json'>{\"@type\":\"Book\"}</script>",
+            )
 
             self.assertEqual(result.status, "updated")
             self.assertEqual(calls[0][0], r"C:\calibredb.exe")
             self.assertIn("--field", calls[0])
             self.assertIn("comments:", next(arg for arg in calls[0] if arg.startswith("comments:")))
+
+    def test_apply_match_row_fails_without_writing_when_detail_fetch_fails(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
+        calls = []
+
+        def fetcher(url):
+            raise RuntimeError("http 500")
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("detail-fetch-error", result.error)
+        self.assertEqual(calls, [])
 
     def test_run_apply_marks_finished_approved_rows_as_skip_in_matches_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,9 +1,11 @@
-# Skript pripravi nahled odkazu na Databazi knih a bezpecne je vlozi do komentaru knih v Calibre.
+# Skript pripravi nahled odkazu na Databazi knih a bezpecne zapise metadata do Calibre.
 
 from __future__ import annotations
 
 import argparse
 import csv
+import html
+import json
 import re
 import shutil
 import sqlite3
@@ -69,6 +71,15 @@ class MatchRow:
 
 
 @dataclass(frozen=True)
+class BookDetailMetadata:
+    published_year: str = ""
+    publisher: str = ""
+    tags: list[str] | None = None
+    rating_percent: str = ""
+    about_text: str = ""
+
+
+@dataclass(frozen=True)
 class CommandResult:
     returncode: int
     stdout: str
@@ -114,6 +125,14 @@ def overview_to_book_url(url: str) -> str:
     return clean.replace(BASE_URL + "/prehled-knihy/", BASE_URL + "/knihy/", 1)
 
 
+def book_url_to_overview_url(url: str) -> str:
+    clean = url.split("#", 1)[0].split("?", 1)[0]
+    if clean.startswith("/"):
+        clean = BASE_URL + clean
+    clean = clean.replace("http://www.databazeknih.cz/", "https://www.databazeknih.cz/", 1)
+    return clean.replace(BASE_URL + "/knihy/", BASE_URL + "/prehled-knihy/", 1)
+
+
 def build_search_url(title: str, authors: Sequence[str]) -> str:
     query = title + " " + " ".join(authors)
     return SEARCH_URL + urllib.parse.quote_plus(query.strip())
@@ -121,6 +140,21 @@ def build_search_url(title: str, authors: Sequence[str]) -> str:
 
 def format_link_html(url: str) -> str:
     return f'<div>\n<p><a href="{url}" target="_blank"><span style="color: #6cb4ee">{url}</span></a></p></div>'
+
+
+def format_enriched_comment(url: str, detail: BookDetailMetadata) -> str:
+    """Vytvori novy Calibre komentar: odkaz, hodnoceni a text O knize."""
+    safe_url = html.escape(url, quote=True)
+    parts = [
+        "<div>",
+        f'<p><a href="{safe_url}" target="_blank"><span style="color: #6cb4ee">{safe_url}</span></a></p>',
+    ]
+    if detail.rating_percent:
+        parts.append(f"<p><strong>{html.escape(detail.rating_percent)}</strong></p>")
+    if detail.about_text:
+        parts.append(f"<p>{html.escape(detail.about_text)}</p>")
+    parts.append("</div>")
+    return "\n".join(parts)
 
 
 def add_target_blank_to_databaze_links(comment: str | None) -> str:
@@ -234,6 +268,220 @@ def parse_search_results(html: str) -> list[Candidate]:
     parser.feed(html)
     parser.close()
     return parser.candidates
+
+
+def _clean_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+class BookDetailParser(HTMLParser):
+    """Parser detailu knihy. JSON-LD bere pro metadata, HTML pro plny text O knize."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.json_ld_blocks: list[str] = []
+        self.rating_percent = ""
+        self.about_text = ""
+        self.user_tags: list[str] = []
+
+        self._json_parts: list[str] = []
+        self._inside_json_ld = False
+        self._rating_parts: list[str] = []
+        self._rating_depth = 0
+        self._h2_parts: list[str] = []
+        self._inside_h2 = False
+        self._about_heading_seen = False
+        self._about_parts: list[str] = []
+        self._about_depth = 0
+        self._skip_depth = 0
+        self._tag_parts: list[str] = []
+        self._inside_user_tag = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        classes = set(attrs_dict.get("class", "").split())
+        lowered_tag = tag.lower()
+
+        if lowered_tag == "script" and attrs_dict.get("type", "").lower() == "application/ld+json":
+            self._inside_json_ld = True
+            self._json_parts = []
+            return
+
+        if "ratValue" in classes:
+            self._rating_depth = 1
+            self._rating_parts = []
+            return
+        if self._rating_depth:
+            self._rating_depth += 1
+
+        if lowered_tag == "h2":
+            self._inside_h2 = True
+            self._h2_parts = []
+
+        if self._about_heading_seen and lowered_tag == "p" and not self.about_text:
+            self._about_depth = 1
+            self._about_parts = []
+            self._about_heading_seen = False
+            return
+        if self._about_depth:
+            self._about_depth += 1
+            if lowered_tag == "a" and "show_hide_more" in classes:
+                self._skip_depth = 1
+                return
+        if self._skip_depth:
+            self._skip_depth += 1
+
+        if lowered_tag == "a" and "tag" in classes:
+            self._inside_user_tag = True
+            self._tag_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered_tag = tag.lower()
+
+        if lowered_tag == "script" and self._inside_json_ld:
+            self.json_ld_blocks.append("".join(self._json_parts))
+            self._inside_json_ld = False
+            self._json_parts = []
+            return
+
+        if self._rating_depth:
+            self._rating_depth -= 1
+            if self._rating_depth == 0:
+                self.rating_percent = _clean_text(" ".join(self._rating_parts))
+
+        if lowered_tag == "h2" and self._inside_h2:
+            if "O knize" in _clean_text(" ".join(self._h2_parts)):
+                self._about_heading_seen = True
+            self._inside_h2 = False
+
+        if self._skip_depth:
+            self._skip_depth -= 1
+
+        if self._about_depth:
+            self._about_depth -= 1
+            if self._about_depth == 0:
+                self.about_text = _clean_text(" ".join(self._about_parts))
+
+        if lowered_tag == "a" and self._inside_user_tag:
+            tag_text = _clean_text(" ".join(self._tag_parts))
+            if tag_text:
+                self.user_tags.append(tag_text)
+            self._inside_user_tag = False
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_json_ld:
+            self._json_parts.append(data)
+        if self._rating_depth:
+            self._rating_parts.append(data)
+        if self._inside_h2:
+            self._h2_parts.append(data)
+        if self._about_depth and not self._skip_depth:
+            self._about_parts.append(data)
+        if self._inside_user_tag:
+            self._tag_parts.append(data)
+
+
+def _json_type_is_book(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "Book"
+    if isinstance(value, list):
+        return "Book" in value
+    return False
+
+
+def _iter_json_dicts(value: object) -> Iterable[dict[str, object]]:
+    if isinstance(value, dict):
+        yield value
+        graph = value.get("@graph")
+        if isinstance(graph, list):
+            for item in graph:
+                if isinstance(item, dict):
+                    yield item
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                yield from _iter_json_dicts(item)
+
+
+def _book_json_from_blocks(blocks: Sequence[str]) -> dict[str, object]:
+    for block in blocks:
+        try:
+            parsed = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        for item in _iter_json_dicts(parsed):
+            if _json_type_is_book(item.get("@type")):
+                return item
+    return {}
+
+
+def _publisher_name(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        name = value.get("name")
+        return name.strip() if isinstance(name, str) else ""
+    if isinstance(value, list):
+        for item in value:
+            name = _publisher_name(item)
+            if name:
+                return name
+    return ""
+
+
+def _genre_tags(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _rating_from_json(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    try:
+        rating_value = float(str(value.get("ratingValue", "")).replace(",", "."))
+        best_rating = float(str(value.get("bestRating", "5")).replace(",", "."))
+    except ValueError:
+        return ""
+    if best_rating <= 0:
+        return ""
+    return f"{round(rating_value / best_rating * 100)} %"
+
+
+def _dedupe_tags(tags: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for tag in tags:
+        cleaned = _clean_text(tag)
+        key = normalize_text(cleaned)
+        if cleaned and key not in seen:
+            seen.add(key)
+            result.append(cleaned)
+    return result
+
+
+def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
+    parser = BookDetailParser()
+    parser.feed(html_text)
+    parser.close()
+
+    book_json = _book_json_from_blocks(parser.json_ld_blocks)
+    published = str(book_json.get("datePublished", ""))
+    year_match = re.search(r"\d{4}", published)
+    description = book_json.get("description", "")
+    about_text = parser.about_text or (_clean_text(description) if isinstance(description, str) else "")
+    rating = parser.rating_percent or _rating_from_json(book_json.get("aggregateRating"))
+    tags = _dedupe_tags(_genre_tags(book_json.get("genre")) + parser.user_tags)
+
+    return BookDetailMetadata(
+        published_year=year_match.group(0) if year_match else "",
+        publisher=_publisher_name(book_json.get("publisher")),
+        tags=tags,
+        rating_percent=rating,
+        about_text=about_text,
+    )
 
 
 def _candidate_urls(candidates: Sequence[Candidate]) -> str:
@@ -503,17 +751,21 @@ def apply_match_row(
     library: str | Path,
     calibredb_path: str,
     runner: Callable[[Sequence[str]], CommandResult] = run_command,
+    fetcher: Callable[[str], str] | None = None,
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
     if not is_valid_apply_url(row.chosen_url):
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
-    current_comment = get_current_comment(library, row.book_id)
-    if comment_has_databaze_link(current_comment):
-        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+    detail_url = book_url_to_overview_url(row.chosen_url)
+    detail_fetcher = fetcher or fetch_text
+    try:
+        detail = parse_book_detail_metadata(detail_fetcher(detail_url))
+    except Exception as exc:
+        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"detail-fetch-error: {exc}")
 
-    new_comment = build_new_comment(row.chosen_url, current_comment)
+    new_comment = format_enriched_comment(row.chosen_url, detail)
     args = [
         calibredb_path,
         "set_metadata",
@@ -523,6 +775,12 @@ def apply_match_row(
         "--field",
         "comments:" + new_comment,
     ]
+    if detail.published_year:
+        args.extend(["--field", "pubdate:" + detail.published_year])
+    if detail.publisher:
+        args.extend(["--field", "publisher:" + detail.publisher])
+    if detail.tags:
+        args.extend(["--field", "tags:" + ",".join(detail.tags)])
     result = runner(args)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()

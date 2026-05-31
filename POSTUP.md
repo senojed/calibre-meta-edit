@@ -1,10 +1,10 @@
 # Jednoduchy postup
 
-Tento skript doplni do komentaru knih v Calibre odkaz na Databazi knih.
+Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.9`
+Aktualni verze: `0.0.10`
 
 Nejjednodussi pouziti:
 
@@ -37,15 +37,19 @@ V appce:
 
 1. ulozi `matches.csv`
 2. pokusi se normalne zavrit Calibre
-3. zapise metadata
-4. hotove `approve` radky zmeni na `skip`
-5. po zapisu nacte nove knihy
-6. znovu nacte `matches.csv` do tabulky
+3. stahne detail knihy z Databaze knih
+4. prepise komentar na odkaz, bold hodnoceni a text O knize
+5. prepise `vydano`, `vydavatel` a `stitky`
+6. do stitku da nejdriv zanry z Databaze knih, potom spodní stitky knihy
+7. hotove `approve` radky zmeni na `skip`
+8. po zapisu nacte nove knihy
+9. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.
 
 Kdyz pri zapisu neco selze, appka vypise `Failed zapisy` ve spodnim vystupu.
+Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `approve`.
 
 `Rebuild CSV` udela:
 
