@@ -147,6 +147,30 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.about_text, "Prvni cast. Druha cast.")
         self.assertEqual(detail.tags, ["Literatura svetova", "Romany", "Fantasy", "draci"])
 
+    def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
+        html = """
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Book",
+          "datePublished": "0101-01-01",
+          "publisher": [{"@type": "Organization", "name": "AF 167"}],
+          "genre": ["Fantasy"]
+        }
+        </script>
+        <div class="lora lineHeightMid">
+          <a href='/zanry/fantasy-21'>Fantasy</a><br />
+          1992
+          <span class='pozn'>,</span>
+          <a href='/nakladatelstvi/af-304'>AF 167</a>
+          <dl class='book-details'></dl>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.published_year, "1992")
+
     def test_match_book_approves_exact_title_and_author(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [cme.Candidate("Loď osudu", "Robin Hobb", "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")]

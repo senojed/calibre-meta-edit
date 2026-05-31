@@ -282,6 +282,7 @@ class BookDetailParser(HTMLParser):
         self.json_ld_blocks: list[str] = []
         self.rating_percent = ""
         self.about_text = ""
+        self.publication_info = ""
         self.user_tags: list[str] = []
 
         self._json_parts: list[str] = []
@@ -296,6 +297,8 @@ class BookDetailParser(HTMLParser):
         self._skip_depth = 0
         self._tag_parts: list[str] = []
         self._inside_user_tag = False
+        self._publication_parts: list[str] = []
+        self._publication_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
@@ -317,6 +320,13 @@ class BookDetailParser(HTMLParser):
         if lowered_tag == "h2":
             self._inside_h2 = True
             self._h2_parts = []
+
+        if lowered_tag == "div" and {"lora", "lineHeightMid"}.issubset(classes):
+            self._publication_depth = 1
+            self._publication_parts = []
+            return
+        if self._publication_depth:
+            self._publication_depth += 1
 
         if self._about_heading_seen and lowered_tag == "p" and not self.about_text:
             self._about_depth = 1
@@ -354,6 +364,11 @@ class BookDetailParser(HTMLParser):
                 self._about_heading_seen = True
             self._inside_h2 = False
 
+        if self._publication_depth:
+            self._publication_depth -= 1
+            if self._publication_depth == 0:
+                self.publication_info = _clean_text(" ".join(self._publication_parts))
+
         if self._skip_depth:
             self._skip_depth -= 1
 
@@ -375,6 +390,8 @@ class BookDetailParser(HTMLParser):
             self._rating_parts.append(data)
         if self._inside_h2:
             self._h2_parts.append(data)
+        if self._publication_depth:
+            self._publication_parts.append(data)
         if self._about_depth and not self._skip_depth:
             self._about_parts.append(data)
         if self._inside_user_tag:
@@ -450,6 +467,12 @@ def _rating_from_json(value: object) -> str:
     return f"{round(rating_value / best_rating * 100)} %"
 
 
+def _first_reasonable_year(text: str) -> str:
+    for match in re.finditer(r"\b(1\d{3}|20\d{2})\b", text):
+        return match.group(1)
+    return ""
+
+
 def _dedupe_tags(tags: Sequence[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -469,14 +492,14 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
 
     book_json = _book_json_from_blocks(parser.json_ld_blocks)
     published = str(book_json.get("datePublished", ""))
-    year_match = re.search(r"\d{4}", published)
+    published_year = _first_reasonable_year(parser.publication_info) or _first_reasonable_year(published)
     description = book_json.get("description", "")
     about_text = parser.about_text or (_clean_text(description) if isinstance(description, str) else "")
     rating = parser.rating_percent or _rating_from_json(book_json.get("aggregateRating"))
     tags = _dedupe_tags(_genre_tags(book_json.get("genre")) + parser.user_tags)
 
     return BookDetailMetadata(
-        published_year=year_match.group(0) if year_match else "",
+        published_year=published_year,
         publisher=_publisher_name(book_json.get("publisher")),
         tags=tags,
         rating_percent=rating,

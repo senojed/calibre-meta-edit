@@ -28,6 +28,12 @@
   - text `O knize`
 - Kdyz detail nejde stahnout, kniha se nezapise, vysledek bude `failed` a radek zustane `approve`.
 
+## Update 0.0.11 - oprava roku vydani
+
+- Nektere stranky Databaze knih maji ve schema.org JSON-LD `datePublished` jako `0101-01-01`.
+- Parser proto preferuje viditelny rok z hlavniho detailu knihy u vydavatele, napr. `1992, AF 167`.
+- JSON-LD rok se pouzije jen jako fallback, pokud je v rozsahu `1000-2099`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
