@@ -539,6 +539,35 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn('href="https://www.databazeknih.cz/prehled-knihy/oldest-1971"', comments_field)
 
+    def test_apply_match_row_fails_when_editions_tab_has_no_parseable_edition(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
+        calls = []
+        overview_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "2016-01-01", "publisher": [{"name": "Argo"}]}
+        </script>
+        <a href='/dalsi-vydani/current-2016'>Vydani <em>3</em></a>
+        """
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/current-2016":
+                return overview_html
+            if url == "https://www.databazeknih.cz/dalsi-vydani/current-2016":
+                return "<p>Bez rozpoznatelneho vydani.</p>"
+            raise AssertionError(url)
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("editions-parse-error", result.error)
+        self.assertEqual(calls, [])
+
     def test_apply_match_row_calls_calibredb_with_argument_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "metadata.db"

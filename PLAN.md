@@ -41,6 +41,11 @@
 - Komentar i `matches.csv` po uspesnem zapisu pouziji odkaz na vydani, ze ktereho se metadata opravdu zapsala.
 - Kdyz seznam vydani nejde precist, zapis knihy skonci jako `failed`, aby se nezapsala nahodna novejsi edice.
 
+## Update 0.0.13 - prisne pouziti zalozky Vydani
+
+- Pokud prehled knihy obsahuje zalozku `Vydani`, `apply` musi vzit rok a vydavatele prave z teto zalozky.
+- Kdyz zalozka `Vydani` existuje, ale parser z ni nenajde zadne vydani, kniha skonci jako `failed` a nic se nezapise.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

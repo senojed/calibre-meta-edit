@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.12")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.12")
+        self.assertEqual(app.APP_VERSION, "0.0.13")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.13")
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
         calls = []

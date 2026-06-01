@@ -901,15 +901,16 @@ def apply_match_row(
             oldest_edition = parse_oldest_edition_metadata(detail_fetcher(editions_url))
         except Exception as exc:
             return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"editions-fetch-error: {exc}")
-        if oldest_edition.published_year or oldest_edition.publisher:
-            detail = BookDetailMetadata(
-                published_year=oldest_edition.published_year or detail.published_year,
-                publisher=oldest_edition.publisher or detail.publisher,
-                tags=detail.tags,
-                rating_percent=detail.rating_percent,
-                about_text=detail.about_text,
-            )
-            written_url = oldest_edition.url or detail_url
+        if not (oldest_edition.published_year or oldest_edition.publisher):
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, "editions-parse-error")
+        detail = BookDetailMetadata(
+            published_year=oldest_edition.published_year or detail.published_year,
+            publisher=oldest_edition.publisher or detail.publisher,
+            tags=detail.tags,
+            rating_percent=detail.rating_percent,
+            about_text=detail.about_text,
+        )
+        written_url = oldest_edition.url or detail_url
 
     new_comment = format_enriched_comment(written_url, detail)
     args = [
