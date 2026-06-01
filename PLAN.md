@@ -63,6 +63,11 @@
 - Legie ma byt druhy zdroj pro povidky a nejiste shody, ne automaticka nahrada Databaze knih.
 - Prvni implementace ma davat Legie kandidaty do `review` a zapisovat je az po rucnim schvaleni.
 
+## Update 0.0.17 - implementacni plan Legie
+
+- Pridan implementacni plan pro CSV schema, Legie parser, audit, apply a app UI.
+- Plan drzi konzervativni pravidlo: Legie kandidat vzdy zacina jako `review`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
