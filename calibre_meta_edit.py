@@ -39,6 +39,8 @@ MATCHES_FIELDS = [
     "candidate_urls",
     "confidence",
     "reason",
+    "source",
+    "work_type",
 ]
 APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error"]
 
@@ -68,6 +70,8 @@ class MatchRow:
     candidate_urls: str
     confidence: str
     reason: str
+    source: str = "databazeknih"
+    work_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -724,6 +728,8 @@ def read_matches_csv(path: Path) -> list[MatchRow]:
                     raw["candidate_urls"],
                     raw["confidence"],
                     raw["reason"],
+                    raw.get("source") or "databazeknih",
+                    raw.get("work_type") or "",
                 )
             )
     return rows
@@ -1083,6 +1089,8 @@ def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence
                     row.candidate_urls,
                     row.confidence,
                     row.reason,
+                    row.source,
+                    row.work_type,
                 )
             )
             continue

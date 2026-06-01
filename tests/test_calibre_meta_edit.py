@@ -291,6 +291,61 @@ class CsvAndFilesystemTests(unittest.TestCase):
             self.assertEqual(rows[0].book_id, 309)
             self.assertEqual(rows[0].title, "Loď osudu")
 
+    def test_read_matches_csv_defaults_source_and_work_type_for_old_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.csv"
+            with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "book_id",
+                        "title",
+                        "authors",
+                        "status",
+                        "chosen_url",
+                        "candidate_urls",
+                        "confidence",
+                        "reason",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow({
+                    "book_id": "429",
+                    "title": "A opice si myslely, ze je to vsechno jen legrace",
+                    "authors": "Orson Scott Card",
+                    "status": "skip",
+                    "chosen_url": "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
+                    "candidate_urls": "",
+                    "confidence": "title-only",
+                    "reason": "title-only",
+                })
+
+            rows = cme.read_matches_csv(path)
+
+        self.assertEqual(rows[0].source, "databazeknih")
+        self.assertEqual(rows[0].work_type, "")
+
+    def test_write_matches_csv_writes_source_and_work_type_columns(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, ze je to vsechno jen legrace",
+            "Orson Scott Card",
+            "review",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "exact-title-author",
+            "legie-story-candidate",
+            "legie",
+            "povidka",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.csv"
+            cme.write_matches_csv(path, [row], overwrite=False)
+            headers = path.read_text(encoding="utf-8-sig").splitlines()[0].split(",")
+
+        self.assertIn("source", headers)
+        self.assertIn("work_type", headers)
+
     def test_filter_new_books_skips_books_already_in_matches_csv(self):
         books = [
             cme.Book(1, "Stara kniha", ["Autor"], ""),
