@@ -171,6 +171,37 @@ class ParserAndMatchingTests(unittest.TestCase):
 
         self.assertEqual(detail.published_year, "1992")
 
+    def test_parse_oldest_edition_metadata_reads_oldest_year_publisher_and_url(self):
+        html = """
+        <a href='/prehled-knihy/wrong-navigation-link'>Dalsi dil</a>
+        <div class="lora lineHeightMid">
+          <a href='/zanry/sci-fi-19'>Sci-fi</a><br />
+          1997
+          <span class='pozn'>,</span>
+          <a href='/nakladatelstvi/baronet-206'>Baronet</a>
+          ,
+          <a href='/nakladatelstvi/knizni-klub-96'>Knizni klub</a>
+        </div>
+        <a class='bigger' href='/prehled-knihy/current-2016'>2001: Vesmirna odysea</a>
+        <p class='new odtopm'>
+          2016<span class="pozn_light">,</span>
+          <a href="/nakladatelstvi/argo-50">Argo</a>
+          ,
+          <a href="/nakladatelstvi/triton-51">Triton</a>
+        </p>
+        <a class='bigger' href='/prehled-knihy/oldest-1971'>2001: Vesmirna odysea</a>
+        <p class='new odtopm'>
+          1971<span class="pozn_light">,</span>
+          <a href="/nakladatelstvi/svoboda-5744">Svoboda</a>
+        <div class='dropdown_black'></div>
+        """
+
+        edition = cme.parse_oldest_edition_metadata(html)
+
+        self.assertEqual(edition.published_year, "1971")
+        self.assertEqual(edition.publisher, "Svoboda")
+        self.assertEqual(edition.url, "https://www.databazeknih.cz/prehled-knihy/oldest-1971")
+
     def test_match_book_approves_exact_title_and_author(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [cme.Candidate("Loď osudu", "Robin Hobb", "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")]
@@ -425,7 +456,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
     def test_is_valid_apply_url_accepts_only_databaze_knih_book_urls(self):
         self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/knihy/foo-123"))
-        self.assertFalse(cme.is_valid_apply_url("https://www.databazeknih.cz/prehled-knihy/foo-123"))
+        self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/prehled-knihy/foo-123"))
 
     def test_apply_match_row_overwrites_comment_and_metadata_from_databaze_detail(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
@@ -458,6 +489,55 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("<strong>89 %</strong>", comments_field)
         self.assertIn("Novy popis.", comments_field)
+
+    def test_apply_match_row_uses_oldest_available_edition_for_pubdate_publisher_and_link(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
+        calls = []
+        fetched_urls = []
+        overview_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "2016-01-01", "publisher": [{"name": "Argo"}], "genre": ["Sci-fi"]}
+        </script>
+        <a href='/dalsi-vydani/current-2016'>Vydani <em>3</em></a>
+        <div class='ratValue'>88 <em>%</em></div>
+        <h2>O knize <em>Kniha</em></h2><p class='new2 odtop'>Popis.</p>
+        """
+        editions_html = """
+        <a class='bigger' href='/prehled-knihy/current-2016'>Kniha</a>
+        <p class='new odtopm'>2016<span>,</span><a href='/nakladatelstvi/argo-50'>Argo</a></p>
+        <a class='bigger' href='/prehled-knihy/oldest-1971'>Kniha</a>
+        <p class='new odtopm'>1971<span>,</span><a href='/nakladatelstvi/svoboda-5744'>Svoboda</a></p>
+        """
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == "https://www.databazeknih.cz/prehled-knihy/current-2016":
+                return overview_html
+            if url == "https://www.databazeknih.cz/dalsi-vydani/current-2016":
+                return editions_html
+            raise AssertionError(url)
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://www.databazeknih.cz/prehled-knihy/oldest-1971")
+        self.assertEqual(
+            fetched_urls,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/current-2016",
+                "https://www.databazeknih.cz/dalsi-vydani/current-2016",
+            ],
+        )
+        self.assertIn("pubdate:1971", calls[0])
+        self.assertIn("publisher:Svoboda", calls[0])
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn('href="https://www.databazeknih.cz/prehled-knihy/oldest-1971"', comments_field)
 
     def test_apply_match_row_calls_calibredb_with_argument_list(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -531,7 +611,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
                 def fake_apply_match_row(row, library, calibredb_path):
                     if row.book_id == 1:
-                        return cme.ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
+                        return cme.ApplyResult(row.book_id, row.title, "updated", "https://www.databazeknih.cz/prehled-knihy/a-1", "")
                     if row.book_id == 2:
                         return cme.ApplyResult(row.book_id, row.title, "failed", row.chosen_url, "docasna chyba")
                     if row.book_id == 3:
@@ -555,6 +635,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertEqual([row.status for row in updated_rows], ["skip", "approve", "skip", "review", "approve"])
+        self.assertEqual(updated_rows[0].chosen_url, "https://www.databazeknih.cz/prehled-knihy/a-1")
 
     def test_repair_book_comment_target_updates_old_databaze_link(self):
         book = cme.Book(

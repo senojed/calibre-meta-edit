@@ -80,6 +80,13 @@ class BookDetailMetadata:
 
 
 @dataclass(frozen=True)
+class EditionMetadata:
+    published_year: str = ""
+    publisher: str = ""
+    url: str = ""
+
+
+@dataclass(frozen=True)
 class CommandResult:
     returncode: int
     stdout: str
@@ -117,19 +124,21 @@ def build_sqlite_readonly_uri(library: str | Path) -> str:
     return "file:///" + quoted_path + "?mode=ro"
 
 
-def overview_to_book_url(url: str) -> str:
-    clean = url.split("#", 1)[0].split("?", 1)[0]
+def databaze_absolute_url(url: str) -> str:
+    """Prevede relativni odkaz z Databaze knih na cistou absolutni URL."""
+    clean = url.strip().split("#", 1)[0].split("?", 1)[0]
     if clean.startswith("/"):
         clean = BASE_URL + clean
-    clean = clean.replace("http://www.databazeknih.cz/", "https://www.databazeknih.cz/", 1)
+    return clean.replace("http://www.databazeknih.cz/", "https://www.databazeknih.cz/", 1)
+
+
+def overview_to_book_url(url: str) -> str:
+    clean = databaze_absolute_url(url)
     return clean.replace(BASE_URL + "/prehled-knihy/", BASE_URL + "/knihy/", 1)
 
 
 def book_url_to_overview_url(url: str) -> str:
-    clean = url.split("#", 1)[0].split("?", 1)[0]
-    if clean.startswith("/"):
-        clean = BASE_URL + clean
-    clean = clean.replace("http://www.databazeknih.cz/", "https://www.databazeknih.cz/", 1)
+    clean = databaze_absolute_url(url)
     return clean.replace(BASE_URL + "/knihy/", BASE_URL + "/prehled-knihy/", 1)
 
 
@@ -283,6 +292,7 @@ class BookDetailParser(HTMLParser):
         self.rating_percent = ""
         self.about_text = ""
         self.publication_info = ""
+        self.editions_url = ""
         self.user_tags: list[str] = []
 
         self._json_parts: list[str] = []
@@ -304,11 +314,15 @@ class BookDetailParser(HTMLParser):
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
         classes = set(attrs_dict.get("class", "").split())
         lowered_tag = tag.lower()
+        href = attrs_dict.get("href", "")
 
         if lowered_tag == "script" and attrs_dict.get("type", "").lower() == "application/ld+json":
             self._inside_json_ld = True
             self._json_parts = []
             return
+
+        if not self.editions_url and "/dalsi-vydani/" in href:
+            self.editions_url = databaze_absolute_url(href)
 
         if "ratValue" in classes:
             self._rating_depth = 1
@@ -398,6 +412,69 @@ class BookDetailParser(HTMLParser):
             self._tag_parts.append(data)
 
 
+class EditionListParser(HTMLParser):
+    """Parser seznamu vydani. Bere jen bloky, kde je odkaz na nakladatelstvi."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.editions: list[EditionMetadata] = []
+        self._last_overview_url = ""
+        self._block_url = ""
+        self._block_parts: list[str] = []
+        self._block_depth = 0
+        self._block_has_publisher = False
+        self._block_tag = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        classes = set(attrs_dict.get("class", "").split())
+        lowered_tag = tag.lower()
+        href = attrs_dict.get("href", "")
+
+        if self._block_depth and self._block_tag == "p" and lowered_tag in {"div", "hr"}:
+            self._finish_block()
+
+        if lowered_tag == "a" and "bigger" in classes and "/prehled-knihy/" in href:
+            self._last_overview_url = databaze_absolute_url(href)
+
+        if self._block_depth:
+            self._block_depth += 1
+            if lowered_tag == "a" and "/nakladatelstvi/" in href:
+                self._block_has_publisher = True
+            return
+
+        is_current_publication = lowered_tag == "div" and {"lora", "lineHeightMid"}.issubset(classes)
+        is_edition_publication = lowered_tag == "p" and {"new", "odtopm"}.issubset(classes)
+        if is_current_publication or is_edition_publication:
+            self._block_depth = 1
+            self._block_tag = lowered_tag
+            self._block_url = self._last_overview_url
+            self._block_parts = []
+            self._block_has_publisher = False
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._block_depth:
+            return
+        self._block_depth -= 1
+        if self._block_depth:
+            return
+        self._finish_block()
+
+    def _finish_block(self) -> None:
+        edition = _publication_metadata_from_text(" ".join(self._block_parts), self._block_url)
+        if self._block_has_publisher and edition.published_year:
+            self.editions.append(edition)
+        self._block_depth = 0
+        self._block_tag = ""
+        self._block_url = ""
+        self._block_parts = []
+        self._block_has_publisher = False
+
+    def handle_data(self, data: str) -> None:
+        if self._block_depth:
+            self._block_parts.append(data)
+
+
 def _json_type_is_book(value: object) -> bool:
     if isinstance(value, str):
         return value == "Book"
@@ -473,6 +550,17 @@ def _first_reasonable_year(text: str) -> str:
     return ""
 
 
+def _publication_metadata_from_text(text: str, url: str = "") -> EditionMetadata:
+    match = re.search(r"\b(1\d{3}|20\d{2})\b", text)
+    if match is None:
+        return EditionMetadata()
+    tail = text[match.end():]
+    tail = re.split(r"\bISBN\b|Koupit|V\S* info", tail, maxsplit=1, flags=re.IGNORECASE)[0]
+    tail = re.sub(r"\s*,\s*", ", ", tail)
+    publisher = _clean_text(tail).strip(" ,")
+    return EditionMetadata(match.group(1), publisher, url)
+
+
 def _dedupe_tags(tags: Sequence[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -483,6 +571,22 @@ def _dedupe_tags(tags: Sequence[str]) -> list[str]:
             seen.add(key)
             result.append(cleaned)
     return result
+
+
+def extract_editions_url(html_text: str) -> str:
+    parser = BookDetailParser()
+    parser.feed(html_text)
+    parser.close()
+    return parser.editions_url
+
+
+def parse_oldest_edition_metadata(html_text: str) -> EditionMetadata:
+    parser = EditionListParser()
+    parser.feed(html_text)
+    parser.close()
+    if not parser.editions:
+        return EditionMetadata()
+    return min(parser.editions, key=lambda edition: int(edition.published_year))
 
 
 def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
@@ -702,7 +806,8 @@ def filter_new_books(books: Sequence[Book], existing_rows: Sequence[MatchRow]) -
 
 
 def is_valid_apply_url(url: str) -> bool:
-    return url.startswith(BASE_URL + "/knihy/")
+    clean = databaze_absolute_url(url)
+    return clean.startswith(BASE_URL + "/knihy/") or clean.startswith(BASE_URL + "/prehled-knihy/")
 
 
 def open_calibre_db_readonly(library: str | Path) -> sqlite3.Connection:
@@ -784,11 +889,29 @@ def apply_match_row(
     detail_url = book_url_to_overview_url(row.chosen_url)
     detail_fetcher = fetcher or fetch_text
     try:
-        detail = parse_book_detail_metadata(detail_fetcher(detail_url))
+        detail_html = detail_fetcher(detail_url)
     except Exception as exc:
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"detail-fetch-error: {exc}")
 
-    new_comment = format_enriched_comment(row.chosen_url, detail)
+    detail = parse_book_detail_metadata(detail_html)
+    written_url = detail_url
+    editions_url = extract_editions_url(detail_html)
+    if editions_url:
+        try:
+            oldest_edition = parse_oldest_edition_metadata(detail_fetcher(editions_url))
+        except Exception as exc:
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"editions-fetch-error: {exc}")
+        if oldest_edition.published_year or oldest_edition.publisher:
+            detail = BookDetailMetadata(
+                published_year=oldest_edition.published_year or detail.published_year,
+                publisher=oldest_edition.publisher or detail.publisher,
+                tags=detail.tags,
+                rating_percent=detail.rating_percent,
+                about_text=detail.about_text,
+            )
+            written_url = oldest_edition.url or detail_url
+
+    new_comment = format_enriched_comment(written_url, detail)
     args = [
         calibredb_path,
         "set_metadata",
@@ -808,7 +931,7 @@ def apply_match_row(
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
-    return ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
+    return ApplyResult(row.book_id, row.title, "updated", written_url, "")
 
 
 def repair_book_comment_target(
@@ -939,17 +1062,18 @@ def _is_finished_apply_result(result: ApplyResult) -> bool:
 
 def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence[ApplyResult]) -> list[MatchRow]:
     """Po zapisu prepne hotove approve radky na skip, aby se priste znovu nenabizely."""
-    finished_ids = {result.book_id for result in results if _is_finished_apply_result(result)}
+    finished_results = {result.book_id: result for result in results if _is_finished_apply_result(result)}
     updated_rows: list[MatchRow] = []
     for row in rows:
-        if row.status == "approve" and row.book_id in finished_ids:
+        if row.status == "approve" and row.book_id in finished_results:
+            result = finished_results[row.book_id]
             updated_rows.append(
                 MatchRow(
                     row.book_id,
                     row.title,
                     row.authors,
                     "skip",
-                    row.chosen_url,
+                    result.chosen_url or row.chosen_url,
                     row.candidate_urls,
                     row.confidence,
                     row.reason,

@@ -34,6 +34,13 @@
 - Parser proto preferuje viditelny rok z hlavniho detailu knihy u vydavatele, napr. `1992, AF 167`.
 - JSON-LD rok se pouzije jen jako fallback, pokud je v rozsahu `1000-2099`.
 
+## Update 0.0.12 - nejstarsi dostupne vydani
+
+- `apply` z prehledu knihy najde odkaz na `dalsi-vydani`.
+- Pokud seznam vydani existuje, skript vezme nejstarsi dostupne vydani a jeho vydavatele.
+- Komentar i `matches.csv` po uspesnem zapisu pouziji odkaz na vydani, ze ktereho se metadata opravdu zapsala.
+- Kdyz seznam vydani nejde precist, zapis knihy skonci jako `failed`, aby se nezapsala nahodna novejsi edice.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
