@@ -14,8 +14,29 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.13")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.13")
+        self.assertEqual(app.APP_VERSION, "0.0.14")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.14")
+
+    def test_schedule_startup_preview_runs_preview_without_question(self):
+        calls = []
+
+        class FakeRoot:
+            def after(self, delay_ms, callback):
+                calls.append((delay_ms, callback))
+
+        app.schedule_startup_preview(FakeRoot(), lambda: calls.append("preview"))
+        calls[0][1]()
+
+        self.assertEqual(calls, [(250, calls[0][1]), "preview"])
+
+    def test_apply_confirmation_message_matches_current_workflow(self):
+        message = app.apply_confirmation_message()
+
+        self.assertIn("ulozi matches.csv", message)
+        self.assertIn("vytvori zalohu metadata.db", message)
+        self.assertIn("zalozku Vydani", message)
+        self.assertIn("nacte nove knihy", message)
+        self.assertNotIn("stahne detail", message)
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
         calls = []

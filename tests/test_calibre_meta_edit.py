@@ -483,7 +483,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(fetched_urls, ["https://www.databazeknih.cz/prehled-knihy/new-2"])
         self.assertEqual(calls[0][0], r"C:\calibredb.exe")
         self.assertIn("--field", calls[0])
-        self.assertIn("pubdate:2013", calls[0])
+        self.assertIn("pubdate:2013-01-01", calls[0])
         self.assertIn("publisher:Fantom Print", calls[0])
         self.assertIn("tags:Fantasy,draci", calls[0])
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
@@ -534,7 +534,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
                 "https://www.databazeknih.cz/dalsi-vydani/current-2016",
             ],
         )
-        self.assertIn("pubdate:1971", calls[0])
+        self.assertIn("pubdate:1971-01-01", calls[0])
         self.assertIn("publisher:Svoboda", calls[0])
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn('href="https://www.databazeknih.cz/prehled-knihy/oldest-1971"', comments_field)

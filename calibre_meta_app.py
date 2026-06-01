@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.13"
+APP_VERSION = "0.0.14"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -85,6 +85,25 @@ def bind_default_dialog_actions(
 def app_title() -> str:
     """Vrati titulek hlavniho okna vcetne verze."""
     return f"Calibre Meta Edit {APP_VERSION}"
+
+
+def apply_confirmation_message() -> str:
+    """Text potvrzeni zapisu do Calibre."""
+    return (
+        "Appka udela:\n"
+        "1. ulozi matches.csv\n"
+        "2. pokusi se zavrit Calibre\n"
+        "3. vytvori zalohu metadata.db\n"
+        "4. u approve radku stahne prehled a zalozku Vydani z Databaze knih\n"
+        "5. zapise komentar, vydano, vydavatele a stitky do Calibre\n"
+        "6. hotove radky zmeni na skip a ulozi matches.csv\n"
+        "7. nacte nove knihy"
+    )
+
+
+def schedule_startup_preview(root: object, preview_func: Callable[[], object]) -> None:
+    """Po startu automaticky spusti nacitani novych knih."""
+    root.after(250, preview_func)
 
 
 def calibre_config_path(appdata: str | None = None) -> Path | None:
@@ -374,7 +393,7 @@ class CalibreMetaApp:
         self.root.geometry("1200x760")
         self._build_ui()
         self.load_csv(show_message=True)
-        self.root.after(250, self.ask_preview_on_start)
+        schedule_startup_preview(self.root, self.run_preview)
 
     def _build_ui(self) -> None:
         toolbar_container = ttk.Frame(self.root, padding=8)
@@ -476,12 +495,6 @@ class CalibreMetaApp:
         )
         self.buttons.append(button)
         return button
-
-    def ask_preview_on_start(self) -> None:
-        if self.worker_running:
-            return
-        if self.ask_yes_no("Nacist nove knihy", "Chces po startu rovnou nacist nove knihy?"):
-            self.run_preview()
 
     def library_path(self) -> str:
         """Vrati aktualni knihovnu z pole Knihovna."""
@@ -736,15 +749,7 @@ class CalibreMetaApp:
 
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill=tk.BOTH, expand=True)
-        message = (
-            "Appka udela:\n"
-            "1. ulozi CSV\n"
-            "2. pokusi se zavrit Calibre\n"
-            "3. stahne detail z Databaze knih\n"
-            "4. prepise komentar a metadata\n"
-            "5. nacte nove knihy"
-        )
-        ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
+        ttk.Label(body, text=apply_confirmation_message(), justify=tk.LEFT).pack(anchor="w")
         ttk.Checkbutton(
             body,
             text="Kdyz to nepujde normalne, vynutit zavreni Calibre pres /F",

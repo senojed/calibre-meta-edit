@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.13`
+Aktualni verze: `0.0.14`
 
 Nejjednodussi pouziti:
 
@@ -19,7 +19,7 @@ Konzolova okna pomocnych prikazu se appka snazi schovat.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
-- pri startu se zepta, jestli ma rovnou nacist nove knihy
+- pri startu automaticky nacte nove knihy bez dotazu
 - pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
@@ -37,13 +37,15 @@ V appce:
 
 1. ulozi `matches.csv`
 2. pokusi se normalne zavrit Calibre
-3. stahne detail knihy z Databaze knih
-4. prepise komentar na odkaz, bold hodnoceni a text O knize
-5. prepise `vydano`, `vydavatel` a `stitky`
-6. do stitku da nejdriv zanry z Databaze knih, potom spodní stitky knihy
-7. hotove `approve` radky zmeni na `skip`
-8. po zapisu nacte nove knihy
-9. znovu nacte `matches.csv` do tabulky
+3. vytvori zalohu `metadata.db`
+4. u `approve` radku stahne prehled a zalozku `Vydani` z Databaze knih
+5. prepise komentar na odkaz, bold hodnoceni a text O knize
+6. prepise `vydano`, `vydavatel` a `stitky`
+7. do `vydano` posila datum jako `ROK-01-01`, napr. `1991-01-01`
+8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
+9. hotove `approve` radky zmeni na `skip`
+10. po zapisu nacte nove knihy
+11. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.

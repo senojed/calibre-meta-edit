@@ -46,6 +46,12 @@
 - Pokud prehled knihy obsahuje zalozku `Vydani`, `apply` musi vzit rok a vydavatele prave z teto zalozky.
 - Kdyz zalozka `Vydani` existuje, ale parser z ni nenajde zadne vydani, kniha skonci jako `failed` a nic se nezapise.
 
+## Update 0.0.14 - start bez dotazu a datum vydani
+
+- Appka po startu automaticky nacte nove knihy bez dotazovaciho dialogu.
+- Potvrzeni `Zapsat do Calibre` popisuje aktualni workflow vcetne zalohy, zalozky `Vydani` a nacteni novych knih.
+- `pubdate` se do Calibre posila jako `ROK-01-01`, napr. `1991-01-01`, aby Calibre nevytvarelo datum `ROK-06-15`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

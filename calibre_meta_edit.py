@@ -810,6 +810,11 @@ def is_valid_apply_url(url: str) -> bool:
     return clean.startswith(BASE_URL + "/knihy/") or clean.startswith(BASE_URL + "/prehled-knihy/")
 
 
+def calibre_pubdate_value(year: str) -> str:
+    """Calibre uklada vydani jako datum, proto z roku delame prvni den roku."""
+    return f"{year}-01-01"
+
+
 def open_calibre_db_readonly(library: str | Path) -> sqlite3.Connection:
     connection = sqlite3.connect(build_sqlite_readonly_uri(library), uri=True)
     connection.row_factory = sqlite3.Row
@@ -923,7 +928,7 @@ def apply_match_row(
         "comments:" + new_comment,
     ]
     if detail.published_year:
-        args.extend(["--field", "pubdate:" + detail.published_year])
+        args.extend(["--field", "pubdate:" + calibre_pubdate_value(detail.published_year)])
     if detail.publisher:
         args.extend(["--field", "publisher:" + detail.publisher])
     if detail.tags:
