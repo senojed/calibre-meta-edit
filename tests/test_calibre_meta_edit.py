@@ -112,6 +112,25 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")
         self.assertIn("Robin Hobb", candidates[0].text)
 
+    def test_parse_legie_story_detail_reads_story_metadata(self):
+        fixture = Path(__file__).parent / "fixtures" / "legie_story_7347.html"
+
+        detail = cme.parse_legie_story_detail(
+            fixture.read_text(encoding="utf-8"),
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+        )
+
+        self.assertEqual(detail.legie_id, "7347")
+        self.assertEqual(detail.title, "A opice si myslely, že to všechno je z legrace")
+        self.assertEqual(detail.author, "Orson Scott Card")
+        self.assertEqual(detail.category, "sci-fi")
+        self.assertEqual(detail.rating_percent, "80 %")
+        self.assertEqual(detail.rating_count, "11")
+        self.assertEqual(detail.original_title, "The Monkeys Thought 'Twas All in Fun")
+        self.assertEqual(detail.original_publication, "05/1979")
+        self.assertEqual(detail.czech_publication, "Ikarie 1995/05")
+        self.assertIn("Petr Kotrle", detail.about_text)
+
     def test_parse_book_detail_metadata_reads_json_ld_about_rating_and_user_tags(self):
         html = """
         <script type="application/ld+json">

@@ -25,6 +25,8 @@ from typing import Callable, Iterable, Sequence
 
 BASE_URL = "https://www.databazeknih.cz"
 SEARCH_URL = BASE_URL + "/vyhledavani/knihy?q="
+LEGIE_BASE_URL = "https://www.legie.info"
+LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/vyhledavani?text="
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
@@ -80,6 +82,20 @@ class BookDetailMetadata:
     publisher: str = ""
     tags: list[str] | None = None
     rating_percent: str = ""
+    about_text: str = ""
+
+
+@dataclass(frozen=True)
+class LegieStoryMetadata:
+    legie_id: str = ""
+    title: str = ""
+    author: str = ""
+    category: str = ""
+    rating_percent: str = ""
+    rating_count: str = ""
+    original_title: str = ""
+    original_publication: str = ""
+    czech_publication: str = ""
     about_text: str = ""
 
 
@@ -149,6 +165,21 @@ def book_url_to_overview_url(url: str) -> str:
 def build_search_url(title: str, authors: Sequence[str]) -> str:
     query = title + " " + " ".join(authors)
     return SEARCH_URL + urllib.parse.quote_plus(query.strip())
+
+
+def legie_absolute_url(url: str) -> str:
+    """Prevede Legie odkaz na cistou absolutni URL bez parametru."""
+    clean = url.strip().split("#", 1)[0].split("?", 1)[0]
+    if clean.startswith("/"):
+        clean = LEGIE_BASE_URL + clean
+    if clean.startswith(("povidka/", "kniha/", "autor/")):
+        clean = LEGIE_BASE_URL + "/" + clean
+    return clean.replace("http://www.legie.info/", "https://www.legie.info/", 1)
+
+
+def legie_id_from_url(url: str) -> str:
+    match = re.search(r"/povidka/(\d+)", legie_absolute_url(url))
+    return match.group(1) if match else ""
 
 
 def format_link_html(url: str) -> str:
@@ -612,6 +643,120 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
         tags=tags,
         rating_percent=rating,
         about_text=about_text,
+    )
+
+
+class LegieStoryParser(HTMLParser):
+    """Parser detailu povidky na Legii."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title = ""
+        self.author = ""
+        self.category = ""
+        self.rating_percent = ""
+        self.rating_count = ""
+        self.original_title = ""
+        self.original_publication = ""
+        self.czech_publication = ""
+        self.about_text = ""
+
+        self._capture = ""
+        self._parts: list[str] = []
+        self._author_next = False
+        self._inside_rating_value = False
+        self._inside_rating_count = False
+        self._inside_publications = False
+        self._inside_about = False
+        self._about_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        lowered_tag = tag.lower()
+        element_id = attrs_dict.get("id", "")
+        itemprop = attrs_dict.get("itemprop", "")
+
+        if lowered_tag == "h3":
+            self._author_next = True
+        if lowered_tag == "h2" and element_id == "nazev_povidky":
+            self._capture = "title"
+            self._parts = []
+        if lowered_tag == "p" and element_id == "jine_nazvy":
+            self._capture = "other_names"
+            self._parts = []
+        if lowered_tag == "div" and element_id == "zarazena_do_knih":
+            self._inside_publications = True
+        if lowered_tag == "div" and element_id == "anotace":
+            self._inside_about = True
+            self._about_depth = 1
+            self._parts = []
+        elif self._inside_about and lowered_tag not in {"br", "hr", "img", "input", "meta", "link"}:
+            self._about_depth += 1
+        if itemprop == "ratingValue":
+            self._inside_rating_value = True
+        if itemprop == "ratingCount":
+            self._inside_rating_count = True
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered_tag = tag.lower()
+        if self._capture == "title" and lowered_tag == "h2":
+            self.title = _clean_text(" ".join(self._parts))
+            self._capture = ""
+        if self._capture == "other_names" and lowered_tag == "p":
+            text = _clean_text(" ".join(self._parts))
+            original = re.search(r"originální název:\s*(.*?)\s*originál vyšel:", text, flags=re.IGNORECASE)
+            published = re.search(r"originál vyšel:\s*(.*)$", text, flags=re.IGNORECASE)
+            self.original_title = original.group(1).strip() if original else ""
+            self.original_publication = published.group(1).strip() if published else ""
+            self._capture = ""
+        if self._inside_publications and lowered_tag == "div":
+            self._inside_publications = False
+        if self._inside_about:
+            self._about_depth -= 1
+            if self._about_depth == 0:
+                self.about_text = _clean_text(" ".join(self._parts))
+                self._inside_about = False
+        if self._inside_rating_value and lowered_tag == "span":
+            self._inside_rating_value = False
+        if self._inside_rating_count and lowered_tag == "span":
+            self._inside_rating_count = False
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if not text:
+            return
+        if self._author_next:
+            self.author = text
+            self._author_next = False
+        if text.startswith("Kategorie:"):
+            self.category = _clean_text(text.replace("Kategorie:", "", 1))
+        if self._capture:
+            self._parts.append(text)
+        if self._inside_rating_value:
+            self.rating_percent = _clean_text(text) + " %"
+        if self._inside_rating_count:
+            self.rating_count = _clean_text(text)
+        if self._inside_publications and text != "Nachází se v těchto knihách:":
+            self.czech_publication = text
+        if self._inside_about:
+            self._parts.append(text)
+
+
+def parse_legie_story_detail(html_text: str, url: str) -> LegieStoryMetadata:
+    parser = LegieStoryParser()
+    parser.feed(html_text)
+    parser.close()
+    return LegieStoryMetadata(
+        legie_id=legie_id_from_url(url),
+        title=parser.title,
+        author=parser.author,
+        category=parser.category,
+        rating_percent=parser.rating_percent,
+        rating_count=parser.rating_count,
+        original_title=parser.original_title,
+        original_publication=parser.original_publication,
+        czech_publication=parser.czech_publication,
+        about_text=parser.about_text,
     )
 
 
