@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.14`
+Aktualni verze: `0.0.15`
 
 Nejjednodussi pouziti:
 
@@ -41,7 +41,7 @@ V appce:
 4. u `approve` radku stahne prehled a zalozku `Vydani` z Databaze knih
 5. prepise komentar na odkaz, bold hodnoceni a text O knize
 6. prepise `vydano`, `vydavatel` a `stitky`
-7. do `vydano` posila datum jako `ROK-01-01`, napr. `1991-01-01`
+7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
 9. hotove `approve` radky zmeni na `skip`
 10. po zapisu nacte nove knihy

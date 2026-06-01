@@ -811,8 +811,8 @@ def is_valid_apply_url(url: str) -> bool:
 
 
 def calibre_pubdate_value(year: str) -> str:
-    """Calibre uklada vydani jako datum, proto z roku delame prvni den roku."""
-    return f"{year}-01-01"
+    """Calibre z hodnoty ROK-00-00 ulozi realne datum ROK-01-01."""
+    return f"{year}-00-00"
 
 
 def open_calibre_db_readonly(library: str | Path) -> sqlite3.Connection:

@@ -52,6 +52,11 @@
 - Potvrzeni `Zapsat do Calibre` popisuje aktualni workflow vcetne zalohy, zalozky `Vydani` a nacteni novych knih.
 - `pubdate` se do Calibre posila jako `ROK-01-01`, napr. `1991-01-01`, aby Calibre nevytvarelo datum `ROK-06-15`.
 
+## Update 0.0.15 - pubdate prvni leden
+
+- Calibre pri vstupu `ROK-01-01` realne ulozi `ROK-01-02`.
+- Skript proto posila `ROK-00-00`; Calibre z toho ulozi `ROK-01-01`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
