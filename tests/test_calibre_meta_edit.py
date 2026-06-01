@@ -35,6 +35,13 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.databazeknih.cz/vyhledavani/knihy?q=Lo%C4%8F+osudu+Robin+Hobb+Megan+Lindholm",
         )
 
+    def test_build_legie_search_url_uses_quote_plus_for_title_and_authors(self):
+        url = cme.build_legie_search_url("A opice si myslely", ["Orson Scott Card"])
+        self.assertEqual(
+            url,
+            "https://www.legie.info/vyhledavani?text=A+opice+si+myslely+Orson+Scott+Card",
+        )
+
     def test_unc_library_path_builds_windows_sqlite_readonly_uri(self):
         self.assertEqual(
             cme.build_sqlite_readonly_uri(r"\\server\share\path"),
@@ -130,6 +137,37 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.original_publication, "05/1979")
         self.assertEqual(detail.czech_publication, "Ikarie 1995/05")
         self.assertIn("Petr Kotrle", detail.about_text)
+
+    def test_parse_legie_search_results_reads_story_candidates(self):
+        fixture = Path(__file__).parent / "fixtures" / "legie_search_story.html"
+
+        candidates = cme.parse_legie_search_results(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(candidates[0].title, "A opice si myslely, že to všechno je z legrace")
+        self.assertEqual(
+            candidates[0].url,
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+        )
+        self.assertIn("Orson Scott Card", candidates[0].text)
+
+    def test_match_legie_story_candidate_returns_review_never_approve(self):
+        book = cme.Book(429, "A opice si myslely, že je to všechno jen legrace", ["Orson Scott Card"], "")
+        candidates = [
+            cme.Candidate(
+                "A opice si myslely, že to všechno je z legrace",
+                "A opice si myslely, že to všechno je z legrace Orson Scott Card",
+                "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            )
+        ]
+
+        row = cme.match_legie_story(book, candidates)
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.status, "review")
+        self.assertEqual(row.source, "legie")
+        self.assertEqual(row.work_type, "povidka")
+        self.assertEqual(row.reason, "legie-story-candidate")
 
     def test_parse_book_detail_metadata_reads_json_ld_about_rating_and_user_tags(self):
         html = """

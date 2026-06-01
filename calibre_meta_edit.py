@@ -314,6 +314,66 @@ def parse_search_results(html: str) -> list[Candidate]:
     return parser.candidates
 
 
+def build_legie_search_url(title: str, authors: Sequence[str]) -> str:
+    query = title + " " + " ".join(authors)
+    return LEGIE_SEARCH_URL + urllib.parse.quote_plus(query.strip())
+
+
+class LegieSearchParser(HTMLParser):
+    """Parser vysledku hledani na Legii pro odkazy na povidky."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.candidates: list[Candidate] = []
+        self._current: dict[str, object] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        href = attrs_dict.get("href", "")
+        if tag.lower() == "a" and "povidka/" in href:
+            self._finish_current()
+            self._current = {"url": legie_absolute_url(href), "parts": []}
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if not text:
+            return
+        if self._current is not None:
+            parts = self._current["parts"]
+            assert isinstance(parts, list)
+            parts.append(text)
+        elif self.candidates:
+            last = self.candidates.pop()
+            joined_text = _clean_text(last.text + " " + text)
+            self.candidates.append(Candidate(last.title, joined_text, last.url))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a":
+            self._finish_current()
+
+    def close(self) -> None:
+        super().close()
+        self._finish_current()
+
+    def _finish_current(self) -> None:
+        if not self._current:
+            return
+        parts = [str(part) for part in self._current.get("parts", [])]
+        title = _clean_text(parts[0]) if parts else ""
+        text = _clean_text(" ".join(parts))
+        url = str(self._current.get("url") or "")
+        if title and url:
+            self.candidates.append(Candidate(title, text, url))
+        self._current = None
+
+
+def parse_legie_search_results(html_text: str) -> list[Candidate]:
+    parser = LegieSearchParser()
+    parser.feed(html_text)
+    parser.close()
+    return parser.candidates
+
+
 def _clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
@@ -763,6 +823,42 @@ def parse_legie_story_detail(html_text: str, url: str) -> LegieStoryMetadata:
 def _candidate_urls(candidates: Sequence[Candidate]) -> str:
     urls = [candidate.url for candidate in candidates[:5]]
     return "|".join(urls)
+
+
+def _titles_close(left: str, right: str) -> bool:
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if left_norm == right_norm or left_norm in right_norm or right_norm in left_norm:
+        return True
+
+    left_tokens = {token for token in left_norm.split() if len(token) > 2}
+    right_tokens = {token for token in right_norm.split() if len(token) > 2}
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = left_tokens & right_tokens
+    return len(overlap) >= 4 and len(overlap) / max(len(left_tokens), len(right_tokens)) >= 0.75
+
+
+def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow | None:
+    authors_text = " & ".join(book.authors)
+    for candidate in candidates:
+        if not _titles_close(book.title, candidate.title):
+            continue
+        if not any(normalize_text(author) in normalize_text(candidate.text) for author in book.authors):
+            continue
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            candidate.url,
+            _candidate_urls(candidates),
+            "exact-title-author",
+            "legie-story-candidate",
+            "legie",
+            "povidka",
+        )
+    return None
 
 
 def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
