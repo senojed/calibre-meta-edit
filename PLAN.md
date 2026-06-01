@@ -57,6 +57,12 @@
 - Calibre pri vstupu `ROK-01-01` realne ulozi `ROK-01-02`.
 - Skript proto posila `ROK-00-00`; Calibre z toho ulozi `ROK-01-01`.
 
+## Update 0.0.16 - navrh podpory Legie
+
+- Pridan design dokument pro auditni podporu povidek z Legie.
+- Legie ma byt druhy zdroj pro povidky a nejiste shody, ne automaticka nahrada Databaze knih.
+- Prvni implementace ma davat Legie kandidaty do `review` a zapisovat je az po rucnim schvaleni.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
