@@ -1067,6 +1067,10 @@ def is_valid_apply_url(url: str) -> bool:
     return clean.startswith(BASE_URL + "/knihy/") or clean.startswith(BASE_URL + "/prehled-knihy/")
 
 
+def is_valid_databaze_story_url(url: str) -> bool:
+    return databaze_absolute_url(url).startswith(BASE_URL + "/povidky/")
+
+
 def is_valid_legie_story_url(url: str) -> bool:
     return legie_absolute_url(url).startswith(LEGIE_BASE_URL + "/povidka/")
 
@@ -1074,9 +1078,9 @@ def is_valid_legie_story_url(url: str) -> bool:
 def is_writable_match_row(row: MatchRow) -> bool:
     if row.status != "approve":
         return False
-    if row.source == "legie":
+    if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return is_valid_legie_story_url(row.chosen_url)
-    return is_valid_apply_url(row.chosen_url)
+    return is_valid_apply_url(row.chosen_url) or is_valid_databaze_story_url(row.chosen_url)
 
 
 def calibre_pubdate_value(year: str) -> str:
@@ -1217,7 +1221,7 @@ def apply_match_row(
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
-    if row.source == "legie":
+    if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return apply_legie_story_row(
             row,
             library,
@@ -1227,6 +1231,8 @@ def apply_match_row(
             identifiers_reader,
             tags_reader,
         )
+    if is_valid_databaze_story_url(row.chosen_url):
+        return apply_manual_link_row(row, library, calibredb_path, runner)
     if not is_valid_apply_url(row.chosen_url):
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
@@ -1318,6 +1324,30 @@ def apply_legie_story_row(
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
     return ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
+
+
+def apply_manual_link_row(
+    row: MatchRow,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult],
+) -> ApplyResult:
+    """Zapise jen rucne zadany odkaz, bez stahovani detailu a dalsich metadat."""
+    url = databaze_absolute_url(row.chosen_url)
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(row.book_id),
+        "--with-library",
+        str(library),
+        "--field",
+        "comments:" + format_link_html(url),
+    ]
+    result = runner(args)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "calibredb failed").strip()
+        return ApplyResult(row.book_id, row.title, "failed", url, error)
+    return ApplyResult(row.book_id, row.title, "updated", url, "")
 
 
 def repair_book_comment_target(
@@ -1428,7 +1458,26 @@ def audit_legie_rows(
 ) -> list[MatchRow]:
     updated: list[MatchRow] = []
     for row in rows:
-        if row.status == "approve" or not should_try_legie(row):
+        if row.status == "approve":
+            updated.append(row)
+            continue
+        if is_valid_legie_story_url(row.chosen_url):
+            updated.append(
+                MatchRow(
+                    row.book_id,
+                    row.title,
+                    row.authors,
+                    "review",
+                    row.chosen_url,
+                    row.candidate_urls,
+                    row.confidence,
+                    "legie-story-candidate",
+                    "legie",
+                    "povidka",
+                )
+            )
+            continue
+        if not should_try_legie(row) and row.reason != "already-linked":
             updated.append(row)
             continue
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]

@@ -74,6 +74,12 @@
 - Legie kandidati jsou vzdy `review` a `approve` radky audit nemeni.
 - Zapis Legie radku uklada komentar, tag `povidka` a identifikator `legie:ID`.
 
+## Update 0.0.25 - rucni povidkove odkazy
+
+- Rucne vlozeny Legie odkaz se pozna podle URL, i kdyz mel radek stary zdroj `databazeknih`.
+- Rucne vlozene odkazy `databazeknih.cz/povidky/...` se zapisuji jako link-only komentar bez stahovani metadat.
+- `Audit Legie` umi zvednout na `review` i stare `already-linked` radky, ale `approve` radky porad nemeni.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

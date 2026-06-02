@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.24"
+APP_VERSION = "0.0.25"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -181,7 +181,19 @@ def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
     """Vrati upraveny radek, ale zachova vsechny ostatni hodnoty."""
     if status not in VALID_STATUSES:
         raise ValueError(f"Neznamy status: {status}")
-    return replace(row, status=status, chosen_url=chosen_url.strip())
+    url = chosen_url.strip()
+    source = row.source
+    work_type = row.work_type
+    if cme.is_valid_legie_story_url(url):
+        source = "legie"
+        work_type = "povidka"
+    elif cme.is_valid_databaze_story_url(url):
+        source = "databazeknih"
+        work_type = "povidka"
+    elif cme.is_valid_apply_url(url):
+        source = "databazeknih"
+        work_type = ""
+    return replace(row, status=status, chosen_url=url, source=source, work_type=work_type)
 
 
 def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status: str) -> list[cme.MatchRow]:

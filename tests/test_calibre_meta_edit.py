@@ -399,6 +399,57 @@ class ParserAndMatchingTests(unittest.TestCase):
 
         self.assertEqual(updated, [row])
 
+    def test_audit_legie_rows_marks_existing_legie_url_as_review(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, že je to všechno jen legrace",
+            "Orson Scott Card",
+            "skip",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "none",
+            "already-linked",
+            "databazeknih",
+            "",
+        )
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: self.fail("existing Legie URL should not need search"),
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].work_type, "povidka")
+
+    def test_audit_legie_rows_can_review_already_linked_databaze_candidate(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, že je to všechno jen legrace",
+            "Orson Scott Card",
+            "skip",
+            "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
+            "",
+            "none",
+            "already-linked",
+            "databazeknih",
+            "",
+        )
+        legie_html = (Path(__file__).parent / "fixtures" / "legie_search_story.html").read_text(encoding="utf-8")
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: legie_html,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].work_type, "povidka")
+
     def test_run_legie_audit_backs_up_and_rewrites_matches_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
             matches_path = Path(tmp) / "matches.csv"
@@ -715,6 +766,64 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertTrue(cme.is_writable_match_row(row))
+
+    def test_is_writable_match_row_accepts_approved_legie_url_with_old_source(self):
+        row = cme.MatchRow(
+            429,
+            "Povidka",
+            "Autor",
+            "approve",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "manual",
+            "manual",
+            "databazeknih",
+            "",
+        )
+
+        self.assertTrue(cme.is_writable_match_row(row))
+
+    def test_is_writable_match_row_accepts_databaze_story_url_for_manual_link(self):
+        row = cme.MatchRow(
+            284,
+            "Geroldův neskutečný trik",
+            "Raymond Elias Feist",
+            "approve",
+            "https://www.databazeknih.cz/povidky/gerolduv-neskutecny-trik-geroldov-tajny-trik-13884",
+            "",
+            "manual",
+            "manual",
+        )
+
+        self.assertTrue(cme.is_writable_match_row(row))
+
+    def test_apply_match_row_writes_databaze_story_link_only(self):
+        row = cme.MatchRow(
+            284,
+            "Geroldův neskutečný trik",
+            "Raymond Elias Feist",
+            "approve",
+            "https://www.databazeknih.cz/povidky/gerolduv-neskutecny-trik-geroldov-tajny-trik-13884",
+            "",
+            "manual",
+            "manual",
+        )
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: self.fail("manual story link should not fetch detail"),
+        )
+
+        self.assertEqual(result.status, "updated")
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("https://www.databazeknih.cz/povidky/gerolduv-neskutecny-trik", comments_field)
+        self.assertFalse(any(arg.startswith("pubdate:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("publisher:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("tags:") for arg in calls[0]))
 
     def test_apply_match_row_writes_legie_story_comment_tags_and_identifier(self):
         row = cme.MatchRow(

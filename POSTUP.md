@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.24`
+Aktualni verze: `0.0.25`
 
 Nejjednodussi pouziti:
 
@@ -24,7 +24,7 @@ V appce:
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
-- `Audit Legie` - zkusí u nejistych radku najit povidku na Legii a nastavi ji na `review`
+- `Audit Legie` - zkusi u nejistych a starych odkazovych radku najit povidku na Legii a nastavi ji na `review`
 - `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
 - `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
 - klik na hlavicku sloupce seradi tabulku
@@ -39,7 +39,7 @@ V appce:
 1. ulozi `matches.csv`
 2. pokusi se normalne zavrit Calibre
 3. vytvori zalohu `metadata.db`
-4. u `approve` radku stahne prehled a zalozku `Vydani` z Databaze knih
+4. u `approve` radku knih stahne prehled a zalozku `Vydani` z Databaze knih
 5. prepise komentar na odkaz, bold hodnoceni a text O knize
 6. prepise `vydano`, `vydavatel` a `stitky`
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
@@ -65,6 +65,7 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.
+Rucne vlozeny odkaz `databazeknih.cz/povidky/...` se zapise jen jako odkaz do komentare, bez metadat.
 
 `Rebuild CSV` udela:
 

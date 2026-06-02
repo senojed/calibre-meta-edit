@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.24")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.24")
+        self.assertEqual(app.APP_VERSION, "0.0.25")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.25")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -215,6 +215,18 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(updated.status, "approve")
         self.assertEqual(updated.chosen_url, "https://www.databazeknih.cz/knihy/nova-2")
         self.assertEqual(updated.reason, "title-only")
+
+    def test_update_row_marks_manual_legie_story_url_as_legie_povidka(self):
+        row = cme.MatchRow(1, "Povidka", "Autor", "review", "", "", "none", "no-candidates")
+
+        updated = app.update_row(
+            row,
+            "approve",
+            " https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace ",
+        )
+
+        self.assertEqual(updated.source, "legie")
+        self.assertEqual(updated.work_type, "povidka")
 
     def test_update_row_rejects_unknown_status(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "none", "no-candidates")
