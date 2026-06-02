@@ -171,11 +171,14 @@ def build_search_url(title: str, authors: Sequence[str]) -> str:
 def legie_absolute_url(url: str) -> str:
     """Prevede Legie odkaz na cistou absolutni URL bez parametru."""
     clean = url.strip().split("#", 1)[0].split("?", 1)[0]
-    if clean.startswith("/"):
-        clean = LEGIE_BASE_URL + clean
+    if clean.startswith("//www.legie.info/"):
+        clean = "https:" + clean
+    elif clean.startswith("/"):
+        clean = LEGIE_BASE_URL + "/" + clean.lstrip("/")
     if clean.startswith(("povidka/", "kniha/", "autor/")):
         clean = LEGIE_BASE_URL + "/" + clean
-    return clean.replace("http://www.legie.info/", "https://www.legie.info/", 1)
+    clean = clean.replace("http://www.legie.info/", "https://www.legie.info/", 1)
+    return re.sub(r"^https://www\.legie\.info/+", LEGIE_BASE_URL + "/", clean)
 
 
 def legie_id_from_url(url: str) -> str:
@@ -270,6 +273,7 @@ class DatabazeSearchParser(HTMLParser):
                 "url": overview_to_book_url(attrs_dict["href"]),
                 "title": "",
                 "parts": [],
+                "anchor_parts": [],
             }
             self._inside_book_anchor = True
             return
@@ -290,6 +294,10 @@ class DatabazeSearchParser(HTMLParser):
             parts = self._current["parts"]
             assert isinstance(parts, list)
             parts.append(text)
+            if self._inside_book_anchor:
+                anchor_parts = self._current["anchor_parts"]
+                assert isinstance(anchor_parts, list)
+                anchor_parts.append(text)
 
     def close(self) -> None:
         super().close()
@@ -301,6 +309,9 @@ class DatabazeSearchParser(HTMLParser):
         title = str(self._current.get("title") or "").strip()
         url = str(self._current.get("url") or "").strip()
         parts = self._current.get("parts") or []
+        anchor_parts = self._current.get("anchor_parts") or []
+        if not title:
+            title = _clean_text(" ".join(str(part) for part in anchor_parts))
         text = " ".join(str(part) for part in parts)
         if url:
             self.candidates.append(Candidate(title, text, url))
@@ -841,6 +852,25 @@ def _titles_close(left: str, right: str) -> bool:
     return len(overlap) >= 4 and len(overlap) / max(len(left_tokens), len(right_tokens)) >= 0.75
 
 
+def _meaningful_partial_title_match(left: str, right: str) -> bool:
+    """Vrati true jen pro opravdu blizky castecny nazev, ne pro jedno spolecne slovo."""
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if not left_norm or not right_norm or left_norm == right_norm:
+        return False
+
+    left_tokens = {token for token in left_norm.split() if len(token) > 2}
+    right_tokens = {token for token in right_norm.split() if len(token) > 2}
+    if left_norm in right_norm or right_norm in left_norm:
+        shorter_tokens = left_tokens if len(left_norm) <= len(right_norm) else right_tokens
+        return len(shorter_tokens) >= 2
+
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = left_tokens & right_tokens
+    return len(overlap) >= 4 and len(overlap) / max(len(left_tokens), len(right_tokens)) >= 0.75
+
+
 def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow | None:
     authors_text = " & ".join(book.authors)
     for candidate in candidates:
@@ -936,7 +966,7 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     partial_matches = [
         candidate
         for candidate in candidates
-        if normalized_title in normalize_text(candidate.title) or normalize_text(candidate.title) in normalized_title
+        if _meaningful_partial_title_match(book.title, candidate.title)
     ]
     if partial_matches:
         candidate = partial_matches[0]
@@ -1458,7 +1488,7 @@ def audit_legie_rows(
 ) -> list[MatchRow]:
     updated: list[MatchRow] = []
     for row in rows:
-        if row.status == "approve":
+        if row.status == "approve" and not should_try_legie(row):
             updated.append(row)
             continue
         if is_valid_legie_story_url(row.chosen_url):

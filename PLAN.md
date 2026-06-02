@@ -86,6 +86,14 @@
 - Po uspesnem `Zapsat do Calibre` se znovu nactou nove knihy a hned potom se spusti `Audit Legie`.
 - Tlacitko `Audit Legie` zustava jako rucni opakovani auditu.
 
+## Update 0.0.27 - prisnejsi slabe shody
+
+- Parser Databaze knih pouzije text odkazu jako nazev kandidata, kdyz HTML nema titulek v obrazku.
+- Prazdny nazev kandidata ani jedno spolecne slovo uz nevytvori `partial-title`.
+- Odkazy Legie typu `legie.info//povidka/...` se normalizuji na `legie.info/povidka/...`.
+- `Audit Legie` muze vratit schvalenou slabou Databaze shodu na `review`, kdyz najde lepsi povidku na Legii.
+- Presne schvalene radky `exact-title-author` audit porad nemeni.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

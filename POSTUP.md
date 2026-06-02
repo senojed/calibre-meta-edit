@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.26`
+Aktualni verze: `0.0.27`
 
 Nejjednodussi pouziti:
 
@@ -25,6 +25,7 @@ V appce:
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit Legie`
 - `Audit Legie` - rucne zopakuje hledani povidek na Legii u nejistych a starych odkazovych radku
+- slaba shoda z Databaze knih se stejnym jednim slovem v nazvu zustane bez odkazu, pokud Legie nic nenajde
 - `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
 - `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
 - klik na hlavicku sloupce seradi tabulku
@@ -60,8 +61,9 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 2. zalohuje `matches.csv` do `backups\matches\`
 3. projde existujici nejiste radky a hleda mozne povidky na Legii
 4. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
-5. schvalene `approve` radky nemeni
-6. nic nezapisuje do Calibre
+5. presne schvalene `approve` radky nemeni
+6. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
+7. nic nezapisuje do Calibre
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.

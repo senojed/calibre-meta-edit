@@ -28,6 +28,17 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.databazeknih.cz/prehled-knihy/foo-123",
         )
 
+    def test_legie_url_normalizes_double_slash_story_path(self):
+        self.assertEqual(
+            cme.legie_absolute_url("https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie"),
+            "https://www.legie.info/povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie",
+        )
+        self.assertTrue(
+            cme.is_valid_legie_story_url(
+                "https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie"
+            )
+        )
+
     def test_build_search_url_uses_quote_plus_for_all_authors(self):
         url = cme.build_search_url("Loď osudu", ["Robin Hobb", "Megan Lindholm"])
         self.assertEqual(
@@ -118,6 +129,13 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(candidates[0].title, "Loď osudu")
         self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")
         self.assertIn("Robin Hobb", candidates[0].text)
+
+    def test_parse_search_results_uses_anchor_text_when_image_title_missing(self):
+        html = "<a href='/prehled-knihy/purpurova-planeta-60769'>Purpurova planeta</a>"
+
+        candidates = cme.parse_search_results(html)
+
+        self.assertEqual(candidates[0].title, "Purpurova planeta")
 
     def test_parse_legie_story_detail_reads_story_metadata(self):
         fixture = Path(__file__).parent / "fixtures" / "legie_story_7347.html"
@@ -299,6 +317,38 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(match.reason, "multiple-title-matches")
         self.assertEqual(match.candidate_urls, "https://www.databazeknih.cz/knihy/foo-123|https://www.databazeknih.cz/knihy/bar-456")
 
+    def test_match_book_skips_empty_candidate_title_instead_of_partial_match(self):
+        book = cme.Book(31031, "Purpurova mumie", ["Anatolij Petrovic Dneprov"], "")
+        candidates = [
+            cme.Candidate(
+                "",
+                "Purpurova planeta jiny autor",
+                "https://www.databazeknih.cz/knihy/purpurova-planeta-60769",
+            )
+        ]
+
+        match = cme.match_book(book, candidates)
+
+        self.assertEqual(match.status, "skip")
+        self.assertEqual(match.chosen_url, "")
+        self.assertEqual(match.reason, "no-candidates")
+
+    def test_match_book_skips_one_shared_word_instead_of_partial_match(self):
+        book = cme.Book(31031, "Purpurova mumie", ["Anatolij Petrovic Dneprov"], "")
+        candidates = [
+            cme.Candidate(
+                "Purpurova planeta",
+                "Purpurova planeta jiny autor",
+                "https://www.databazeknih.cz/knihy/purpurova-planeta-60769",
+            )
+        ]
+
+        match = cme.match_book(book, candidates)
+
+        self.assertEqual(match.status, "skip")
+        self.assertEqual(match.chosen_url, "")
+        self.assertEqual(match.reason, "no-candidates")
+
     def test_match_book_skips_existing_link(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], '<a href="https://www.databazeknih.cz/knihy/foo-123">x</a>')
         match = cme.match_book(book, [])
@@ -350,6 +400,47 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(rows[0].work_type, "povidka")
         self.assertEqual(rows[0].status, "review")
 
+    def test_preview_books_skips_weak_databaze_match_when_legie_finds_nothing(self):
+        db_html = "<a href='/prehled-knihy/purpurova-planeta-60769'>Purpurova planeta</a>"
+
+        def fetcher(url: str) -> str:
+            return "" if "legie.info" in url else db_html
+
+        rows = cme.preview_books(
+            [cme.Book(31031, "Purpurova mumie", ["Anatolij Petrovic Dneprov"], "")],
+            fetcher=fetcher,
+            robots_checker=lambda: True,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(rows[0].status, "skip")
+        self.assertEqual(rows[0].chosen_url, "")
+
+    def test_preview_books_uses_legie_for_purpurova_mumie_story(self):
+        db_html = "<a href='/prehled-knihy/purpurova-planeta-60769'>Purpurova planeta</a>"
+        legie_html = """
+        <a href="https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie">
+          Purpurova mumie
+        </a>
+        <span>Anatolij Petrovic Dneprov</span>
+        """
+
+        def fetcher(url: str) -> str:
+            return legie_html if "legie.info" in url else db_html
+
+        rows = cme.preview_books(
+            [cme.Book(31031, "Purpurova mumie", ["Anatolij Petrovic Dneprov"], "")],
+            fetcher=fetcher,
+            robots_checker=lambda: True,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(rows[0].status, "review")
+        self.assertEqual(rows[0].source, "legie")
+        self.assertEqual(rows[0].chosen_url, "https://www.legie.info/povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie")
+
     def test_audit_legie_rows_turns_suspicious_skip_into_review(self):
         row = cme.MatchRow(
             429,
@@ -376,7 +467,7 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "legie")
         self.assertEqual(updated[0].work_type, "povidka")
 
-    def test_audit_legie_rows_keeps_approved_databaze_rows(self):
+    def test_audit_legie_rows_keeps_approved_exact_databaze_rows(self):
         row = cme.MatchRow(
             429,
             "A opice si myslely, že je to všechno jen legrace",
@@ -384,8 +475,8 @@ class ParserAndMatchingTests(unittest.TestCase):
             "approve",
             "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
             "",
-            "title-only",
-            "title-only",
+            "exact-title-author",
+            "exact-title-author",
             "databazeknih",
             "",
         )
@@ -398,6 +489,37 @@ class ParserAndMatchingTests(unittest.TestCase):
         )
 
         self.assertEqual(updated, [row])
+
+    def test_audit_legie_rows_can_review_approved_weak_databaze_row(self):
+        row = cme.MatchRow(
+            31031,
+            "Purpurova mumie",
+            "Anatolij Petrovic Dneprov",
+            "approve",
+            "https://www.databazeknih.cz/knihy/purpurova-planeta-60769",
+            "",
+            "partial-title",
+            "partial-title",
+            "databazeknih",
+            "",
+        )
+        legie_html = """
+        <a href="https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie">
+          Purpurova mumie
+        </a>
+        <span>Anatolij Petrovic Dneprov</span>
+        """
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: legie_html,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].work_type, "povidka")
 
     def test_audit_legie_rows_marks_existing_legie_url_as_review(self):
         row = cme.MatchRow(
