@@ -138,6 +138,20 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.czech_publication, "Ikarie 1995/05")
         self.assertIn("Petr Kotrle", detail.about_text)
 
+    def test_parse_legie_story_detail_handles_missing_publication_and_void_tags(self):
+        html = """
+        <h2 id="nazev_povidky">Povidka</h2>
+        <p id="jine_nazvy">originální název: Original Story</p>
+        <div id="anotace">Prvni veta.<br />Druha veta.<hr />Petr Kotrle</div>
+        """
+
+        detail = cme.parse_legie_story_detail(html, "https://www.legie.info/povidka/1-povidka")
+
+        self.assertEqual(detail.original_title, "Original Story")
+        self.assertEqual(detail.original_publication, "")
+        self.assertIn("Druha veta.", detail.about_text)
+        self.assertIn("Petr Kotrle", detail.about_text)
+
     def test_parse_legie_search_results_reads_story_candidates(self):
         fixture = Path(__file__).parent / "fixtures" / "legie_search_story.html"
 
@@ -316,6 +330,99 @@ class ParserAndMatchingTests(unittest.TestCase):
         )
         self.assertEqual(calls[:3], ["robots", "sleep:1.0", "fetch"])
         self.assertEqual(rows[0].status, "approve")
+
+    def test_preview_books_uses_legie_for_uncertain_databaze_match(self):
+        db_html = "<a href='/prehled-knihy/plast-z-opici-kuze-265268'>Plast z opici kuze</a>"
+        legie_html = (Path(__file__).parent / "fixtures" / "legie_search_story.html").read_text(encoding="utf-8")
+
+        def fetcher(url: str) -> str:
+            return legie_html if "legie.info" in url else db_html
+
+        rows = cme.preview_books(
+            [cme.Book(429, "A opice si myslely, že je to všechno jen legrace", ["Orson Scott Card"], "")],
+            fetcher=fetcher,
+            robots_checker=lambda: True,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(rows[0].source, "legie")
+        self.assertEqual(rows[0].work_type, "povidka")
+        self.assertEqual(rows[0].status, "review")
+
+    def test_audit_legie_rows_turns_suspicious_skip_into_review(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, že je to všechno jen legrace",
+            "Orson Scott Card",
+            "skip",
+            "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
+            "",
+            "title-only",
+            "title-only",
+            "databazeknih",
+            "",
+        )
+        legie_html = (Path(__file__).parent / "fixtures" / "legie_search_story.html").read_text(encoding="utf-8")
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: legie_html,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].work_type, "povidka")
+
+    def test_run_legie_audit_backs_up_and_rewrites_matches_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            old_row = cme.MatchRow(
+                429,
+                "A opice si myslely, že je to všechno jen legrace",
+                "Orson Scott Card",
+                "skip",
+                "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
+                "",
+                "title-only",
+                "title-only",
+            )
+            cme.write_matches_csv(matches_path, [old_row], overwrite=False)
+
+            original_matches_path = cme.MATCHES_PATH
+            original_audit_legie_rows = cme.audit_legie_rows
+            try:
+                cme.MATCHES_PATH = matches_path
+                cme.audit_legie_rows = lambda rows, sleep_seconds: [
+                    cme.MatchRow(
+                        rows[0].book_id,
+                        rows[0].title,
+                        rows[0].authors,
+                        "review",
+                        "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+                        "",
+                        "exact-title-author",
+                        "legie-story-candidate",
+                        "legie",
+                        "povidka",
+                    )
+                ]
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = cme.run_legie_audit(SimpleNamespace(library="library", book_id=None, limit=None, sleep=0))
+            finally:
+                cme.MATCHES_PATH = original_matches_path
+                cme.audit_legie_rows = original_audit_legie_rows
+
+            rows = cme.read_matches_csv(matches_path)
+            backup_files = list((Path(tmp) / "backups" / "matches").glob("matches-*.csv"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(rows[0].source, "legie")
+        self.assertEqual(rows[0].work_type, "povidka")
+        self.assertEqual(len(backup_files), 1)
 
 
 class CsvAndFilesystemTests(unittest.TestCase):

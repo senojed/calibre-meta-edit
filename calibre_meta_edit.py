@@ -32,6 +32,7 @@ CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
 MATCHES_PATH = Path("matches.csv")
 APPLY_RESULTS_DIR = Path("apply-results")
+LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
 MATCHES_FIELDS = [
     "book_id",
     "title",
@@ -759,19 +760,20 @@ class LegieStoryParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         lowered_tag = tag.lower()
+        is_void_tag = lowered_tag in {"br", "hr", "img", "input", "meta", "link"}
         if self._capture == "title" and lowered_tag == "h2":
             self.title = _clean_text(" ".join(self._parts))
             self._capture = ""
         if self._capture == "other_names" and lowered_tag == "p":
             text = _clean_text(" ".join(self._parts))
-            original = re.search(r"originální název:\s*(.*?)\s*originál vyšel:", text, flags=re.IGNORECASE)
+            original = re.search(r"originální název:\s*(.*?)(?:\s*originál vyšel:|$)", text, flags=re.IGNORECASE)
             published = re.search(r"originál vyšel:\s*(.*)$", text, flags=re.IGNORECASE)
             self.original_title = original.group(1).strip() if original else ""
             self.original_publication = published.group(1).strip() if published else ""
             self._capture = ""
         if self._inside_publications and lowered_tag == "div":
             self._inside_publications = False
-        if self._inside_about:
+        if self._inside_about and not is_void_tag:
             self._about_depth -= 1
             if self._about_depth == 0:
                 self.about_text = _clean_text(" ".join(self._parts))
@@ -859,6 +861,14 @@ def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow |
             "povidka",
         )
     return None
+
+
+def should_try_legie(row: MatchRow) -> bool:
+    if row.source == "legie":
+        return False
+    if row.status == "approve" and row.reason == "exact-title-author":
+        return False
+    return row.reason in LEGIE_FALLBACK_REASONS
 
 
 def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
@@ -1270,11 +1280,44 @@ def preview_books(
         searched += 1
         try:
             html = fetcher(build_search_url(book.title, book.authors))
-            rows.append(match_book(book, parse_search_results(html)))
+            row = match_book(book, parse_search_results(html))
         except Exception:
             authors_text = " & ".join(book.authors)
-            rows.append(MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "http-error"))
+            row = MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "http-error")
+        if should_try_legie(row):
+            sleeper(sleep_seconds)
+            try:
+                legie_html = fetcher(build_legie_search_url(book.title, book.authors))
+                legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
+            except Exception:
+                legie_row = None
+            if legie_row is not None:
+                row = legie_row
+        rows.append(row)
     return rows
+
+
+def audit_legie_rows(
+    rows: Sequence[MatchRow],
+    fetcher: Callable[[str], str] = fetch_text,
+    sleeper: Callable[[float], None] = time.sleep,
+    sleep_seconds: float = 1.0,
+) -> list[MatchRow]:
+    updated: list[MatchRow] = []
+    for row in rows:
+        if not should_try_legie(row):
+            updated.append(row)
+            continue
+        authors = [part.strip() for part in row.authors.split("&") if part.strip()]
+        book = Book(row.book_id, row.title, authors, "")
+        sleeper(sleep_seconds)
+        try:
+            legie_html = fetcher(build_legie_search_url(book.title, book.authors))
+            legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
+        except Exception:
+            legie_row = None
+        updated.append(legie_row if legie_row is not None else row)
+    return updated
 
 
 def run_preview(args: argparse.Namespace) -> int:
@@ -1300,6 +1343,22 @@ def run_preview(args: argparse.Namespace) -> int:
         print(f"Hotovo preview: pridano {len(rows)} novych radku, celkem {len(all_rows)} -> {output}")
     else:
         print(f"Hotovo preview: {len(rows)} radku -> {output}")
+    return 0
+
+
+def run_legie_audit(args: argparse.Namespace) -> int:
+    rows = read_matches_csv(MATCHES_PATH)
+    selected_rows = select_match_rows(rows, book_id=args.book_id, limit=args.limit)
+    selected_ids = {row.book_id for row in selected_rows}
+    audited = audit_legie_rows(selected_rows, sleep_seconds=args.sleep)
+    replacements = {row.book_id: row for row in audited}
+    merged = [replacements.get(row.book_id, row) if row.book_id in selected_ids else row for row in rows]
+    backup_path = backup_matches_csv(MATCHES_PATH, MATCHES_PATH.parent / "backups" / "matches")
+    if backup_path:
+        print(f"Zaloha matches.csv: {backup_path}")
+    write_matches_csv(MATCHES_PATH, merged, overwrite=True)
+    changed = sum(1 for old, new in zip(rows, merged) if old != new)
+    print(f"Legie audit: zmeneno {changed} radku")
     return 0
 
 
@@ -1474,6 +1533,13 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--sleep", type=float, default=1.0)
     apply_parser.add_argument("--overwrite", action="store_true")
     apply_parser.set_defaults(func=run_apply)
+
+    legie_audit = subparsers.add_parser("legie-audit", help="Najde mozne povidky na Legii a da je do review.")
+    legie_audit.add_argument("--library", default=DEFAULT_LIBRARY)
+    legie_audit.add_argument("--limit", type=int)
+    legie_audit.add_argument("--book-id", type=int)
+    legie_audit.add_argument("--sleep", type=float, default=1.0)
+    legie_audit.set_defaults(func=run_legie_audit)
 
     repair_parser = subparsers.add_parser("repair-links", help="Opravi stare Databaze knih odkazy v komentarich.")
     repair_parser.add_argument("--library", default=DEFAULT_LIBRARY)
