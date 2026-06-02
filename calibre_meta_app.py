@@ -21,11 +21,11 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.22"
+APP_VERSION = "0.0.23"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
-TABLE_COLUMNS = ("book_id", "title", "authors", "status", "chosen_url", "reason")
+TABLE_COLUMNS = ("book_id", "title", "authors", "status", "source", "work_type", "chosen_url", "reason")
 BUTTON_COLOR_MAP = {
     "approve": {"bg": "#2e7d32", "fg": "white", "activebackground": "#1b5e20", "activeforeground": "white"},
     "review": {"bg": "#ef6c00", "fg": "white", "activebackground": "#bf5b00", "activeforeground": "white"},
@@ -35,7 +35,7 @@ BUTTON_COLOR_MAP = {
     "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
 TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
-PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV")
+PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit Legie", "Ulozit CSV")
 BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 
@@ -351,6 +351,14 @@ def make_rebuild_action(
     return action
 
 
+def make_legie_audit_action(
+    args: SimpleNamespace,
+    audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
+) -> Callable[[], int]:
+    """Pripravi audit Legie nad matches.csv."""
+    return lambda: audit_runner(args)
+
+
 def make_rollback_action(
     library: str,
     backup_path: Path,
@@ -404,7 +412,8 @@ class CalibreMetaApp:
 
         self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[0], self.load_csv).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[1], self.run_preview).pack(side=tk.LEFT, padx=(0, 6))
-        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[2], self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[2], self.run_legie_audit).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_button(toolbar, PRIMARY_TOOLBAR_LABELS[3], self.save_csv).pack(side=tk.LEFT, padx=(0, 6))
         spacing = toolbar_spacing()
         ttk.Frame(toolbar, width=spacing["before_approve"]).pack(side=tk.LEFT)
         self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
@@ -433,6 +442,8 @@ class CalibreMetaApp:
             "title": 260,
             "authors": 190,
             "status": 90,
+            "source": 90,
+            "work_type": 90,
             "chosen_url": 420,
             "reason": 160,
         }
@@ -441,6 +452,8 @@ class CalibreMetaApp:
             "title": "Kniha",
             "authors": "Autor",
             "status": "Status",
+            "source": "Zdroj",
+            "work_type": "Typ",
             "chosen_url": "Odkaz",
             "reason": "Duvod",
         }
@@ -597,7 +610,7 @@ class CalibreMetaApp:
         selected_ids = self._selected_book_ids()
         self.tree.delete(*self.tree.get_children())
         for row in self.rows:
-            values = (row.book_id, row.title, row.authors, row.status, row.chosen_url, row.reason)
+            values = tuple(getattr(row, column) for column in TABLE_COLUMNS)
             self.tree.insert("", tk.END, iid=str(row.book_id), values=values, tags=(row.status,))
         for selected in selected_ids:
             if self.tree.exists(str(selected)):
@@ -697,6 +710,13 @@ class CalibreMetaApp:
         args = make_script_args(self.library_path(), overwrite=True)
         action = make_rebuild_action(args, self.matches_path)
         self._run_background("Rebuild CSV", action, reload_after=True)
+
+    def run_legie_audit(self) -> None:
+        if not self.save_csv(show_message=False):
+            return
+        args = make_script_args(self.library_path())
+        action = make_legie_audit_action(args)
+        self._run_background("Audit Legie", action, reload_after=True)
 
     def run_apply(self) -> None:
         confirmed, allow_force = self.ask_apply_confirmation()

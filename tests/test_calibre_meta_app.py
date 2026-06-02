@@ -14,8 +14,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.22")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.22")
+        self.assertEqual(app.APP_VERSION, "0.0.23")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.23")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -107,10 +107,14 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(spacing["between_status"], 6)
         self.assertGreaterEqual(spacing["after_skip"], 18)
 
-    def test_primary_toolbar_order_keeps_csv_actions_up_top(self):
+    def test_table_columns_include_source_and_work_type(self):
+        self.assertIn("source", app.TABLE_COLUMNS)
+        self.assertIn("work_type", app.TABLE_COLUMNS)
+
+    def test_primary_toolbar_order_includes_legie_audit(self):
         self.assertEqual(
             app.primary_toolbar_order(),
-            ("Nacist CSV", "Nacist nove knihy", "Ulozit CSV"),
+            ("Nacist CSV", "Nacist nove knihy", "Audit Legie", "Ulozit CSV"),
         )
 
     def test_bottom_library_bar_order_contains_library_rebuild_and_rollback(self):
@@ -501,6 +505,20 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(calls[1], ("preview", args))
         self.assertTrue(args.overwrite)
         self.assertIn("Zaloha matches.csv:", output.getvalue())
+
+    def test_make_legie_audit_action_runs_backend(self):
+        args = app.make_script_args("D:\\Knihy")
+        calls = []
+
+        action = app.make_legie_audit_action(
+            args=args,
+            audit_runner=lambda received_args: calls.append(received_args) or 0,
+        )
+
+        result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [args])
 
     def test_make_rollback_action_quits_then_restores_backup(self):
         backup_path = Path("backups") / "metadata-20260529-120000.db"
