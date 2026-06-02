@@ -1067,6 +1067,18 @@ def is_valid_apply_url(url: str) -> bool:
     return clean.startswith(BASE_URL + "/knihy/") or clean.startswith(BASE_URL + "/prehled-knihy/")
 
 
+def is_valid_legie_story_url(url: str) -> bool:
+    return legie_absolute_url(url).startswith(LEGIE_BASE_URL + "/povidka/")
+
+
+def is_writable_match_row(row: MatchRow) -> bool:
+    if row.status != "approve":
+        return False
+    if row.source == "legie":
+        return is_valid_legie_story_url(row.chosen_url)
+    return is_valid_apply_url(row.chosen_url)
+
+
 def calibre_pubdate_value(year: str) -> str:
     """Calibre z hodnoty ROK-00-00 ulozi realne datum ROK-01-01."""
     return f"{year}-00-00"
@@ -1116,6 +1128,64 @@ def get_current_comment(library: str | Path, book_id: int) -> str:
     return "" if row is None else row["text"] or ""
 
 
+def get_current_identifiers(library: str | Path, book_id: int) -> dict[str, str]:
+    connection = open_calibre_db_readonly(library)
+    try:
+        rows = connection.execute("select type, val from identifiers where book = ?", (book_id,)).fetchall()
+    finally:
+        connection.close()
+    return {row["type"]: row["val"] for row in rows}
+
+
+def get_current_tags(library: str | Path, book_id: int) -> list[str]:
+    connection = open_calibre_db_readonly(library)
+    try:
+        rows = connection.execute(
+            """
+            select t.name
+            from tags t
+            join books_tags_link btl on btl.tag = t.id
+            where btl.book = ?
+            order by t.name
+            """,
+            (book_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+    return [row["name"] for row in rows]
+
+
+def format_legie_comment(url: str, detail: LegieStoryMetadata) -> str:
+    """Vytvori Calibre komentar pro povidku z Legie."""
+    safe_url = html.escape(url, quote=True)
+    parts = [
+        "<div>",
+        f'<p><a href="{safe_url}" target="_blank"><span style="color: #6cb4ee">{safe_url}</span></a></p>',
+    ]
+    if detail.rating_percent:
+        rating = html.escape(detail.rating_percent)
+        if detail.rating_count:
+            rating += f" ({html.escape(detail.rating_count)} hodnoceni)"
+        parts.append(f"<p><strong>{rating}</strong></p>")
+    facts = []
+    if detail.original_title:
+        facts.append(f"Originalni nazev: {detail.original_title}")
+    if detail.original_publication:
+        facts.append(f"Originalne vyslo: {detail.original_publication}")
+    if detail.czech_publication:
+        facts.append(f"Cesky vyslo: {detail.czech_publication}")
+    if facts:
+        parts.append("<p>" + "<br />".join(html.escape(item) for item in facts) + "</p>")
+    if detail.about_text:
+        parts.append(f"<p>{html.escape(detail.about_text)}</p>")
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
+def identifiers_field_value(identifiers: dict[str, str]) -> str:
+    return ",".join(f"{key}:{value}" for key, value in identifiers.items() if key and value)
+
+
 def subprocess_window_options(create_no_window: int | None = getattr(subprocess, "CREATE_NO_WINDOW", None)) -> dict[str, int]:
     """Na Windows schova konzolova okna spoustenych programu."""
     if create_no_window is None:
@@ -1142,9 +1212,21 @@ def apply_match_row(
     calibredb_path: str,
     runner: Callable[[Sequence[str]], CommandResult] = run_command,
     fetcher: Callable[[str], str] | None = None,
+    identifiers_reader: Callable[[str | Path, int], dict[str, str]] = get_current_identifiers,
+    tags_reader: Callable[[str | Path, int], list[str]] = get_current_tags,
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+    if row.source == "legie":
+        return apply_legie_story_row(
+            row,
+            library,
+            calibredb_path,
+            runner,
+            fetcher or fetch_text,
+            identifiers_reader,
+            tags_reader,
+        )
     if not is_valid_apply_url(row.chosen_url):
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
@@ -1195,6 +1277,47 @@ def apply_match_row(
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
     return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+
+
+def apply_legie_story_row(
+    row: MatchRow,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult],
+    fetcher: Callable[[str], str],
+    identifiers_reader: Callable[[str | Path, int], dict[str, str]],
+    tags_reader: Callable[[str | Path, int], list[str]],
+) -> ApplyResult:
+    if row.status != "approve":
+        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+    if not is_valid_legie_story_url(row.chosen_url):
+        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
+    try:
+        detail = parse_legie_story_detail(fetcher(row.chosen_url), row.chosen_url)
+    except Exception as exc:
+        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"legie-detail-fetch-error: {exc}")
+
+    identifiers = dict(identifiers_reader(library, row.book_id))
+    identifiers["legie"] = detail.legie_id or legie_id_from_url(row.chosen_url)
+    tags = _dedupe_tags(tags_reader(library, row.book_id) + [detail.category, "povidka"])
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(row.book_id),
+        "--with-library",
+        str(library),
+        "--field",
+        "comments:" + format_legie_comment(row.chosen_url, detail),
+        "--field",
+        "tags:" + ",".join(tags),
+        "--field",
+        "identifiers:" + identifiers_field_value(identifiers),
+    ]
+    result = runner(args)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "calibredb failed").strip()
+        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
+    return ApplyResult(row.book_id, row.title, "updated", row.chosen_url, "")
 
 
 def repair_book_comment_target(
@@ -1305,7 +1428,7 @@ def audit_legie_rows(
 ) -> list[MatchRow]:
     updated: list[MatchRow] = []
     for row in rows:
-        if not should_try_legie(row):
+        if row.status == "approve" or not should_try_legie(row):
             updated.append(row)
             continue
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]
@@ -1420,7 +1543,7 @@ def run_apply(args: argparse.Namespace) -> int:
 
     all_rows = read_matches_csv(MATCHES_PATH)
     rows = select_match_rows(all_rows, book_id=args.book_id, limit=args.limit)
-    writable_rows = [row for row in rows if row.status == "approve" and is_valid_apply_url(row.chosen_url)]
+    writable_rows = [row for row in rows if is_writable_match_row(row)]
     if not writable_rows:
         print("Neni co zapisovat. updated=0")
         return 0

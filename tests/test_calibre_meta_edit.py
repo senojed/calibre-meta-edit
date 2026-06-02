@@ -376,6 +376,29 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "legie")
         self.assertEqual(updated[0].work_type, "povidka")
 
+    def test_audit_legie_rows_keeps_approved_databaze_rows(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, že je to všechno jen legrace",
+            "Orson Scott Card",
+            "approve",
+            "https://www.databazeknih.cz/knihy/plast-z-opici-kuze-265268",
+            "",
+            "title-only",
+            "title-only",
+            "databazeknih",
+            "",
+        )
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: self.fail("approved rows must not be searched"),
+            sleeper=lambda seconds: self.fail("approved rows must not sleep"),
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated, [row])
+
     def test_run_legie_audit_backs_up_and_rewrites_matches_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
             matches_path = Path(tmp) / "matches.csv"
@@ -676,6 +699,58 @@ class CalibreDbAndApplyTests(unittest.TestCase):
     def test_is_valid_apply_url_accepts_only_databaze_knih_book_urls(self):
         self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/knihy/foo-123"))
         self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/prehled-knihy/foo-123"))
+
+    def test_is_writable_match_row_accepts_approved_legie_story(self):
+        row = cme.MatchRow(
+            429,
+            "Povidka",
+            "Autor",
+            "approve",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "exact-title-author",
+            "legie-story-candidate",
+            "legie",
+            "povidka",
+        )
+
+        self.assertTrue(cme.is_writable_match_row(row))
+
+    def test_apply_match_row_writes_legie_story_comment_tags_and_identifier(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, že je to všechno jen legrace",
+            "Orson Scott Card",
+            "approve",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "exact-title-author",
+            "legie-story-candidate",
+            "legie",
+            "povidka",
+        )
+        fixture = Path(__file__).parent / "fixtures" / "legie_story_7347.html"
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: fixture.read_text(encoding="utf-8"),
+            identifiers_reader=lambda library, book_id: {"isbn": "123"},
+            tags_reader=lambda library, book_id: ["Sci-fi"],
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertIn("identifiers:isbn:123,legie:7347", calls[0])
+        self.assertIn("tags:Sci-fi,povidka", calls[0])
+        self.assertFalse(any(arg.startswith("pubdate:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("publisher:") for arg in calls[0]))
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("https://www.legie.info/povidka/7347", comments_field)
+        self.assertIn("<strong>80 %", comments_field)
+        self.assertIn("Ikarie 1995/05", comments_field)
 
     def test_apply_match_row_overwrites_comment_and_metadata_from_databaze_detail(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
