@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.30"
+APP_VERSION = "0.0.31"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -224,6 +224,22 @@ def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status:
     if status not in VALID_STATUSES:
         raise ValueError(f"Neznamy status: {status}")
     return [update_row(row, status, row.chosen_url) if row.book_id in book_ids else row for row in rows]
+
+
+def mark_rows_as_story(rows: Sequence[cme.MatchRow], book_ids: set[int]) -> list[cme.MatchRow]:
+    """Oznaci vybrane radky jako povidky a posle je na rucni kontrolu."""
+    updated: list[cme.MatchRow] = []
+    for row in rows:
+        if row.book_id not in book_ids:
+            updated.append(row)
+            continue
+        source = row.source
+        if cme.is_valid_legie_story_url(row.chosen_url):
+            source = "legie"
+        elif cme.is_valid_databaze_story_url(row.chosen_url):
+            source = "databazeknih"
+        updated.append(replace(row, status="review", source=source, work_type="povidka"))
+    return updated
 
 
 def sort_rows(rows: Sequence[cme.MatchRow], column: str, descending: bool) -> list[cme.MatchRow]:
@@ -495,6 +511,7 @@ class CalibreMetaApp:
         self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
+        self._add_button(toolbar, "Povidka", self.mark_selected_story).pack(side=tk.LEFT, padx=(0, 6))
         self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
 
         url_bar = ttk.Frame(toolbar_container)
@@ -739,6 +756,15 @@ class CalibreMetaApp:
         except ValueError as exc:
             messagebox.showerror("Chyba", str(exc))
             return
+        self._refresh_table()
+        self._set_status(status_summary(self.rows))
+
+    def mark_selected_story(self) -> None:
+        selected = self._selected_book_ids()
+        if not selected:
+            messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
+            return
+        self.rows = mark_rows_as_story(self.rows, selected)
         self._refresh_table()
         self._set_status(status_summary(self.rows))
 

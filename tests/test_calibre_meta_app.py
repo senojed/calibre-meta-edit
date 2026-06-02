@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.30")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.30")
+        self.assertEqual(app.APP_VERSION, "0.0.31")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.31")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -228,6 +228,31 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(updated.source, "legie")
         self.assertEqual(updated.work_type, "povidka")
+
+    def test_mark_rows_as_story_sets_work_type_and_review_status(self):
+        rows = [
+            cme.MatchRow(
+                1,
+                "Samuela",
+                "Anatolij Petrovič Dněprov",
+                "skip",
+                "https://www.databazeknih.cz/povidky/samuela-2229",
+                "",
+                "none",
+                "manual",
+                "databazeknih",
+                "",
+            ),
+            cme.MatchRow(2, "Kniha", "Autor", "skip", "", "", "none", "no-candidates"),
+        ]
+
+        self.assertTrue(hasattr(app, "mark_rows_as_story"))
+        updated = app.mark_rows_as_story(rows, {1})
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "databazeknih")
+        self.assertEqual(updated[0].work_type, "povidka")
+        self.assertEqual(updated[1], rows[1])
 
     def test_update_row_rejects_unknown_status(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "none", "no-candidates")

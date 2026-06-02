@@ -54,6 +54,22 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.legie.info/index.php?search_text=A+opice+si+myslely+Orson+Scott+Card",
         )
 
+    def test_parse_search_results_reads_databaze_story_candidates(self):
+        html = """
+        <a href="https://www.databazeknih.cz/povidky/samuela-2229">
+            <img title="Samuela" />
+            Samuela
+        </a>
+        <p>Povídka od: Anatolij Petrovič Dněprov</p>
+        """
+
+        candidates = cme.parse_search_results(html)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].title, "Samuela")
+        self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/povidky/samuela-2229")
+        self.assertIn("Anatolij Petrovič Dněprov", candidates[0].text)
+
     def test_unc_library_path_builds_windows_sqlite_readonly_uri(self):
         self.assertEqual(
             cme.build_sqlite_readonly_uri(r"\\server\share\path"),

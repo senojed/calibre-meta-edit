@@ -71,6 +71,7 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.
 Rucne vlozeny odkaz `databazeknih.cz/povidky/...` se zapise jen jako odkaz do komentare, bez metadat.
+Tlacitko `Povidka` oznaci vybrane radky jako typ `povidka` a da je na `review`.
 
 `Rebuild CSV` udela:
 

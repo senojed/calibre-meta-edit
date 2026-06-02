@@ -267,10 +267,12 @@ class DatabazeSearchParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
-        if tag.lower() == "a" and "/prehled-knihy/" in attrs_dict.get("href", ""):
+        href = attrs_dict.get("href", "")
+        if tag.lower() == "a" and ("/prehled-knihy/" in href or "/povidky/" in href):
             self._finish_current()
+            url = databaze_absolute_url(href) if "/povidky/" in href else overview_to_book_url(href)
             self._current = {
-                "url": overview_to_book_url(attrs_dict["href"]),
+                "url": url,
                 "title": "",
                 "parts": [],
                 "anchor_parts": [],
