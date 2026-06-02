@@ -33,6 +33,7 @@ USER_AGENT = "calibre-meta-edit/1.0"
 MATCHES_PATH = Path("matches.csv")
 APPLY_RESULTS_DIR = Path("apply-results")
 LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
+HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 MATCHES_FIELDS = [
     "book_id",
     "title",
@@ -557,13 +558,14 @@ class EditionListParser(HTMLParser):
         if self._block_depth and self._block_tag == "p" and lowered_tag in {"div", "hr"}:
             self._finish_block()
 
-        if lowered_tag == "a" and "bigger" in classes and "/prehled-knihy/" in href:
+        if lowered_tag == "a" and "/prehled-knihy/" in href:
             self._last_overview_url = databaze_absolute_url(href)
 
         if self._block_depth:
-            self._block_depth += 1
             if lowered_tag == "a" and "/nakladatelstvi/" in href:
                 self._block_has_publisher = True
+            if lowered_tag not in HTML_VOID_TAGS:
+                self._block_depth += 1
             return
 
         is_current_publication = lowered_tag == "div" and {"lora", "lineHeightMid"}.issubset(classes)

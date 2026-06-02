@@ -341,6 +341,32 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(edition.publisher, "Svoboda")
         self.assertEqual(edition.url, "https://www.databazeknih.cz/prehled-knihy/oldest-1971")
 
+    def test_parse_oldest_edition_metadata_handles_unclosed_format_icons(self):
+        html = """
+        <div class='lora lineHeightMid'>
+          <img title="pevna vazba" src="/img/icons/formats/book.svg">
+          2016<span>,</span>
+          <a href="/nakladatelstvi/argo-50">Argo</a>
+        </div>
+        <a href="/prehled-knihy/abaddonova-brana-386979">
+          <picture><img title="Abaddonova brana (2014)" /></picture>
+        </a>
+        <h6>Abaddonova brana</h6>
+        <p class='new odtopm'>
+          <img title="ekniha" src="/img/icons/formats/ebook.svg">
+          2014<span class="pozn_light">,</span>
+          <a href="/nakladatelstvi/triton-158">Triton</a>
+          <div class='dropdown_black'></div>
+          <span class="pozn odtopm fright">ISBN: 978-80-7387-799-6</span>
+        </p>
+        """
+
+        edition = cme.parse_oldest_edition_metadata(html)
+
+        self.assertEqual(edition.published_year, "2014")
+        self.assertEqual(edition.publisher, "Triton")
+        self.assertEqual(edition.url, "https://www.databazeknih.cz/prehled-knihy/abaddonova-brana-386979")
+
     def test_match_book_approves_exact_title_and_author(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [cme.Candidate("Loď osudu", "Robin Hobb", "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")]

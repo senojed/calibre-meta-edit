@@ -315,6 +315,13 @@
 - `Samuela` se diky tomu najde jako Legie povidka `393`.
 - Backend hlaska se sjednotila na `Audit odkazu`.
 
+## Update 0.0.34 - vydani s ikonou formatu
+
+- Databaze knih u nekterych vydani vklada ikonu formatu jako neuzavrene `<img>`.
+- Parser vydani uz bere HTML void tagy jako bez vnoreni.
+- Odkaz vydani bere i z bezneho `/prehled-knihy/...` odkazu bez `class=bigger`.
+- `Abaddonova brana` se diky tomu parsuje jako `2014`, `Triton`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
