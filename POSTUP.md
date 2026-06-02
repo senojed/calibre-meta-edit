@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.34`
+Aktualni verze: `0.0.35`
 
 Nejjednodussi pouziti:
 
@@ -26,6 +26,7 @@ V appce:
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
 - `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
+- kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
 - kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek
 - slaba shoda z Databaze knih se stejnym jednim slovem v nazvu zustane bez odkazu, pokud Legie nic nenajde

@@ -322,6 +322,13 @@
 - Odkaz vydani bere i z bezneho `/prehled-knihy/...` odkazu bez `class=bigger`.
 - `Abaddonova brana` se diky tomu parsuje jako `2014`, `Triton`.
 
+## Update 0.0.35 - Audit odkazu pro smazany odkaz
+
+- Kdyz je vybran jeden radek, `Audit odkazu` pred hledanim pouzije aktualni text z pole `Odkaz`.
+- Rucni smazani odkazu proto neni potreba potvrzovat tlacitkem `Pouzit odkaz`.
+- Matching umi opatrne vzit jednoslovny nazev jako prefix s presnym autorem.
+- `Sapiens` se diky tomu najde jako `Sapiens: Od zvirete k bozskemu jedinci` a zustane na `review`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.34")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.34")
+        self.assertEqual(app.APP_VERSION, "0.0.35")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.35")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -228,6 +228,24 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(updated.source, "legie")
         self.assertEqual(updated.work_type, "povidka")
+
+    def test_sync_single_selected_url_applies_empty_edit_field(self):
+        rows = [
+            cme.MatchRow(
+                12,
+                "Sapiens",
+                "Yuval Noah Harari",
+                "skip",
+                "https://www.databazeknih.cz/knihy/old-1",
+                "",
+                "none",
+                "already-linked",
+            )
+        ]
+
+        updated = app.sync_single_selected_url(rows, {12}, "")
+
+        self.assertEqual(updated[0].chosen_url, "")
 
     def test_mark_rows_as_story_sets_work_type_and_review_status(self):
         rows = [

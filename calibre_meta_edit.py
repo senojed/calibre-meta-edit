@@ -889,6 +889,17 @@ def _meaningful_partial_title_match(left: str, right: str) -> bool:
     return len(overlap) >= 4 and len(overlap) / max(len(left_tokens), len(right_tokens)) >= 0.75
 
 
+def _title_prefix_match(left: str, right: str) -> bool:
+    """Povoli kratky nazev jako zacatek delsiho nazvu, treba Sapiens: podtitul."""
+    left_norm = normalize_text(left)
+    right_norm = normalize_text(right)
+    if not left_norm or not right_norm or left_norm == right_norm:
+        return False
+    if not right_norm.startswith(left_norm):
+        return False
+    return len(right_norm) > len(left_norm) and not right_norm[len(left_norm)].isalnum()
+
+
 def _name_tokens(value: str) -> set[str]:
     """Rozbije jmeno na slova bez ohledu na carky a poradi."""
     return {token for token in re.findall(r"[a-z0-9]+", normalize_text(value)) if len(token) > 1}
@@ -1034,6 +1045,28 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
             _candidate_urls(candidates),
             "title-only",
             "title-only",
+            source,
+            work_type,
+        )
+
+    title_prefix_author_matches = [
+        candidate
+        for candidate in candidates
+        if _title_prefix_match(book.title, candidate.title)
+        and any(_author_matches_text(author, candidate.text) for author in book.authors)
+    ]
+    if len(title_prefix_author_matches) == 1:
+        candidate = title_prefix_author_matches[0]
+        source, work_type = source_and_work_type_for_url(candidate.url)
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            candidate.url,
+            _candidate_urls(candidates),
+            "title-prefix-author",
+            "title-prefix-author",
             source,
             work_type,
         )

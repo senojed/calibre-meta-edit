@@ -398,6 +398,32 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(match.status, "review")
         self.assertEqual(match.reason, "title-only")
 
+    def test_match_book_reviews_title_prefix_with_exact_author(self):
+        book = cme.Book(12, "Sapiens", ["Yuval Noah Harari"], "")
+        candidates = [
+            cme.Candidate(
+                "3x Harari v darkovem boxu",
+                "3x Harari v darkovem boxu Yuval Noah Harari",
+                "https://www.databazeknih.cz/knihy/3x-harari-486050",
+            ),
+            cme.Candidate(
+                "Sapiens: Od zvirete k bozskemu jedinci",
+                "Sapiens: Od zvirete k bozskemu jedinci Yuval Noah Harari",
+                "https://www.databazeknih.cz/knihy/sapiens-od-zvirete-k-bozskemu-jedinci-183405",
+            ),
+            cme.Candidate(
+                "Homo sapiens stupidus",
+                "Homo sapiens stupidus Frantisek Koukolik",
+                "https://www.databazeknih.cz/knihy/homo-sapiens-stupidus-25440",
+            ),
+        ]
+
+        match = cme.match_book(book, candidates)
+
+        self.assertEqual(match.status, "review")
+        self.assertEqual(match.reason, "title-prefix-author")
+        self.assertEqual(match.chosen_url, "https://www.databazeknih.cz/knihy/sapiens-od-zvirete-k-bozskemu-jedinci-183405")
+
     def test_match_book_marks_multiple_exact_title_matches_as_review(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [
@@ -650,6 +676,37 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/povidky/samuela-2229")
         self.assertEqual(updated[0].source, "databazeknih")
         self.assertEqual(updated[0].work_type, "povidka")
+
+    def test_audit_legie_rows_rechecks_already_linked_row_when_url_was_cleared(self):
+        row = cme.MatchRow(
+            12,
+            "Sapiens",
+            "Yuval Noah Harari",
+            "skip",
+            "",
+            "",
+            "none",
+            "already-linked",
+            "databazeknih",
+            "",
+        )
+        db_html = """
+        <a href="https://www.databazeknih.cz/prehled-knihy/sapiens-254943">
+          <img title="Sapiens" />
+          Sapiens
+        </a>
+        <p>Yuval Noah Harari</p>
+        """
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: db_html,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "approve")
+        self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/knihy/sapiens-254943")
 
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(

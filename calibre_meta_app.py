@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.34"
+APP_VERSION = "0.0.35"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -224,6 +224,14 @@ def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status:
     if status not in VALID_STATUSES:
         raise ValueError(f"Neznamy status: {status}")
     return [update_row(row, status, row.chosen_url) if row.book_id in book_ids else row for row in rows]
+
+
+def sync_single_selected_url(rows: Sequence[cme.MatchRow], book_ids: set[int], edit_url: str) -> list[cme.MatchRow]:
+    """U jednoho vybraneho radku pouzije aktualni text z pole Odkaz."""
+    if len(book_ids) != 1:
+        return list(rows)
+    book_id = next(iter(book_ids))
+    return [update_row(row, row.status, edit_url) if row.book_id == book_id else row for row in rows]
 
 
 def mark_rows_as_story(rows: Sequence[cme.MatchRow], book_ids: set[int]) -> list[cme.MatchRow]:
@@ -815,9 +823,11 @@ class CalibreMetaApp:
         self._run_background("Rebuild CSV", action, reload_after=True)
 
     def run_legie_audit(self) -> None:
+        selected = self._selected_book_ids()
+        self.rows = sync_single_selected_url(self.rows, selected, self.edit_url_var.get())
+        self._refresh_table()
         if not self.save_csv(show_message=False):
             return
-        selected = self._selected_book_ids()
         args = make_legie_audit_args(self.library_path(), selected if selected else None)
         action = make_legie_audit_action(args)
         self._run_background("Audit odkazu", action, reload_after=True)
