@@ -3,6 +3,7 @@
 import contextlib
 import csv
 import io
+import inspect
 import sqlite3
 import tempfile
 import unittest
@@ -620,6 +621,39 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(rows[0].work_type, "povidka")
         self.assertEqual(len(backup_files), 1)
 
+    def test_run_legie_audit_uses_selected_book_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            rows = [
+                cme.MatchRow(1, "A", "Autor", "skip", "", "", "none", "no-candidates"),
+                cme.MatchRow(2, "B", "Autor", "skip", "", "", "none", "no-candidates"),
+                cme.MatchRow(3, "C", "Autor", "skip", "", "", "none", "no-candidates"),
+            ]
+            cme.write_matches_csv(matches_path, rows, overwrite=False)
+            selected_ids = []
+
+            original_matches_path = cme.MATCHES_PATH
+            original_audit_legie_rows = cme.audit_legie_rows
+            try:
+                cme.MATCHES_PATH = matches_path
+
+                def fake_audit_legie_rows(selected_rows, sleep_seconds):
+                    selected_ids.extend(row.book_id for row in selected_rows)
+                    return list(selected_rows)
+
+                cme.audit_legie_rows = fake_audit_legie_rows
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = cme.run_legie_audit(
+                        SimpleNamespace(library="library", book_id=None, book_ids=[2, 3], limit=None, sleep=0)
+                    )
+            finally:
+                cme.MATCHES_PATH = original_matches_path
+                cme.audit_legie_rows = original_audit_legie_rows
+
+        self.assertEqual(result, 0)
+        self.assertEqual(selected_ids, [2, 3])
+
 
 class CsvAndFilesystemTests(unittest.TestCase):
     def test_write_matches_csv_uses_utf8_bom_and_refuses_existing_file(self):
@@ -866,8 +900,10 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             cme.MatchRow(1, "A", "Autor", "approve", "https://www.databazeknih.cz/knihy/a-1", "", "exact-title-author", "exact-title-author"),
             cme.MatchRow(2, "B", "Autor", "approve", "https://www.databazeknih.cz/knihy/b-2", "", "exact-title-author", "exact-title-author"),
         ]
+        self.assertIn("book_ids", inspect.signature(cme.select_match_rows).parameters)
         self.assertEqual([row.book_id for row in cme.select_match_rows(rows, book_id=None, limit=1)], [1])
         self.assertEqual([row.book_id for row in cme.select_match_rows(rows, book_id=2, limit=1)], [2])
+        self.assertEqual([row.book_id for row in cme.select_match_rows(rows, book_ids={2}, book_id=None, limit=1)], [2])
 
     def test_is_valid_apply_url_accepts_only_databaze_knih_book_urls(self):
         self.assertTrue(cme.is_valid_apply_url("https://www.databazeknih.cz/knihy/foo-123"))

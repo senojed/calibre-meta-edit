@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.27`
+Aktualni verze: `0.0.28`
 
 Nejjednodussi pouziti:
 
@@ -19,12 +19,12 @@ Konzolova okna pomocnych prikazu se appka snazi schovat.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
-- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit Legie`
+- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit Legie` jen pro nove radky
 - pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
-- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit Legie`
-- `Audit Legie` - rucne zopakuje hledani povidek na Legii u nejistych a starych odkazovych radku
+- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit Legie` jen pro nove radky
+- `Audit Legie` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - slaba shoda z Databaze knih se stejnym jednim slovem v nazvu zustane bez odkazu, pokud Legie nic nenajde
 - `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
 - `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
@@ -46,7 +46,7 @@ V appce:
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
 9. hotove `approve` radky zmeni na `skip`
-10. po zapisu nacte nove knihy a spusti `Audit Legie`
+10. po zapisu nacte nove knihy a spusti `Audit Legie` jen pro nove radky
 11. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
@@ -59,11 +59,12 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 
 1. ulozi aktualni `matches.csv`
 2. zalohuje `matches.csv` do `backups\matches\`
-3. projde existujici nejiste radky a hleda mozne povidky na Legii
-4. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
-5. presne schvalene `approve` radky nemeni
-6. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
-7. nic nezapisuje do Calibre
+3. projde vybrane radky, nebo cele `matches.csv`, kdyz nic nevyberes
+4. u nejistych radku hleda mozne povidky na Legii
+5. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
+6. presne schvalene `approve` radky nemeni
+7. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
+8. nic nezapisuje do Calibre
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.

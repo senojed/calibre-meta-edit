@@ -1079,9 +1079,17 @@ def select_books(books: Sequence[Book], book_id: int | None = None, limit: int |
     return selected[:limit] if limit is not None else selected
 
 
-def select_match_rows(rows: Sequence[MatchRow], book_id: int | None = None, limit: int | None = None) -> list[MatchRow]:
+def select_match_rows(
+    rows: Sequence[MatchRow],
+    book_id: int | None = None,
+    limit: int | None = None,
+    book_ids: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> list[MatchRow]:
     if book_id is not None:
         return [row for row in rows if row.book_id == book_id]
+    if book_ids is not None:
+        selected_ids = set(book_ids)
+        return [row for row in rows if row.book_id in selected_ids]
     selected = list(rows)
     return selected[:limit] if limit is not None else selected
 
@@ -1550,7 +1558,12 @@ def run_preview(args: argparse.Namespace) -> int:
 
 def run_legie_audit(args: argparse.Namespace) -> int:
     rows = read_matches_csv(MATCHES_PATH)
-    selected_rows = select_match_rows(rows, book_id=args.book_id, limit=args.limit)
+    selected_rows = select_match_rows(
+        rows,
+        book_id=args.book_id,
+        limit=args.limit,
+        book_ids=getattr(args, "book_ids", None),
+    )
     selected_ids = {row.book_id for row in selected_rows}
     audited = audit_legie_rows(selected_rows, sleep_seconds=args.sleep)
     replacements = {row.book_id: row for row in audited}

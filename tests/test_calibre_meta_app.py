@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.27")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.27")
+        self.assertEqual(app.APP_VERSION, "0.0.28")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.28")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -468,43 +468,91 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(calls, ["preview"])
 
-    def test_make_preview_with_legie_audit_action_runs_preview_then_audit(self):
-        args = app.make_script_args("D:\\Knihy")
-        calls = []
-
-        self.assertTrue(hasattr(app, "make_preview_with_legie_audit_action"))
-        action = app.make_preview_with_legie_audit_action(
-            args=args,
-            preview_runner=lambda received_args: calls.append(("preview", received_args)) or 0,
-            audit_runner=lambda received_args: calls.append(("audit", received_args)) or 0,
-        )
-
-        result = action()
-
-        self.assertEqual(result, 0)
-        self.assertEqual(calls, [("preview", args), ("audit", args)])
-
-    def test_make_apply_action_audits_legie_after_successful_preview(self):
+    def test_make_preview_with_legie_audit_action_audits_only_new_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base_dir = Path(tmp)
-            args = object()
+            matches_path = Path(tmp) / "matches.csv"
+            old_row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "none", "no-candidates")
+            new_row = cme.MatchRow(2, "Nova", "Autor", "skip", "", "", "none", "no-candidates")
+            cme.write_matches_csv(matches_path, [old_row], overwrite=False)
+            args = app.make_script_args("D:\\Knihy")
             calls = []
 
-            self.assertIn("audit_runner", inspect.signature(app.make_apply_action).parameters)
-            action = app.make_apply_action(
+            def preview_runner(received_args):
+                calls.append(("preview", received_args))
+                cme.write_matches_csv(matches_path, [old_row, new_row], overwrite=True)
+                return 0
+
+            def audit_runner(received_args):
+                calls.append(("audit", received_args, tuple(received_args.book_ids)))
+                return 0
+
+            self.assertIn("matches_path", inspect.signature(app.make_preview_with_legie_audit_action).parameters)
+            action = app.make_preview_with_legie_audit_action(
                 args=args,
-                allow_force=True,
-                base_dir=base_dir,
-                quit_runner=lambda allow_force: calls.append(("quit", allow_force)) or 0,
-                apply_runner=lambda received_args: calls.append(("apply", received_args)) or 0,
-                preview_runner=lambda received_args: calls.append(("preview", received_args)) or 0,
-                audit_runner=lambda received_args: calls.append(("audit", received_args)) or 0,
+                matches_path=matches_path,
+                preview_runner=preview_runner,
+                audit_runner=audit_runner,
             )
 
             result = action()
 
         self.assertEqual(result, 0)
-        self.assertEqual(calls, [("quit", True), ("apply", args), ("preview", args), ("audit", args)])
+        self.assertEqual(calls, [("preview", args), ("audit", args, (2,))])
+
+    def test_make_preview_with_legie_audit_action_skips_audit_when_no_new_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "none", "no-candidates")
+            cme.write_matches_csv(matches_path, [row], overwrite=False)
+            args = app.make_script_args("D:\\Knihy")
+            calls = []
+
+            self.assertIn("matches_path", inspect.signature(app.make_preview_with_legie_audit_action).parameters)
+            action = app.make_preview_with_legie_audit_action(
+                args=args,
+                matches_path=matches_path,
+                preview_runner=lambda received_args: calls.append(("preview", received_args)) or 0,
+                audit_runner=lambda received_args: self.fail("audit should not run without new rows"),
+            )
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("preview", args)])
+
+    def test_make_apply_action_audits_legie_only_for_rows_added_by_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            matches_path = base_dir / "matches.csv"
+            args = app.make_script_args("D:\\Knihy")
+            calls = []
+            old_row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "none", "no-candidates")
+            new_row = cme.MatchRow(2, "Nova", "Autor", "skip", "", "", "none", "no-candidates")
+            cme.write_matches_csv(matches_path, [old_row], overwrite=False)
+
+            def preview_runner(received_args):
+                calls.append(("preview", received_args))
+                cme.write_matches_csv(matches_path, [old_row, new_row], overwrite=True)
+                return 0
+
+            self.assertIn("audit_runner", inspect.signature(app.make_apply_action).parameters)
+            self.assertIn("matches_path", inspect.signature(app.make_apply_action).parameters)
+            action = app.make_apply_action(
+                args=args,
+                allow_force=True,
+                base_dir=base_dir,
+                matches_path=matches_path,
+                quit_runner=lambda allow_force: calls.append(("quit", allow_force)) or 0,
+                apply_runner=lambda received_args: calls.append(("apply", received_args)) or 0,
+                preview_runner=preview_runner,
+                audit_runner=lambda received_args: calls.append(("audit", received_args, tuple(received_args.book_ids))) or 0,
+            )
+
+            result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("quit", True), ("apply", args), ("preview", args), ("audit", args, (2,))])
 
     def test_make_apply_action_tracks_new_apply_results_without_name_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -594,6 +642,14 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(calls, [args])
+
+    def test_make_legie_audit_args_uses_selected_book_ids(self):
+        self.assertTrue(hasattr(app, "make_legie_audit_args"))
+
+        args = app.make_legie_audit_args("D:\\Knihy", {7, 3})
+
+        self.assertEqual(args.library, "D:\\Knihy")
+        self.assertEqual(args.book_ids, [3, 7])
 
     def test_make_rollback_action_quits_then_restores_backup(self):
         backup_path = Path("backups") / "metadata-20260529-120000.db"

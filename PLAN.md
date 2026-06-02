@@ -94,6 +94,13 @@
 - `Audit Legie` muze vratit schvalenou slabou Databaze shodu na `review`, kdyz najde lepsi povidku na Legii.
 - Presne schvalene radky `exact-title-author` audit porad nemeni.
 
+## Update 0.0.28 - rozsah Audit Legie
+
+- Automaticky audit po startu, po `Nacist nove knihy` a po `Zapsat do Calibre` audituje jen nove pridane radky.
+- Rucni tlacitko `Audit Legie` audituje jen vybrane radky, pokud je neco vybrane.
+- Kdyz v tabulce neni nic vybrane, rucni `Audit Legie` projede cele `matches.csv`.
+- Backend `run_legie_audit` umi vybrat vice knih pres `book_ids`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

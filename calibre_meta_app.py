@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.27"
+APP_VERSION = "0.0.28"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -163,10 +163,33 @@ def make_script_args(library: str, overwrite: bool = False) -> SimpleNamespace:
     return SimpleNamespace(
         library=library,
         book_id=None,
+        book_ids=None,
         limit=None,
         sleep=1.0,
         overwrite=overwrite,
     )
+
+
+def make_legie_audit_args(library: str, book_ids: set[int] | None = None) -> SimpleNamespace:
+    """Sestavi parametry pro Legie audit; bez vyberu projede vsechny radky."""
+    args = make_script_args(library)
+    args.book_ids = sorted(book_ids) if book_ids else None
+    return args
+
+
+def match_row_book_ids(matches_path: Path) -> set[int]:
+    """Precte Calibre ID z matches.csv; kdyz soubor neni, vrati prazdno."""
+    if not matches_path.exists():
+        return set()
+    return {row.book_id for row in cme.read_matches_csv(matches_path)}
+
+
+def set_audit_book_ids(args: SimpleNamespace, book_ids: set[int]) -> SimpleNamespace:
+    """Nastavi backend args tak, aby Legie audit resil jen dane knihy."""
+    args.book_id = None
+    args.book_ids = sorted(book_ids)
+    args.limit = None
+    return args
 
 
 def center_dialog(dialog: object, parent: object) -> None:
@@ -332,20 +355,30 @@ def run_preview_then_legie_audit(
 
 def make_preview_with_legie_audit_action(
     args: SimpleNamespace,
+    matches_path: Path = cme.MATCHES_PATH,
     preview_runner: Callable[[SimpleNamespace], int] = cme.run_preview,
     audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
 ) -> Callable[[], int]:
     """Pripravi nacitani novych knih vcetne automatickeho Legie auditu."""
-    return lambda: run_preview_then_legie_audit(
-        preview_func=lambda: preview_runner(args),
-        audit_func=lambda: audit_runner(args),
-    )
+    def action() -> int:
+        before_ids = match_row_book_ids(matches_path)
+        preview_result = preview_runner(args)
+        if preview_result != 0:
+            return preview_result
+        new_ids = match_row_book_ids(matches_path) - before_ids
+        if not new_ids:
+            print("Audit Legie: zadne nove radky.")
+            return 0
+        return audit_runner(set_audit_book_ids(args, new_ids))
+
+    return action
 
 
 def make_apply_action(
     args: SimpleNamespace,
     allow_force: bool,
     base_dir: Path = APP_DIR,
+    matches_path: Path = cme.MATCHES_PATH,
     quit_runner: Callable[[bool], int] | None = None,
     apply_runner: Callable[[SimpleNamespace], int] | None = None,
     preview_runner: Callable[[SimpleNamespace], int] | None = None,
@@ -358,14 +391,17 @@ def make_apply_action(
     apply_action = apply_runner or cme.run_apply
     preview_action = preview_runner or cme.run_preview
     audit_action = audit_runner or cme.run_legie_audit
+    preview_with_audit_action = make_preview_with_legie_audit_action(
+        args=args,
+        matches_path=matches_path,
+        preview_runner=preview_action,
+        audit_runner=audit_action,
+    )
 
     return lambda: run_apply_then_preview(
         quit_func=lambda: quit_action(allow_force),
         apply_func=lambda: apply_action(args),
-        preview_func=lambda: run_preview_then_legie_audit(
-            preview_func=lambda: preview_action(args),
-            audit_func=lambda: audit_action(args),
-        ),
+        preview_func=preview_with_audit_action,
         failed_summary_func=lambda: format_new_failed_apply_results(base_dir, known_apply_results),
     )
 
@@ -736,7 +772,7 @@ class CalibreMetaApp:
         if not self.save_csv(show_message=False):
             return
         args = make_script_args(self.library_path())
-        action = make_preview_with_legie_audit_action(args)
+        action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
         self._run_background("Nacitani novych knih + Audit Legie", action, reload_after=True)
 
     def run_rebuild(self) -> None:
@@ -755,7 +791,8 @@ class CalibreMetaApp:
     def run_legie_audit(self) -> None:
         if not self.save_csv(show_message=False):
             return
-        args = make_script_args(self.library_path())
+        selected = self._selected_book_ids()
+        args = make_legie_audit_args(self.library_path(), selected if selected else None)
         action = make_legie_audit_action(args)
         self._run_background("Audit Legie", action, reload_after=True)
 
@@ -766,7 +803,7 @@ class CalibreMetaApp:
         if not self.save_csv(show_message=False):
             return
         args = make_script_args(self.library_path())
-        action = make_apply_action(args=args, allow_force=allow_force)
+        action = make_apply_action(args=args, allow_force=allow_force, matches_path=self.matches_path)
         self._run_background("Zapis do Calibre", action, reload_after=True)
 
     def choose_rollback_backup(self) -> Path | None:
