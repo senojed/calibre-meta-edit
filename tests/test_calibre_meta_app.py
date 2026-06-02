@@ -3,6 +3,7 @@
 import contextlib
 import csv
 import io
+import inspect
 import json
 import tempfile
 import unittest
@@ -14,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.25")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.25")
+        self.assertEqual(app.APP_VERSION, "0.0.26")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.26")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -35,7 +36,7 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("ulozi matches.csv", message)
         self.assertIn("vytvori zalohu metadata.db", message)
         self.assertIn("zalozku Vydani", message)
-        self.assertIn("nacte nove knihy", message)
+        self.assertIn("nacte nove knihy a spusti Audit Legie", message)
         self.assertNotIn("stahne detail", message)
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
@@ -442,6 +443,68 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn("Spatny zapis", output.getvalue())
+
+    def test_run_preview_then_legie_audit_runs_audit_after_successful_preview(self):
+        calls = []
+
+        self.assertTrue(hasattr(app, "run_preview_then_legie_audit"))
+        result = app.run_preview_then_legie_audit(
+            preview_func=lambda: calls.append("preview") or 0,
+            audit_func=lambda: calls.append("audit") or 0,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, ["preview", "audit"])
+
+    def test_run_preview_then_legie_audit_skips_audit_when_preview_fails(self):
+        calls = []
+
+        self.assertTrue(hasattr(app, "run_preview_then_legie_audit"))
+        result = app.run_preview_then_legie_audit(
+            preview_func=lambda: calls.append("preview") or 1,
+            audit_func=lambda: calls.append("audit") or 0,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(calls, ["preview"])
+
+    def test_make_preview_with_legie_audit_action_runs_preview_then_audit(self):
+        args = app.make_script_args("D:\\Knihy")
+        calls = []
+
+        self.assertTrue(hasattr(app, "make_preview_with_legie_audit_action"))
+        action = app.make_preview_with_legie_audit_action(
+            args=args,
+            preview_runner=lambda received_args: calls.append(("preview", received_args)) or 0,
+            audit_runner=lambda received_args: calls.append(("audit", received_args)) or 0,
+        )
+
+        result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("preview", args), ("audit", args)])
+
+    def test_make_apply_action_audits_legie_after_successful_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            args = object()
+            calls = []
+
+            self.assertIn("audit_runner", inspect.signature(app.make_apply_action).parameters)
+            action = app.make_apply_action(
+                args=args,
+                allow_force=True,
+                base_dir=base_dir,
+                quit_runner=lambda allow_force: calls.append(("quit", allow_force)) or 0,
+                apply_runner=lambda received_args: calls.append(("apply", received_args)) or 0,
+                preview_runner=lambda received_args: calls.append(("preview", received_args)) or 0,
+                audit_runner=lambda received_args: calls.append(("audit", received_args)) or 0,
+            )
+
+            result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("quit", True), ("apply", args), ("preview", args), ("audit", args)])
 
     def test_make_apply_action_tracks_new_apply_results_without_name_error(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -80,6 +80,12 @@
 - Rucne vlozene odkazy `databazeknih.cz/povidky/...` se zapisuji jako link-only komentar bez stahovani metadat.
 - `Audit Legie` umi zvednout na `review` i stare `already-linked` radky, ale `approve` radky porad nemeni.
 
+## Update 0.0.26 - automaticky Audit Legie
+
+- Po startu appky a po `Nacist nove knihy` se nejdriv spusti preview a hned potom `Audit Legie`.
+- Po uspesnem `Zapsat do Calibre` se znovu nactou nove knihy a hned potom se spusti `Audit Legie`.
+- Tlacitko `Audit Legie` zustava jako rucni opakovani auditu.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

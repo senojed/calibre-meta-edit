@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.25"
+APP_VERSION = "0.0.26"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -97,7 +97,7 @@ def apply_confirmation_message() -> str:
         "4. u approve radku stahne prehled a zalozku Vydani z Databaze knih\n"
         "5. zapise komentar, vydano, vydavatele a stitky do Calibre\n"
         "6. hotove radky zmeni na skip a ulozi matches.csv\n"
-        "7. nacte nove knihy"
+        "7. nacte nove knihy a spusti Audit Legie"
     )
 
 
@@ -319,6 +319,29 @@ def run_apply_then_preview(
     return preview_func()
 
 
+def run_preview_then_legie_audit(
+    preview_func: Callable[[], int],
+    audit_func: Callable[[], int],
+) -> int:
+    """Nejdriv nacte nove knihy, potom spusti Legie audit."""
+    preview_result = preview_func()
+    if preview_result != 0:
+        return preview_result
+    return audit_func()
+
+
+def make_preview_with_legie_audit_action(
+    args: SimpleNamespace,
+    preview_runner: Callable[[SimpleNamespace], int] = cme.run_preview,
+    audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
+) -> Callable[[], int]:
+    """Pripravi nacitani novych knih vcetne automatickeho Legie auditu."""
+    return lambda: run_preview_then_legie_audit(
+        preview_func=lambda: preview_runner(args),
+        audit_func=lambda: audit_runner(args),
+    )
+
+
 def make_apply_action(
     args: SimpleNamespace,
     allow_force: bool,
@@ -326,6 +349,7 @@ def make_apply_action(
     quit_runner: Callable[[bool], int] | None = None,
     apply_runner: Callable[[SimpleNamespace], int] | None = None,
     preview_runner: Callable[[SimpleNamespace], int] | None = None,
+    audit_runner: Callable[[SimpleNamespace], int] | None = None,
 ) -> Callable[[], int]:
     """Pripravi zapisovy workflow a zapamatuje apply-results soubory pred zapisem."""
     results_dir = base_dir / cme.APPLY_RESULTS_DIR
@@ -333,11 +357,15 @@ def make_apply_action(
     quit_action = quit_runner or (lambda force: quit_calibre(allow_force=force))
     apply_action = apply_runner or cme.run_apply
     preview_action = preview_runner or cme.run_preview
+    audit_action = audit_runner or cme.run_legie_audit
 
     return lambda: run_apply_then_preview(
         quit_func=lambda: quit_action(allow_force),
         apply_func=lambda: apply_action(args),
-        preview_func=lambda: preview_action(args),
+        preview_func=lambda: run_preview_then_legie_audit(
+            preview_func=lambda: preview_action(args),
+            audit_func=lambda: audit_action(args),
+        ),
         failed_summary_func=lambda: format_new_failed_apply_results(base_dir, known_apply_results),
     )
 
@@ -708,7 +736,8 @@ class CalibreMetaApp:
         if not self.save_csv(show_message=False):
             return
         args = make_script_args(self.library_path())
-        self._run_background("Nacitani novych knih", lambda: cme.run_preview(args), reload_after=True)
+        action = make_preview_with_legie_audit_action(args)
+        self._run_background("Nacitani novych knih + Audit Legie", action, reload_after=True)
 
     def run_rebuild(self) -> None:
         message = (

@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.25`
+Aktualni verze: `0.0.26`
 
 Nejjednodussi pouziti:
 
@@ -19,12 +19,12 @@ Konzolova okna pomocnych prikazu se appka snazi schovat.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
-- pri startu automaticky nacte nove knihy bez dotazu
+- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit Legie`
 - pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
-- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy
-- `Audit Legie` - zkusi u nejistych a starych odkazovych radku najit povidku na Legii a nastavi ji na `review`
+- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit Legie`
+- `Audit Legie` - rucne zopakuje hledani povidek na Legii u nejistych a starych odkazovych radku
 - `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
 - `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
 - klik na hlavicku sloupce seradi tabulku
@@ -45,7 +45,7 @@ V appce:
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
 9. hotove `approve` radky zmeni na `skip`
-10. po zapisu nacte nove knihy
+10. po zapisu nacte nove knihy a spusti `Audit Legie`
 11. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
