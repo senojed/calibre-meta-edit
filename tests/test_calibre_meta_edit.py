@@ -51,7 +51,7 @@ class TextAndUrlTests(unittest.TestCase):
         url = cme.build_legie_search_url("A opice si myslely", ["Orson Scott Card"])
         self.assertEqual(
             url,
-            "https://www.legie.info/vyhledavani?text=A+opice+si+myslely+Orson+Scott+Card",
+            "https://www.legie.info/index.php?search_text=A+opice+si+myslely+Orson+Scott+Card",
         )
 
     def test_unc_library_path_builds_windows_sqlite_readonly_uri(self):
@@ -182,6 +182,23 @@ class ParserAndMatchingTests(unittest.TestCase):
             "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
         )
         self.assertIn("Orson Scott Card", candidates[0].text)
+
+    def test_parse_legie_search_results_reads_direct_story_detail_page(self):
+        html = """
+        <h3><a href="autor/806-anatolij-petrovic-dneprov">Anatolij Petrovič Dněprov</a></h3>
+        <h2 id="nazev_povidky">Purpurová mumie</h2>
+        <ul id="zalozky">
+          <li><a href="povidka/31031/zakladni-info#zalozky">základní informace</a></li>
+          <li><a href="povidka/31031/diskuze#zalozky">diskuze</a></li>
+        </ul>
+        """
+
+        candidates = cme.parse_legie_search_results(html)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].title, "Purpurová mumie")
+        self.assertIn("Anatolij Petrovič Dněprov", candidates[0].text)
+        self.assertEqual(candidates[0].url, "https://www.legie.info/povidka/31031")
 
     def test_match_legie_story_candidate_returns_review_never_approve(self):
         book = cme.Book(429, "A opice si myslely, že je to všechno jen legrace", ["Orson Scott Card"], "")

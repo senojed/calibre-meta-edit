@@ -107,6 +107,12 @@
 - Kdyz nic nenajde, zkusi jeste hledat jen podle nazvu knihy/povidky.
 - Fallback resi pripady, kdy Legie autora ve vyhledavani nenajde kvuli jinemu zapisu jmena.
 
+## Update 0.0.30 - opravena Legie search URL
+
+- Legie vyhledavani pouziva skutecny formular `index.php?search_text=...`.
+- Parser Legie umi rozpoznat i situaci, kdy vyhledavani rovnou otevre detail povidky.
+- Detail povidky se prevede na kandidata `https://www.legie.info/povidka/ID`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.

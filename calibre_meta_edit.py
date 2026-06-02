@@ -26,7 +26,7 @@ from typing import Callable, Iterable, Sequence
 BASE_URL = "https://www.databazeknih.cz"
 SEARCH_URL = BASE_URL + "/vyhledavani/knihy?q="
 LEGIE_BASE_URL = "https://www.legie.info"
-LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/vyhledavani?text="
+LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/index.php?search_text="
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
@@ -380,10 +380,24 @@ class LegieSearchParser(HTMLParser):
 
 
 def parse_legie_search_results(html_text: str) -> list[Candidate]:
+    detail = parse_legie_story_detail(html_text, _legie_story_url_from_detail_html(html_text))
+    if detail.title and detail.legie_id:
+        text = _clean_text(" ".join(part for part in (detail.title, detail.author) if part))
+        return [Candidate(detail.title, text, LEGIE_BASE_URL + "/povidka/" + detail.legie_id)]
+
     parser = LegieSearchParser()
     parser.feed(html_text)
     parser.close()
     return parser.candidates
+
+
+def _legie_story_url_from_detail_html(html_text: str) -> str:
+    """Najde ID povidky v HTML detailu nebo zalozek Legie."""
+    match = re.search(r'\bdata-kasp-id=["\'](\d+)["\']\s+data-kasp=["\']p["\']', html_text)
+    if match:
+        return LEGIE_BASE_URL + "/povidka/" + match.group(1)
+    match = re.search(r'["\'](?:https?://www\.legie\.info/)?povidka/(\d+)(?:/[^"\']*)?["\']', html_text)
+    return LEGIE_BASE_URL + "/povidka/" + match.group(1) if match else ""
 
 
 def _clean_text(text: str) -> str:
