@@ -68,6 +68,12 @@
 - Pridan implementacni plan pro CSV schema, Legie parser, audit, apply a app UI.
 - Plan drzi konzervativni pravidlo: Legie kandidat vzdy zacina jako `review`.
 
+## Update 0.0.24 - audit povidek pres Legii
+
+- Pridan konzervativni Legie audit nad `matches.csv`.
+- Legie kandidati jsou vzdy `review` a `approve` radky audit nemeni.
+- Zapis Legie radku uklada komentar, tag `povidka` a identifikator `legie:ID`.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
