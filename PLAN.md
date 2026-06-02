@@ -300,6 +300,14 @@
   - `preview --limit 5` vytvori CSV bez zapisu
   - `apply` na jedne schvalene testovaci knize nejdriv vytvori backup, pak zapise odkaz nahoru
 
+## Update 0.0.32 - Audit odkazu
+
+- Tlacitko se jmenuje `Audit odkazu`, protoze uz nehleda jen Legii.
+- U nejistych nebo prazdnych radku zkusi nejdriv Databazi knih.
+- Kdyz Databaze knih najde `/povidky/...`, radek dostane `source=databazeknih` a `work_type=povidka`.
+- Kdyz Databaze knih nenajde jistou shodu, audit pokracuje hledanim na Legii.
+- To resi stare radky jako `Samuela`, ktere vznikly pred podporou DK povidek.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

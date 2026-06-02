@@ -333,6 +333,22 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(match.confidence, "exact-title-author")
         self.assertEqual(match.reason, "exact-title-author")
 
+    def test_match_book_marks_databaze_story_url_as_povidka(self):
+        book = cme.Book(554, "Samuela", ["Anatolij Petrovic Dneprov"], "")
+        candidates = [
+            cme.Candidate(
+                "Samuela",
+                "Povidka od: Anatolij Petrovic Dneprov",
+                "https://www.databazeknih.cz/povidky/samuela-2229",
+            )
+        ]
+
+        match = cme.match_book(book, candidates)
+
+        self.assertEqual(match.status, "approve")
+        self.assertEqual(match.source, "databazeknih")
+        self.assertEqual(match.work_type, "povidka")
+
     def test_match_book_marks_title_only_as_review(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [cme.Candidate("Loď osudu", "Neznámý autor", "https://www.databazeknih.cz/knihy/foo-123")]
@@ -555,6 +571,44 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "legie")
         self.assertEqual(updated[0].work_type, "povidka")
 
+    def test_audit_legie_rows_tries_databaze_before_legie_for_missing_candidate(self):
+        row = cme.MatchRow(
+            554,
+            "Samuela",
+            "Anatolij Petrovic Dneprov",
+            "skip",
+            "",
+            "",
+            "none",
+            "no-candidates",
+            "databazeknih",
+            "",
+        )
+        db_html = """
+        <a href="https://www.databazeknih.cz/povidky/samuela-2229">
+            <img title="Samuela" />
+            Samuela
+        </a>
+        <p>Povidka od: Anatolij Petrovic Dneprov</p>
+        """
+        fetched_urls = []
+
+        def fetcher(url: str) -> str:
+            fetched_urls.append(url)
+            return db_html if "databazeknih.cz" in url else ""
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(fetched_urls[0], cme.build_search_url("Samuela", ["Anatolij Petrovic Dneprov"]))
+        self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/povidky/samuela-2229")
+        self.assertEqual(updated[0].source, "databazeknih")
+        self.assertEqual(updated[0].work_type, "povidka")
+
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(
             31031,
@@ -592,6 +646,7 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(
             fetched_urls,
             [
+                cme.build_search_url("Purpurova mumie", ["Anatolij Petrovic Dneprov"]),
                 cme.build_legie_search_url("Purpurova mumie", ["Anatolij Petrovic Dneprov"]),
                 cme.build_legie_search_url("Purpurova mumie", []),
             ],

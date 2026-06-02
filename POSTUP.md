@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.30`
+Aktualni verze: `0.0.32`
 
 Nejjednodussi pouziti:
 
@@ -19,12 +19,13 @@ Konzolova okna pomocnych prikazu se appka snazi schovat.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
-- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit Legie` jen pro nove radky
+- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit odkazu` jen pro nove radky
 - pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
-- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit Legie` jen pro nove radky
-- `Audit Legie` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
+- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
+- `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
+- `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
 - kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek
 - slaba shoda z Databaze knih se stejnym jednim slovem v nazvu zustane bez odkazu, pokud Legie nic nenajde
@@ -48,7 +49,7 @@ V appce:
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
 9. hotove `approve` radky zmeni na `skip`
-10. po zapisu nacte nove knihy a spusti `Audit Legie` jen pro nove radky
+10. po zapisu nacte nove knihy a spusti `Audit odkazu` jen pro nove radky
 11. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
@@ -57,16 +58,17 @@ Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.
 Kdyz pri zapisu neco selze, appka vypise `Failed zapisy` ve spodnim vystupu.
 Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `approve`.
 
-`Audit Legie` udela:
+`Audit odkazu` udela:
 
 1. ulozi aktualni `matches.csv`
 2. zalohuje `matches.csv` do `backups\matches\`
 3. projde vybrane radky, nebo cele `matches.csv`, kdyz nic nevyberes
-4. u nejistych radku hleda mozne povidky na Legii
-5. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
-6. presne schvalene `approve` radky nemeni
-7. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
-8. nic nezapisuje do Calibre
+4. u nejistych radku zkusi nejdriv Databazi knih
+5. kdyz Databaze knih nenajde jistou shodu, hleda mozne povidky na Legii
+6. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
+7. presne schvalene `approve` radky nemeni
+8. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
+9. nic nezapisuje do Calibre
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.

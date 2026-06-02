@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.31"
+APP_VERSION = "0.0.32"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -35,7 +35,7 @@ BUTTON_COLOR_MAP = {
     "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
 TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
-PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit Legie", "Ulozit CSV")
+PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit odkazu", "Ulozit CSV")
 BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 
@@ -97,7 +97,7 @@ def apply_confirmation_message() -> str:
         "4. u approve radku stahne prehled a zalozku Vydani z Databaze knih\n"
         "5. zapise komentar, vydano, vydavatele a stitky do Calibre\n"
         "6. hotove radky zmeni na skip a ulozi matches.csv\n"
-        "7. nacte nove knihy a spusti Audit Legie"
+        "7. nacte nove knihy a spusti Audit odkazu"
     )
 
 
@@ -383,7 +383,7 @@ def make_preview_with_legie_audit_action(
             return preview_result
         new_ids = match_row_book_ids(matches_path) - before_ids
         if not new_ids:
-            print("Audit Legie: zadne nove radky.")
+            print("Audit odkazu: zadne nove radky.")
             return 0
         return audit_runner(set_audit_book_ids(args, new_ids))
 
@@ -799,7 +799,7 @@ class CalibreMetaApp:
             return
         args = make_script_args(self.library_path())
         action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
-        self._run_background("Nacitani novych knih + Audit Legie", action, reload_after=True)
+        self._run_background("Nacitani novych knih + Audit odkazu", action, reload_after=True)
 
     def run_rebuild(self) -> None:
         message = (
@@ -820,7 +820,7 @@ class CalibreMetaApp:
         selected = self._selected_book_ids()
         args = make_legie_audit_args(self.library_path(), selected if selected else None)
         action = make_legie_audit_action(args)
-        self._run_background("Audit Legie", action, reload_after=True)
+        self._run_background("Audit odkazu", action, reload_after=True)
 
     def run_apply(self) -> None:
         confirmed, allow_force = self.ask_apply_confirmation()

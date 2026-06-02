@@ -939,18 +939,31 @@ def should_try_legie(row: MatchRow) -> bool:
     return row.reason in LEGIE_FALLBACK_REASONS
 
 
+def source_and_work_type_for_url(url: str) -> tuple[str, str]:
+    """Urci zdroj a typ prace podle odkazu z vyhledavani."""
+    if is_valid_legie_story_url(url):
+        return "legie", "povidka"
+    if is_valid_databaze_story_url(url):
+        return "databazeknih", "povidka"
+    return "databazeknih", ""
+
+
 def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     authors_text = " & ".join(book.authors)
     if comment_has_databaze_link(book.comment):
+        url = extract_first_databaze_link(book.comment)
+        source, work_type = source_and_work_type_for_url(url)
         return MatchRow(
             book.id,
             book.title,
             authors_text,
             "skip",
-            extract_first_databaze_link(book.comment),
+            url,
             "",
             "none",
             "already-linked",
+            source,
+            work_type,
         )
 
     if not candidates:
@@ -966,6 +979,7 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
 
     if len(exact_author_matches) == 1 and len(title_matches) == 1:
         candidate = exact_author_matches[0]
+        source, work_type = source_and_work_type_for_url(candidate.url)
         return MatchRow(
             book.id,
             book.title,
@@ -975,9 +989,12 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
             _candidate_urls(candidates),
             "exact-title-author",
             "exact-title-author",
+            source,
+            work_type,
         )
     if len(exact_author_matches) > 1 or len(title_matches) > 1:
         chosen = title_matches[0] if title_matches else exact_author_matches[0]
+        source, work_type = source_and_work_type_for_url(chosen.url)
         return MatchRow(
             book.id,
             book.title,
@@ -987,9 +1004,12 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
             _candidate_urls(candidates),
             "multiple-title-matches",
             "multiple-title-matches",
+            source,
+            work_type,
         )
     if len(title_matches) == 1:
         candidate = title_matches[0]
+        source, work_type = source_and_work_type_for_url(candidate.url)
         return MatchRow(
             book.id,
             book.title,
@@ -999,6 +1019,8 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
             _candidate_urls(candidates),
             "title-only",
             "title-only",
+            source,
+            work_type,
         )
 
     partial_matches = [
@@ -1008,6 +1030,7 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     ]
     if partial_matches:
         candidate = partial_matches[0]
+        source, work_type = source_and_work_type_for_url(candidate.url)
         return MatchRow(
             book.id,
             book.title,
@@ -1017,6 +1040,8 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
             _candidate_urls(candidates),
             "partial-title",
             "partial-title",
+            source,
+            work_type,
         )
 
     return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "no-candidates")
@@ -1553,8 +1578,23 @@ def audit_legie_rows(
             continue
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]
         book = Book(row.book_id, row.title, authors, "")
+        databaze_row = None
+        sleeper(sleep_seconds)
+        try:
+            databaze_html = fetcher(build_search_url(book.title, book.authors))
+            databaze_row = match_book(book, parse_search_results(databaze_html))
+        except Exception:
+            databaze_row = None
+        if databaze_row is not None and databaze_row.chosen_url and not should_try_legie(databaze_row):
+            updated.append(databaze_row)
+            continue
         legie_row = find_legie_story(book, fetcher, sleeper, sleep_seconds)
-        updated.append(legie_row if legie_row is not None else row)
+        if legie_row is not None:
+            updated.append(legie_row)
+        elif databaze_row is not None and databaze_row.chosen_url:
+            updated.append(databaze_row)
+        else:
+            updated.append(row)
     return updated
 
 

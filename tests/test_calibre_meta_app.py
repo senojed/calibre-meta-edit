@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.31")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.31")
+        self.assertEqual(app.APP_VERSION, "0.0.32")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.32")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -36,7 +36,7 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("ulozi matches.csv", message)
         self.assertIn("vytvori zalohu metadata.db", message)
         self.assertIn("zalozku Vydani", message)
-        self.assertIn("nacte nove knihy a spusti Audit Legie", message)
+        self.assertIn("nacte nove knihy a spusti Audit odkazu", message)
         self.assertNotIn("stahne detail", message)
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
@@ -115,7 +115,7 @@ class AppModelTests(unittest.TestCase):
     def test_primary_toolbar_order_includes_legie_audit(self):
         self.assertEqual(
             app.primary_toolbar_order(),
-            ("Nacist CSV", "Nacist nove knihy", "Audit Legie", "Ulozit CSV"),
+            ("Nacist CSV", "Nacist nove knihy", "Audit odkazu", "Ulozit CSV"),
         )
 
     def test_bottom_library_bar_order_contains_library_rebuild_and_rollback(self):
