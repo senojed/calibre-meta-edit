@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.32`
+Aktualni verze: `0.0.33`
 
 Nejjednodussi pouziti:
 

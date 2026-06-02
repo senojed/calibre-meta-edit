@@ -308,6 +308,13 @@
 - Kdyz Databaze knih nenajde jistou shodu, audit pokracuje hledanim na Legii.
 - To resi stare radky jako `Samuela`, ktere vznikly pred podporou DK povidek.
 
+## Update 0.0.33 - Legie autor v obracenem poradi
+
+- Legie nekdy pise autora jako `Prijmeni, Jmeno`.
+- Porovnani autora proto pouziva slova bez ohledu na poradi.
+- `Samuela` se diky tomu najde jako Legie povidka `393`.
+- Backend hlaska se sjednotila na `Audit odkazu`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -887,12 +887,25 @@ def _meaningful_partial_title_match(left: str, right: str) -> bool:
     return len(overlap) >= 4 and len(overlap) / max(len(left_tokens), len(right_tokens)) >= 0.75
 
 
+def _name_tokens(value: str) -> set[str]:
+    """Rozbije jmeno na slova bez ohledu na carky a poradi."""
+    return {token for token in re.findall(r"[a-z0-9]+", normalize_text(value)) if len(token) > 1}
+
+
+def _author_matches_text(author: str, text: str) -> bool:
+    """Porovna autora i kdyz web pise prijmeni pred jmenem."""
+    author_tokens = _name_tokens(author)
+    if not author_tokens:
+        return False
+    return author_tokens <= _name_tokens(text)
+
+
 def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow | None:
     authors_text = " & ".join(book.authors)
     for candidate in candidates:
         if not _titles_close(book.title, candidate.title):
             continue
-        if not any(normalize_text(author) in normalize_text(candidate.text) for author in book.authors):
+        if not any(_author_matches_text(author, candidate.text) for author in book.authors):
             continue
         return MatchRow(
             book.id,
@@ -974,7 +987,7 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     exact_author_matches = [
         candidate
         for candidate in title_matches
-        if any(normalize_text(author) in normalize_text(candidate.text) for author in book.authors)
+        if any(_author_matches_text(author, candidate.text) for author in book.authors)
     ]
 
     if len(exact_author_matches) == 1 and len(title_matches) == 1:
@@ -1641,7 +1654,7 @@ def run_legie_audit(args: argparse.Namespace) -> int:
         print(f"Zaloha matches.csv: {backup_path}")
     write_matches_csv(MATCHES_PATH, merged, overwrite=True)
     changed = sum(1 for old, new in zip(rows, merged) if old != new)
-    print(f"Legie audit: zmeneno {changed} radku")
+    print(f"Audit odkazu: zmeneno {changed} radku")
     return 0
 
 

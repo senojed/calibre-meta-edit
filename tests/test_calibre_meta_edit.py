@@ -235,6 +235,22 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(row.work_type, "povidka")
         self.assertEqual(row.reason, "legie-story-candidate")
 
+    def test_match_legie_story_accepts_inverted_author_name_order(self):
+        book = cme.Book(554, "Samuela", ["Anatolij Petrovic Dneprov"], "")
+        candidates = [
+            cme.Candidate(
+                "Samuela",
+                "Samuela Dneprov, Anatolij Petrovic",
+                "https://www.legie.info/povidka/393-anatolij-petrovic-dneprov-samuela",
+            )
+        ]
+
+        row = cme.match_legie_story(book, candidates)
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.chosen_url, "https://www.legie.info/povidka/393-anatolij-petrovic-dneprov-samuela")
+
     def test_parse_book_detail_metadata_reads_json_ld_about_rating_and_user_tags(self):
         html = """
         <script type="application/ld+json">
@@ -740,7 +756,8 @@ class ParserAndMatchingTests(unittest.TestCase):
                     )
                 ]
 
-                with contextlib.redirect_stdout(io.StringIO()):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
                     result = cme.run_legie_audit(SimpleNamespace(library="library", book_id=None, limit=None, sleep=0))
             finally:
                 cme.MATCHES_PATH = original_matches_path
@@ -753,6 +770,7 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(rows[0].source, "legie")
         self.assertEqual(rows[0].work_type, "povidka")
         self.assertEqual(len(backup_files), 1)
+        self.assertIn("Audit odkazu: zmeneno 1 radku", stdout.getvalue())
 
     def test_run_legie_audit_uses_selected_book_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
