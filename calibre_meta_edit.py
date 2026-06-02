@@ -893,6 +893,28 @@ def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow |
     return None
 
 
+def find_legie_story(
+    book: Book,
+    fetcher: Callable[[str], str],
+    sleeper: Callable[[float], None] = time.sleep,
+    sleep_seconds: float = 1.0,
+) -> MatchRow | None:
+    """Hleda povidku na Legii: nejdriv nazev+autor, pak samotny nazev."""
+    search_authors = [book.authors]
+    if book.authors:
+        search_authors.append([])
+    for authors in search_authors:
+        sleeper(sleep_seconds)
+        try:
+            legie_html = fetcher(build_legie_search_url(book.title, authors))
+            legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
+        except Exception:
+            legie_row = None
+        if legie_row is not None:
+            return legie_row
+    return None
+
+
 def should_try_legie(row: MatchRow) -> bool:
     if row.source == "legie":
         return False
@@ -1476,12 +1498,7 @@ def preview_books(
             authors_text = " & ".join(book.authors)
             row = MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "http-error")
         if should_try_legie(row):
-            sleeper(sleep_seconds)
-            try:
-                legie_html = fetcher(build_legie_search_url(book.title, book.authors))
-                legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
-            except Exception:
-                legie_row = None
+            legie_row = find_legie_story(book, fetcher, sleeper, sleep_seconds)
             if legie_row is not None:
                 row = legie_row
         rows.append(row)
@@ -1520,12 +1537,7 @@ def audit_legie_rows(
             continue
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]
         book = Book(row.book_id, row.title, authors, "")
-        sleeper(sleep_seconds)
-        try:
-            legie_html = fetcher(build_legie_search_url(book.title, book.authors))
-            legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
-        except Exception:
-            legie_row = None
+        legie_row = find_legie_story(book, fetcher, sleeper, sleep_seconds)
         updated.append(legie_row if legie_row is not None else row)
     return updated
 

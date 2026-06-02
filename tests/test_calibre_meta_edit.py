@@ -522,6 +522,51 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "legie")
         self.assertEqual(updated[0].work_type, "povidka")
 
+    def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
+        row = cme.MatchRow(
+            31031,
+            "Purpurova mumie",
+            "Anatolij Petrovic Dneprov",
+            "review",
+            "https://www.databazeknih.cz/knihy/purpurova-planeta-60769",
+            "",
+            "partial-title",
+            "partial-title",
+            "databazeknih",
+            "",
+        )
+        legie_html = """
+        <a href="https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie">
+          Purpurova mumie
+        </a>
+        <span>Anatolij Petrovic Dneprov</span>
+        """
+        fetched_urls = []
+
+        def fetcher(url: str) -> str:
+            fetched_urls.append(url)
+            if url == cme.build_legie_search_url("Purpurova mumie", []):
+                return legie_html
+            return ""
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(
+            fetched_urls,
+            [
+                cme.build_legie_search_url("Purpurova mumie", ["Anatolij Petrovic Dneprov"]),
+                cme.build_legie_search_url("Purpurova mumie", []),
+            ],
+        )
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].chosen_url, "https://www.legie.info/povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie")
+
     def test_audit_legie_rows_marks_existing_legie_url_as_review(self):
         row = cme.MatchRow(
             429,

@@ -101,6 +101,12 @@
 - Kdyz v tabulce neni nic vybrane, rucni `Audit Legie` projede cele `matches.csv`.
 - Backend `run_legie_audit` umi vybrat vice knih pres `book_ids`.
 
+## Update 0.0.29 - Legie title-only fallback
+
+- Legie audit nejdriv hleda podle `nazev + autor`.
+- Kdyz nic nenajde, zkusi jeste hledat jen podle nazvu knihy/povidky.
+- Fallback resi pripady, kdy Legie autora ve vyhledavani nenajde kvuli jinemu zapisu jmena.
+
 ## Key Changes
 
 - Vychozi knihovna je `\\192.168.0.101\data\books`; skript z ni bude cist `metadata.db`.
