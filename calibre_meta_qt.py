@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -330,6 +330,7 @@ if PYSIDE6_AVAILABLE:
                 Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show_text else Qt.ToolButtonStyle.ToolButtonIconOnly
             )
             if not show_text:
+                button.setProperty("iconOnly", True)
                 button.setFixedSize(42, 42)
             if icon:
                 button.setIcon(self.icon_for(icon))
@@ -762,7 +763,14 @@ if PYSIDE6_AVAILABLE:
             base = """
                 * { font-family: "Segoe UI"; }
                 QPushButton, QToolButton { min-height: 30px; padding: 4px 8px; border-radius: 3px; }
-                QToolButton { font-size: 8pt; min-width: 58px; }
+                QToolButton { font-size: 8pt; }
+                QToolButton[iconOnly="true"] {
+                    min-width: 42px;
+                    max-width: 42px;
+                    min-height: 42px;
+                    max-height: 42px;
+                    padding: 0;
+                }
                 QPushButton#approveButton, QToolButton#approveButton { background: #2e7d32; color: white; }
                 QPushButton#reviewButton, QToolButton#reviewButton { background: #ef6c00; color: white; }
                 QPushButton#skipButton, QPushButton#neutralButton, QToolButton#skipButton, QToolButton#neutralButton { background: #757575; color: white; }

@@ -445,6 +445,12 @@
 - Ikonova tlacitka v hlavni liste jsou ctvercova `42x42`.
 - Link tlacitka v detailu se roztahuji na celou sirku pole s adresou, kazde na pulku.
 
+## Update 0.1.8 - Qt recycle icon and square fix
+
+- Ikona `Update vybrane` nahrazena kruhovymi sipkami.
+- Opraven CSS `min-width`, ktery roztahoval ikonova tlacitka na sirku.
+- Ikonova tlacitka jsou vynucene na `42x42`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
