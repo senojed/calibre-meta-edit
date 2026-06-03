@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.37")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.37")
+        self.assertEqual(app.APP_VERSION, "0.0.38")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.38")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -97,6 +97,8 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(app.button_colors("approve")["bg"], "#2e7d32")
         self.assertEqual(app.button_colors("review")["bg"], "#ef6c00")
         self.assertEqual(app.button_colors("skip")["bg"], "#757575")
+        self.assertEqual(app.button_colors("story")["bg"], "#1565c0")
+        self.assertEqual(app.button_colors("update")["bg"], "#1565c0")
         self.assertEqual(app.button_colors("apply")["bg"], "#c62828")
         self.assertEqual(app.button_colors("rebuild")["bg"], "#c62828")
         self.assertEqual(app.button_colors("rollback")["bg"], "#c62828")
@@ -298,6 +300,29 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual([row.status for row in updated], ["approve", "review", "approve"])
         self.assertEqual([row.chosen_url for row in updated], ["url-a", "url-b", "url-c"])
+
+    def test_update_rows_url_changes_multiple_selected_rows(self):
+        rows = [
+            cme.MatchRow(1, "A", "Autor", "review", "url-a", "", "none", "x"),
+            cme.MatchRow(2, "B", "Autor", "review", "url-b", "", "none", "x"),
+            cme.MatchRow(3, "C", "Autor", "review", "url-c", "", "none", "x"),
+        ]
+
+        updated = app.update_rows_url(rows, {1, 3}, "")
+
+        self.assertEqual([row.status for row in updated], ["review", "review", "review"])
+        self.assertEqual([row.chosen_url for row in updated], ["", "url-b", ""])
+
+    def test_filter_rows_matches_title_and_author_without_diacritics(self):
+        rows = [
+            cme.MatchRow(1, "A opice si myslely", "Orson Scott Card", "review", "", "", "none", "x"),
+            cme.MatchRow(2, "Samuela", "Anatolij Petrovič Dněprov", "review", "", "", "none", "x"),
+            cme.MatchRow(3, "Sapiens", "Yuval Noah Harari", "review", "", "", "none", "x"),
+        ]
+
+        filtered = app.filter_rows(rows, "sam", "dneprov")
+
+        self.assertEqual([row.book_id for row in filtered], [2])
 
     def test_sort_rows_orders_by_text_column_case_insensitive(self):
         rows = [

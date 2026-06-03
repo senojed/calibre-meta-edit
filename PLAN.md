@@ -343,6 +343,13 @@
 - Desktop appka ma dole tlacitko `Update vybrane`.
 - `Update vybrane` znovu nacte z Calibre jen vybrane knihy, nahradi jen jejich radky v `matches.csv` a potom na ne spusti `Audit odkazu`.
 
+## Update 0.0.38 - filtry a hromadny odkaz
+
+- Desktop appka ma pole `Filter knih` a `Filter autoru`.
+- Filtry meni jen zobrazeni tabulky, neobsah `matches.csv`.
+- `Pouzit odkaz` umi pouzit aktualni pole `Odkaz` pro vice vybranych knih najednou.
+- Tlacitka `Povidka` a `Update vybrane` jsou modra.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.37"
+APP_VERSION = "0.0.38"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -30,6 +30,8 @@ BUTTON_COLOR_MAP = {
     "approve": {"bg": "#2e7d32", "fg": "white", "activebackground": "#1b5e20", "activeforeground": "white"},
     "review": {"bg": "#ef6c00", "fg": "white", "activebackground": "#bf5b00", "activeforeground": "white"},
     "skip": {"bg": "#757575", "fg": "white", "activebackground": "#616161", "activeforeground": "white"},
+    "story": {"bg": "#1565c0", "fg": "white", "activebackground": "#0d47a1", "activeforeground": "white"},
+    "update": {"bg": "#1565c0", "fg": "white", "activebackground": "#0d47a1", "activeforeground": "white"},
     "apply": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
     "rebuild": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
     "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
@@ -226,6 +228,11 @@ def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status:
     return [update_row(row, status, row.chosen_url) if row.book_id in book_ids else row for row in rows]
 
 
+def update_rows_url(rows: Sequence[cme.MatchRow], book_ids: set[int], chosen_url: str) -> list[cme.MatchRow]:
+    """Pouzije stejny odkaz pro vsechny vybrane knihy."""
+    return [update_row(row, row.status, chosen_url) if row.book_id in book_ids else row for row in rows]
+
+
 def sync_single_selected_url(rows: Sequence[cme.MatchRow], book_ids: set[int], edit_url: str) -> list[cme.MatchRow]:
     """U jednoho vybraneho radku pouzije aktualni text z pole Odkaz."""
     if len(book_ids) != 1:
@@ -260,6 +267,20 @@ def sort_rows(rows: Sequence[cme.MatchRow], column: str, descending: bool) -> li
         return value if column == "book_id" else str(value).casefold()
 
     return sorted(rows, key=key, reverse=descending)
+
+
+def filter_rows(rows: Sequence[cme.MatchRow], title_filter: str, author_filter: str) -> list[cme.MatchRow]:
+    """Vrati radky odpovidajici filtru knihy a autora."""
+    title_query = cme.normalize_text(title_filter)
+    author_query = cme.normalize_text(author_filter)
+    filtered: list[cme.MatchRow] = []
+    for row in rows:
+        if title_query and title_query not in cme.normalize_text(row.title):
+            continue
+        if author_query and author_query not in cme.normalize_text(row.authors):
+            continue
+        filtered.append(row)
+    return filtered
 
 
 def find_row_index(rows: Sequence[cme.MatchRow], book_id: int) -> int | None:
@@ -498,11 +519,15 @@ class CalibreMetaApp:
 
         self.status_var = tk.StringVar(value="Pripraveno")
         self.edit_url_var = tk.StringVar(value="")
+        self.filter_title_var = tk.StringVar(value="")
+        self.filter_author_var = tk.StringVar(value="")
         self.library_var = tk.StringVar(value=initial_library_path())
 
         self.root.title(app_title())
         self.root.geometry("1200x760")
         self._build_ui()
+        self.filter_title_var.trace_add("write", lambda *_args: self._refresh_table())
+        self.filter_author_var.trace_add("write", lambda *_args: self._refresh_table())
         self.load_csv(show_message=True)
         schedule_startup_preview(self.root, self.run_preview)
 
@@ -522,7 +547,7 @@ class CalibreMetaApp:
         self._add_colored_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approve").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Review", lambda: self.set_selected_status("review"), "review").pack(side=tk.LEFT, padx=(0, spacing["between_status"]))
         self._add_colored_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skip").pack(side=tk.LEFT, padx=(0, spacing["after_skip"]))
-        self._add_button(toolbar, "Povidka", self.mark_selected_story).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(toolbar, "Povidka", self.mark_selected_story, "story").pack(side=tk.LEFT, padx=(0, 6))
         self._add_colored_button(toolbar, "Zapsat do Calibre", self.run_apply, "apply").pack(side=tk.RIGHT)
 
         url_bar = ttk.Frame(toolbar_container)
@@ -532,6 +557,15 @@ class CalibreMetaApp:
         url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self._add_button(url_bar, URL_BAR_BUTTON_LABELS[0], self.apply_selected_url).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(url_bar, URL_BAR_BUTTON_LABELS[1], self.open_selected_url).pack(side=tk.LEFT)
+
+        filter_bar = ttk.Frame(toolbar_container)
+        filter_bar.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(filter_bar, text="Filter knih").pack(side=tk.LEFT, padx=(0, 6))
+        title_filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_title_var, width=34)
+        title_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
+        ttk.Label(filter_bar, text="Filter autoru").pack(side=tk.LEFT, padx=(0, 6))
+        author_filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_author_var, width=28)
+        author_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         table_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         table_frame.pack(fill=tk.BOTH, expand=True)
@@ -591,7 +625,7 @@ class CalibreMetaApp:
         library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[0], self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[1], self.use_calibre_library).pack(side=tk.LEFT, padx=(0, 18))
-        self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_update_selected).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_update_selected, "update").pack(side=tk.LEFT, padx=(0, 6))
         self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[3], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
         self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[4], self.run_rollback, "rollback").pack(side=tk.LEFT)
 
@@ -714,7 +748,8 @@ class CalibreMetaApp:
     def _refresh_table(self) -> None:
         selected_ids = self._selected_book_ids()
         self.tree.delete(*self.tree.get_children())
-        for row in self.rows:
+        visible_rows = filter_rows(self.rows, self.filter_title_var.get(), self.filter_author_var.get())
+        for row in visible_rows:
             values = tuple(getattr(row, column) for column in TABLE_COLUMNS)
             self.tree.insert("", tk.END, iid=str(row.book_id), values=values, tags=(row.status,))
         for selected in selected_ids:
@@ -785,13 +820,7 @@ class CalibreMetaApp:
         if not selected:
             messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
             return
-        if len(selected) > 1:
-            messagebox.showinfo("Jeden radek", "Odkaz upravuj jen u jedne vybrane knihy.")
-            return
-        index = self._selected_index()
-        if index is None:
-            return
-        self.rows[index] = update_row(self.rows[index], self.rows[index].status, self.edit_url_var.get())
+        self.rows = update_rows_url(self.rows, selected, self.edit_url_var.get())
         self._refresh_table()
         self._set_status(status_summary(self.rows))
 
