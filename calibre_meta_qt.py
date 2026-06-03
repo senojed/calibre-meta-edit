@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.6"
+APP_VERSION = "0.1.7"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -140,7 +140,7 @@ def save_app_settings(library: str, theme: str, settings_path: Path = shared.SET
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
+    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon
     from PySide6.QtWidgets import (
         QApplication,
@@ -325,9 +325,12 @@ if PYSIDE6_AVAILABLE:
             button = QToolButton()
             button.setText(text if show_text else "")
             button.setToolTip(text)
+            button.setIconSize(QSize(32, 32))
             button.setToolButtonStyle(
                 Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show_text else Qt.ToolButtonStyle.ToolButtonIconOnly
             )
+            if not show_text:
+                button.setFixedSize(42, 42)
             if icon:
                 button.setIcon(self.icon_for(icon))
             if object_name:
@@ -441,6 +444,10 @@ if PYSIDE6_AVAILABLE:
             url_buttons = QHBoxLayout()
             self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton")
             self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton")
+            self.use_link_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.open_link_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            url_buttons.setStretch(0, 1)
+            url_buttons.setStretch(1, 1)
             layout.addLayout(url_buttons)
 
             layout.addWidget(QLabel("Log"))

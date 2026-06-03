@@ -439,6 +439,12 @@
 - Detail vybrane polozky ma status/link tlacitka bez ikon.
 - Vybrane radky v tabulce zustavaji modre i kdyz tabulka ztrati focus.
 
+## Update 0.1.7 - Qt button sizing
+
+- Ikony v hlavni liste jsou zvetsene na `32x32`.
+- Ikonova tlacitka v hlavni liste jsou ctvercova `42x42`.
+- Link tlacitka v detailu se roztahuji na celou sirku pole s adresou, kazde na pulku.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
