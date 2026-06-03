@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.38`
+Aktualni verze: `0.0.39`
 
 Nejjednodussi pouziti:
 
@@ -35,6 +35,7 @@ V appce:
 - `Rollback` dole - obnovi Calibre databazi `metadata.db` z vybrane zalohy
 - klik na hlavicku sloupce seradi tabulku
 - `Filter knih` a `Filter autoru` jen zmensi zobrazeny seznam, `matches.csv` zustava cele
+- male `X` u poli `Odkaz`, `Filter knih` a `Filter autoru` hned smaze cele pole
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
 - druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u vsech vybranych knih

@@ -350,6 +350,12 @@
 - `Pouzit odkaz` umi pouzit aktualni pole `Odkaz` pro vice vybranych knih najednou.
 - Tlacitka `Povidka` a `Update vybrane` jsou modra.
 
+## Update 0.0.39 - mazani poli a mezery tlacitek
+
+- Pole `Odkaz`, `Filter knih` a `Filter autoru` maji male tlacitko `X` pro okamzite smazani.
+- Mezera mezi `Skip` a `Povidka` je stejna jako mezera pred `Approve`.
+- Mezera mezi `Update vybrane` a `Rebuild CSV` je stejna jako mezera pred `Update vybrane`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

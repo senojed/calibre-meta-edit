@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.38"
+APP_VERSION = "0.0.39"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -36,10 +36,11 @@ BUTTON_COLOR_MAP = {
     "rebuild": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
     "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
-TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
+TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 54, "after_update": 18}
 PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit odkazu", "Ulozit CSV")
 BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Update vybrane", "Rebuild CSV", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
+CLEAR_BUTTON_LABEL = "X"
 
 
 def button_colors(kind: str) -> dict[str, str]:
@@ -65,6 +66,11 @@ def bottom_library_bar_order() -> tuple[str, ...]:
 def url_bar_button_order() -> tuple[str, ...]:
     """Vrati poradi tlacitek u pole s odkazem."""
     return URL_BAR_BUTTON_LABELS
+
+
+def clear_text_var(text_var: object) -> None:
+    """Vymaze text v navazanem vstupnim poli."""
+    text_var.set("")
 
 
 def open_url_in_new_window(url: str, opener: Callable[[str], bool] = webbrowser.open_new) -> bool:
@@ -554,7 +560,8 @@ class CalibreMetaApp:
         url_bar.pack(fill=tk.X, pady=(8, 0))
         ttk.Label(url_bar, text="Odkaz").pack(side=tk.LEFT, padx=(0, 6))
         url_entry = ttk.Entry(url_bar, textvariable=self.edit_url_var)
-        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        self._add_button(url_bar, CLEAR_BUTTON_LABEL, lambda: clear_text_var(self.edit_url_var)).pack(side=tk.LEFT, padx=(0, 8))
         self._add_button(url_bar, URL_BAR_BUTTON_LABELS[0], self.apply_selected_url).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(url_bar, URL_BAR_BUTTON_LABELS[1], self.open_selected_url).pack(side=tk.LEFT)
 
@@ -562,10 +569,12 @@ class CalibreMetaApp:
         filter_bar.pack(fill=tk.X, pady=(8, 0))
         ttk.Label(filter_bar, text="Filter knih").pack(side=tk.LEFT, padx=(0, 6))
         title_filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_title_var, width=34)
-        title_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
+        title_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        self._add_button(filter_bar, CLEAR_BUTTON_LABEL, lambda: clear_text_var(self.filter_title_var)).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(filter_bar, text="Filter autoru").pack(side=tk.LEFT, padx=(0, 6))
         author_filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_author_var, width=28)
-        author_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        author_filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+        self._add_button(filter_bar, CLEAR_BUTTON_LABEL, lambda: clear_text_var(self.filter_author_var)).pack(side=tk.LEFT)
 
         table_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         table_frame.pack(fill=tk.BOTH, expand=True)
@@ -625,7 +634,7 @@ class CalibreMetaApp:
         library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[0], self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[1], self.use_calibre_library).pack(side=tk.LEFT, padx=(0, 18))
-        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_update_selected, "update").pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_update_selected, "update").pack(side=tk.LEFT, padx=(0, spacing["after_update"]))
         self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[3], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
         self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[4], self.run_rollback, "rollback").pack(side=tk.LEFT)
 

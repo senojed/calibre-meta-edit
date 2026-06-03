@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.38")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.38")
+        self.assertEqual(app.APP_VERSION, "0.0.39")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.39")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -108,7 +108,23 @@ class AppModelTests(unittest.TestCase):
 
         self.assertGreaterEqual(spacing["before_approve"], 54)
         self.assertEqual(spacing["between_status"], 6)
-        self.assertGreaterEqual(spacing["after_skip"], 18)
+        self.assertEqual(spacing["after_skip"], spacing["before_approve"])
+        self.assertEqual(spacing["after_update"], 18)
+
+    def test_clear_text_var_empties_bound_input(self):
+        class FakeTextVar:
+            def __init__(self):
+                self.value = "abc"
+
+            def set(self, value):
+                self.value = value
+
+        text_var = FakeTextVar()
+
+        self.assertEqual(app.CLEAR_BUTTON_LABEL, "X")
+        app.clear_text_var(text_var)
+
+        self.assertEqual(text_var.value, "")
 
     def test_table_columns_include_source_and_work_type(self):
         self.assertIn("source", app.TABLE_COLUMNS)
