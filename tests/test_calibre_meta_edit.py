@@ -1189,6 +1189,27 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertTrue(cme.is_writable_match_row(row))
 
+    def test_is_writable_match_row_accepts_approved_empty_url_for_comment_clear(self):
+        row = cme.MatchRow(177, "Change Your Diet", "Georgia Ede", "approve", "", "", "manual", "manual")
+
+        self.assertTrue(cme.is_writable_match_row(row))
+
+    def test_apply_match_row_clears_comment_for_approved_empty_url(self):
+        row = cme.MatchRow(177, "Change Your Diet", "Georgia Ede", "approve", "", "", "manual", "manual")
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: self.fail("empty URL clear should not fetch detail"),
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "")
+        self.assertIn("comments:", calls[0])
+
     def test_apply_match_row_writes_databaze_story_link_only(self):
         row = cme.MatchRow(
             284,

@@ -329,6 +329,12 @@
 - Matching umi opatrne vzit jednoslovny nazev jako prefix s presnym autorem.
 - `Sapiens` se diky tomu najde jako `Sapiens: Od zvirete k bozskemu jedinci` a zustane na `review`.
 
+## Update 0.0.36 - prazdny approve maze komentar
+
+- `approve` radek s prazdnym odkazem je zapisovatelny.
+- Pri zapisu posle do Calibre `comments:` a tim vymaze komentar knihy.
+- Slouzi pro opravu spatne zapsanych starych odkazu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

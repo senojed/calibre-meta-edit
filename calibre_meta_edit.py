@@ -1227,6 +1227,8 @@ def is_valid_legie_story_url(url: str) -> bool:
 def is_writable_match_row(row: MatchRow) -> bool:
     if row.status != "approve":
         return False
+    if not row.chosen_url.strip():
+        return True
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return is_valid_legie_story_url(row.chosen_url)
     return is_valid_apply_url(row.chosen_url) or is_valid_databaze_story_url(row.chosen_url)
@@ -1370,6 +1372,8 @@ def apply_match_row(
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+    if not row.chosen_url.strip():
+        return clear_comment_row(row, library, calibredb_path, runner)
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return apply_legie_story_row(
             row,
@@ -1432,6 +1436,29 @@ def apply_match_row(
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
     return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+
+
+def clear_comment_row(
+    row: MatchRow,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult],
+) -> ApplyResult:
+    """Vymaze komentar u knihy, kdyz je schvaleny prazdny odkaz."""
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(row.book_id),
+        "--with-library",
+        str(library),
+        "--field",
+        "comments:",
+    ]
+    result = runner(args)
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "calibredb failed").strip()
+        return ApplyResult(row.book_id, row.title, "failed", "", error)
+    return ApplyResult(row.book_id, row.title, "updated", "", "")
 
 
 def apply_legie_story_row(

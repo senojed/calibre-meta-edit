@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.35`
+Aktualni verze: `0.0.36`
 
 Nejjednodussi pouziti:
 
@@ -38,6 +38,7 @@ V appce:
 - druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u jedne vybrane knihy
 - `Ulozit CSV`
 - `Zapsat do Calibre`
+- `approve` radek s prazdnym odkazem vymaze komentar knihy v Calibre
 
 `Zapsat do Calibre` udela:
 
