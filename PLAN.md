@@ -451,6 +451,13 @@
 - Opraven CSS `min-width`, ktery roztahoval ikonova tlacitka na sirku.
 - Ikonova tlacitka jsou vynucene na `42x42`.
 
+## Update 0.2.0 - Qt layout polish
+
+- Detailni tlacitka `Approve`, `Review`, `Skip`, `Povidka` se roztahuji na celou sirku panelu, kazde na ctvrtinu.
+- Filtry `Kniha` a `Autor` vyuzivaji volne misto v horni liste.
+- Skupiny zaskrtavacich filtru maji vetsi odstupy.
+- Mazaci `X` v textovych polich je zvetsene pres Qt stylesheet.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

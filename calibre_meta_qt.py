@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.8"
+APP_VERSION = "0.2.0"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -308,7 +308,7 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle", show_text=False)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
-            toolbar.addStretch(1)
+            toolbar.addSpacing(10)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
@@ -364,15 +364,16 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(QLabel(label))
             field = QLineEdit()
             field.setClearButtonEnabled(True)
+            field.setMinimumWidth(130)
             field.textChanged.connect(self.refresh_table)
-            layout.addWidget(field, stretch=1)
+            layout.addWidget(field, stretch=2)
             return field
 
         def _filter_checks(self, values: Sequence[str], layout: QHBoxLayout) -> dict[str, QCheckBox]:
             frame = QFrame()
             row = QHBoxLayout(frame)
-            row.setContentsMargins(8, 0, 0, 0)
-            row.setSpacing(4)
+            row.setContentsMargins(20, 0, 0, 0)
+            row.setSpacing(8)
             checks: dict[str, QCheckBox] = {}
             for value in values:
                 check = QCheckBox(filter_label(value))
@@ -431,10 +432,17 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self.detail_author)
 
             status_buttons = QHBoxLayout()
-            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton")
-            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton")
-            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton")
-            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton")
+            self.approve_button = self._add_button(
+                status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton"
+            )
+            self.review_button = self._add_button(
+                status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton"
+            )
+            self.skip_button = self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton")
+            self.story_button = self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton")
+            for index, button in enumerate((self.approve_button, self.review_button, self.skip_button, self.story_button)):
+                button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                status_buttons.setStretch(index, 1)
             layout.addLayout(status_buttons)
 
             layout.addWidget(QLabel("Odkaz"))
@@ -778,6 +786,16 @@ if PYSIDE6_AVAILABLE:
                 QPushButton#applyButton, QPushButton#dangerButton, QToolButton#applyButton, QToolButton#dangerButton { background: #c62828; color: white; }
                 QPushButton:disabled, QToolButton:disabled { background: #bdbdbd; color: #eeeeee; }
                 QLineEdit, QComboBox { min-height: 28px; }
+                QLineEdit::clear-button { width: 22px; height: 22px; subcontrol-position: center right; }
+                QLineEdit QToolButton {
+                    color: #111111;
+                    font-size: 15pt;
+                    font-weight: 700;
+                    min-width: 22px;
+                    min-height: 22px;
+                    padding: 0;
+                    margin: 0 3px 0 0;
+                }
                 QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
                 QTableWidget::item { color: #111111; }
                 QTableWidget::item:selected, QTableWidget::item:selected:!active {
