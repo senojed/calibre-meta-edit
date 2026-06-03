@@ -1,0 +1,7 @@
+<!-- Ikona aplikace Calibre Meta Edit pro Qt okno. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="10" fill="#1565c0"/>
+  <path d="M18 14h25c4 0 7 3 7 7v29H21c-4 0-7-3-7-7V18c0-2 2-4 4-4z" fill="#ffffff"/>
+  <path d="M22 20h20M22 28h18M22 36h13" stroke="#1565c0" stroke-width="4" stroke-linecap="round"/>
+  <path d="M44 42l8 8M50 40l-8 8" stroke="#c62828" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import threading
 import webbrowser
@@ -16,12 +17,14 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
+ICON_PATH = APP_DIR / "app_icon.svg"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
-VALID_FILTER_VALUES = ("", "approve", "review", "skip")
-SOURCE_FILTER_VALUES = ("", "databazeknih", "legie")
-TYPE_FILTER_VALUES = ("", "povidka")
+STATUS_FILTER_VALUES = ("approve", "review", "skip")
+SOURCE_FILTER_VALUES = ("databazeknih", "legie")
+TYPE_FILTER_VALUES = ("povidka",)
+THEME_VALUES = ("system", "light", "dark")
 
 
 def app_title() -> str:
@@ -33,9 +36,9 @@ def filter_rows(
     rows: Sequence[cme.MatchRow],
     title: str = "",
     author: str = "",
-    status: str = "",
-    source: str = "",
-    work_type: str = "",
+    statuses: set[str] | None = None,
+    sources: set[str] | None = None,
+    work_types: set[str] | None = None,
 ) -> list[cme.MatchRow]:
     """Vrati jen radky, ktere odpovidaji filtrum v horni liste."""
     title_query = cme.normalize_text(title)
@@ -46,11 +49,11 @@ def filter_rows(
             continue
         if author_query and author_query not in cme.normalize_text(row.authors):
             continue
-        if status and row.status != status:
+        if statuses is not None and row.status not in statuses:
             continue
-        if source and row.source != source:
+        if sources is not None and row.source not in sources:
             continue
-        if work_type and row.work_type != work_type:
+        if work_types is not None and row.work_type not in work_types:
             continue
         result.append(row)
     return result
@@ -70,15 +73,42 @@ def is_calibre_running(runner: Callable[[Sequence[str]], cme.CommandResult] = cm
     return result.returncode == 0 and "calibre.exe" in text
 
 
+def normalize_theme(value: str) -> str:
+    """Vrati platny nazev vzhledu."""
+    normalized = value.strip().casefold()
+    return normalized if normalized in THEME_VALUES else "system"
+
+
+def read_app_settings(settings_path: Path = shared.SETTINGS_PATH) -> dict[str, str]:
+    """Precte nase nastaveni a ignoruje rozbite hodnoty."""
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+
+
+def save_app_settings(library: str, theme: str, settings_path: Path = shared.SETTINGS_PATH) -> None:
+    """Ulozi knihovnu i vzhled do jednoho settings.json."""
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"library_path": library, "theme": normalize_theme(theme)}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 if PYSIDE6_AVAILABLE:
     from PySide6.QtCore import QObject, Qt, Signal
-    from PySide6.QtGui import QColor
+    from PySide6.QtGui import QColor, QFont, QIcon
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
         QComboBox,
         QDialog,
         QFileDialog,
+        QFrame,
         QGridLayout,
         QHBoxLayout,
         QHeaderView,
@@ -86,6 +116,7 @@ if PYSIDE6_AVAILABLE:
         QLineEdit,
         QMainWindow,
         QMessageBox,
+        QStyleFactory,
         QPushButton,
         QSizePolicy,
         QSplitter,
@@ -124,6 +155,11 @@ if PYSIDE6_AVAILABLE:
             use_calibre = QPushButton("Pouzit z Calibre")
             use_calibre.clicked.connect(self.use_calibre_library)
             form.addWidget(use_calibre, 0, 3)
+            form.addWidget(QLabel("Vzhled"), 1, 0)
+            self.theme_combo = QComboBox()
+            self.theme_combo.addItems(THEME_VALUES)
+            self.theme_combo.setCurrentText(self.parent_window.theme)
+            form.addWidget(self.theme_combo, 1, 1)
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -161,8 +197,10 @@ if PYSIDE6_AVAILABLE:
             if not library:
                 QMessageBox.warning(self, "Knihovna", "Zadej cestu ke knihovne.")
                 return
-            shared.save_library_path(library)
+            save_app_settings(library, self.theme_combo.currentText())
             self.parent_window.library_path = library
+            self.parent_window.theme = normalize_theme(self.theme_combo.currentText())
+            self.parent_window.apply_theme()
             self.parent_window.set_status("Knihovna ulozena")
 
         def run_rebuild(self) -> None:
@@ -180,6 +218,7 @@ if PYSIDE6_AVAILABLE:
             super().__init__()
             self.matches_path = cme.MATCHES_PATH
             self.library_path = shared.initial_library_path()
+            self.theme = normalize_theme(read_app_settings().get("theme", "system"))
             self.rows: list[cme.MatchRow] = []
             self.filtered_rows: list[cme.MatchRow] = []
             self.worker_running = False
@@ -188,6 +227,8 @@ if PYSIDE6_AVAILABLE:
             self.bridge = WorkerBridge()
             self.bridge.finished.connect(self.finish_background)
             self.setWindowTitle(app_title())
+            if ICON_PATH.exists():
+                self.setWindowIcon(QIcon(str(ICON_PATH)))
             self.resize(1320, 780)
             self._build_ui()
             self.load_csv(show_message=False)
@@ -203,18 +244,7 @@ if PYSIDE6_AVAILABLE:
             self.setCentralWidget(root)
             self.setStatusBar(QStatusBar())
             self.set_status("Ready")
-            self.setStyleSheet(
-                """
-                QPushButton { min-height: 30px; padding: 4px 10px; border-radius: 3px; }
-                QPushButton#approveButton { background: #2e7d32; color: white; }
-                QPushButton#reviewButton { background: #ef6c00; color: white; }
-                QPushButton#skipButton { background: #757575; color: white; }
-                QPushButton#storyButton, QPushButton#updateButton { background: #1565c0; color: white; }
-                QPushButton#applyButton, QPushButton#dangerButton { background: #c62828; color: white; }
-                QLineEdit, QComboBox { min-height: 28px; }
-                QTextEdit { font-family: Consolas; font-size: 10pt; }
-                """
-            )
+            self.apply_theme()
 
         def _build_toolbar(self) -> QHBoxLayout:
             toolbar = QHBoxLayout()
@@ -222,15 +252,9 @@ if PYSIDE6_AVAILABLE:
             self.buttons: list[QPushButton] = []
 
             self._add_button(toolbar, "Nacist CSV", self.load_csv)
-            self._add_button(toolbar, "Nacist nove knihy", self.run_preview)
+            self._add_button(toolbar, "Ulozit CSV", self.save_csv)
             self._add_button(toolbar, "Audit odkazu", self.run_audit)
             self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton")
-            self._add_button(toolbar, "Ulozit CSV", self.save_csv)
-            toolbar.addSpacing(28)
-            self._add_button(toolbar, "Approve", lambda: self.set_selected_status("approve"), "approveButton")
-            self._add_button(toolbar, "Review", lambda: self.set_selected_status("review"), "reviewButton")
-            self._add_button(toolbar, "Skip", lambda: self.set_selected_status("skip"), "skipButton")
-            self._add_button(toolbar, "Povidka", self.mark_selected_story, "storyButton")
             toolbar.addStretch(1)
             self._add_button(toolbar, "Preferences", self.open_preferences)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton")
@@ -256,9 +280,9 @@ if PYSIDE6_AVAILABLE:
             bar.setSpacing(6)
             self.title_filter = self._filter_edit("Kniha", bar)
             self.author_filter = self._filter_edit("Autor", bar)
-            self.status_filter = self._filter_combo("Status", VALID_FILTER_VALUES, bar)
-            self.source_filter = self._filter_combo("Zdroj", SOURCE_FILTER_VALUES, bar)
-            self.type_filter = self._filter_combo("Typ", TYPE_FILTER_VALUES, bar)
+            self.status_checks = self._filter_checks("Status", STATUS_FILTER_VALUES, bar)
+            self.source_checks = self._filter_checks("Zdroj", SOURCE_FILTER_VALUES, bar)
+            self.type_checks = self._filter_checks("Typ", TYPE_FILTER_VALUES, bar)
             return bar
 
         def _filter_edit(self, label: str, layout: QHBoxLayout) -> QLineEdit:
@@ -269,20 +293,28 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(field, stretch=1)
             return field
 
-        def _filter_combo(self, label: str, values: Sequence[str], layout: QHBoxLayout) -> QComboBox:
-            layout.addWidget(QLabel(label))
-            combo = QComboBox()
-            combo.addItems(values)
-            combo.currentTextChanged.connect(self.refresh_table)
-            layout.addWidget(combo)
-            return combo
+        def _filter_checks(self, label: str, values: Sequence[str], layout: QHBoxLayout) -> dict[str, QCheckBox]:
+            frame = QFrame()
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(8, 0, 0, 0)
+            row.setSpacing(4)
+            row.addWidget(QLabel(label))
+            checks: dict[str, QCheckBox] = {}
+            for value in values:
+                check = QCheckBox(value)
+                check.setChecked(True)
+                check.stateChanged.connect(self.refresh_table)
+                row.addWidget(check)
+                checks[value] = check
+            layout.addWidget(frame)
+            return checks
 
         def _build_main_area(self) -> QSplitter:
             splitter = QSplitter(Qt.Orientation.Horizontal)
             self.table = QTableWidget(0, len(TABLE_COLUMNS))
             self.table.setHorizontalHeaderLabels(TABLE_COLUMNS)
             self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-            self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+            self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
             self.table.setSortingEnabled(True)
             self.table.verticalHeader().setVisible(False)
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -364,9 +396,9 @@ if PYSIDE6_AVAILABLE:
                 self.rows,
                 title=self.title_filter.text(),
                 author=self.author_filter.text(),
-                status=self.status_filter.currentText(),
-                source=self.source_filter.currentText(),
-                work_type=self.type_filter.currentText(),
+                statuses=self.checked_values(self.status_checks),
+                sources=self.checked_values(self.source_checks),
+                work_types=self.checked_values(self.type_checks),
             )
             self.table.setSortingEnabled(False)
             self.table.setRowCount(len(self.filtered_rows))
@@ -387,9 +419,17 @@ if PYSIDE6_AVAILABLE:
                     if col_index == 0:
                         item.setData(Qt.ItemDataRole.DisplayRole, row.book_id)
                     item.setBackground(status_color(row.status))
+                    item.setForeground(QColor("#111111"))
                     self.table.setItem(row_index, col_index, item)
             self.table.setSortingEnabled(True)
             self.restore_selection(selected_ids)
+
+        def checked_values(self, checks: dict[str, QCheckBox]) -> set[str] | None:
+            """Vrati vybrane hodnoty; vse vybrane znamena bez filtru."""
+            selected = {value for value, check in checks.items() if check.isChecked()}
+            if len(selected) == len(checks):
+                return None
+            return selected
 
         def restore_selection(self, book_ids: set[int]) -> None:
             if not book_ids:
@@ -601,6 +641,45 @@ if PYSIDE6_AVAILABLE:
             self.write_output(f"{title}: {suffix}\n\n{text or '(bez vystupu)'}")
             self.set_status(f"{title}: {suffix}. {shared.status_summary(self.rows)}")
 
+        def apply_theme(self) -> None:
+            """Pouzije zvoleny vzhled bez restartu appky."""
+            app = QApplication.instance()
+            if app is not None:
+                app.setStyle(QStyleFactory.create("Fusion"))
+            base = """
+                * { font-family: "Segoe UI"; }
+                QPushButton { min-height: 30px; padding: 4px 10px; border-radius: 3px; }
+                QPushButton#approveButton { background: #2e7d32; color: white; }
+                QPushButton#reviewButton { background: #ef6c00; color: white; }
+                QPushButton#skipButton { background: #757575; color: white; }
+                QPushButton#storyButton, QPushButton#updateButton { background: #1565c0; color: white; }
+                QPushButton#applyButton, QPushButton#dangerButton { background: #c62828; color: white; }
+                QLineEdit, QComboBox { min-height: 28px; }
+                QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
+                QTableWidget::item { color: #111111; }
+                QTextEdit { font-family: Consolas; font-size: 10pt; }
+            """
+            if self.theme == "dark":
+                self.setStyleSheet(
+                    base
+                    + """
+                    QMainWindow, QWidget { background: #202124; color: #f2f2f2; }
+                    QLineEdit, QComboBox, QTextEdit { background: #2d2f33; color: #f2f2f2; border: 1px solid #4b4d52; }
+                    QHeaderView::section { background: #3a3a3a; color: #ffffff; padding: 4px; }
+                    """
+                )
+            elif self.theme == "light":
+                self.setStyleSheet(
+                    base
+                    + """
+                    QMainWindow, QWidget { background: #f5f5f5; color: #111111; }
+                    QLineEdit, QComboBox, QTextEdit { background: #ffffff; color: #111111; border: 1px solid #c7c7c7; }
+                    QHeaderView::section { background: #e8e8e8; color: #111111; padding: 4px; }
+                    """
+                )
+            else:
+                self.setStyleSheet(base)
+
         def open_preferences(self) -> None:
             PreferencesDialog(self).exec()
 
@@ -640,6 +719,7 @@ def main() -> int:
         raise RuntimeError("PySide6 neni nainstalovane. Spust: python -m pip install PySide6")
     os.chdir(APP_DIR)
     app = QApplication([])
+    app.setFont(QFont("Segoe UI", 9))
     window = CalibreMetaQtWindow()
     window.show()
     return app.exec()

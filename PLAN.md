@@ -396,6 +396,17 @@
 - Spousti novou Qt appku pres `pythonw.exe`, kdyz je dostupny.
 - Kdyz `pythonw.exe` neni dostupny, zkusi `python.exe`.
 
+## Update 0.1.2 - Qt UI polish
+
+- Pridana ikona okna Qt appky.
+- Tabulka ma citelny text i pri systemovem dark vzhledu.
+- Tabulka pouziva multi vyber bez nutnosti drzet Ctrl.
+- Horni status tlacitka `Approve`, `Review`, `Skip`, `Povidka` odstranena; zustavaji v detailu.
+- `Ulozit CSV` je hned vedle `Nacist CSV`.
+- `Nacist nove knihy` odstraneno z hlavni listy.
+- Status, zdroj a typ filtry jsou checkboxy a jde vybrat vice hodnot.
+- `Preferences` ma volbu vzhledu `system`, `light`, `dark`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
