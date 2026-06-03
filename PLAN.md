@@ -369,6 +369,12 @@
 - `Audit odkazu` radky `manual` znovu nehleda a nesmaze jim `chosen_url`.
 - To chrani rucne vlozene odkazy, vcetne pripadnych Goodreads URL.
 
+## Update 0.0.42 - manual externi odkazy se zapisuji jako link
+
+- `approve` radek `reason=manual` s libovolnym `http(s)` odkazem je zapisovatelny.
+- Externi rucni odkazy mimo Databazi knih a Legii, napr. Goodreads, se zapisi jen jako HTML odkaz do komentare.
+- Rucni Databaze knih `prehled-knihy` odkaz porad pouzije obohaceny zapis metadat.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

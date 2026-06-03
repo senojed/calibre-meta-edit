@@ -1315,6 +1315,22 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertTrue(cme.is_writable_match_row(row))
 
+    def test_is_writable_match_row_accepts_manual_goodreads_url(self):
+        row = cme.MatchRow(
+            171,
+            "Exercised",
+            "Daniel Lieberman",
+            "approve",
+            "https://www.goodreads.com/book/show/53137961-exercised",
+            "",
+            "manual",
+            "manual",
+            "goodreads",
+            "",
+        )
+
+        self.assertTrue(cme.is_writable_match_row(row))
+
     def test_is_writable_match_row_accepts_approved_empty_url_for_comment_clear(self):
         row = cme.MatchRow(177, "Change Your Diet", "Georgia Ede", "approve", "", "", "manual", "manual")
 
@@ -1360,6 +1376,36 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(result.status, "updated")
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("https://www.databazeknih.cz/povidky/gerolduv-neskutecny-trik", comments_field)
+        self.assertFalse(any(arg.startswith("pubdate:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("publisher:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("tags:") for arg in calls[0]))
+
+    def test_apply_match_row_writes_goodreads_manual_link_only(self):
+        row = cme.MatchRow(
+            171,
+            "Exercised",
+            "Daniel Lieberman",
+            "approve",
+            "https://www.goodreads.com/book/show/53137961-exercised",
+            "",
+            "manual",
+            "manual",
+            "goodreads",
+            "",
+        )
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: self.fail("manual Goodreads link should not fetch detail"),
+        )
+
+        self.assertEqual(result.status, "updated")
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("https://www.goodreads.com/book/show/53137961-exercised", comments_field)
         self.assertFalse(any(arg.startswith("pubdate:") for arg in calls[0]))
         self.assertFalse(any(arg.startswith("publisher:") for arg in calls[0]))
         self.assertFalse(any(arg.startswith("tags:") for arg in calls[0]))

@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.41`
+Aktualni verze: `0.0.42`
 
 Nejjednodussi pouziti:
 
@@ -48,14 +48,15 @@ V appce:
 1. ulozi `matches.csv`
 2. pokusi se normalne zavrit Calibre
 3. vytvori zalohu `metadata.db`
-4. u `approve` radku knih stahne prehled a zalozku `Vydani` z Databaze knih
+4. u `approve` radku knih z Databaze knih stahne prehled a zalozku `Vydani`
 5. prepise komentar na odkaz, bold hodnoceni a text O knize
 6. prepise `vydano`, `vydavatel` a `stitky`
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
-9. hotove `approve` radky zmeni na `skip`
-10. po zapisu nacte nove knihy a spusti `Audit odkazu` jen pro nove radky
-11. znovu nacte `matches.csv` do tabulky
+9. rucni `manual` odkazy mimo podporovane zdroje, treba Goodreads, zapise jen jako odkaz do komentare
+10. hotove `approve` radky zmeni na `skip`
+11. po zapisu nacte nove knihy a spusti `Audit odkazu` jen pro nove radky
+12. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.

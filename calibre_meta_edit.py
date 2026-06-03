@@ -1266,6 +1266,12 @@ def is_valid_legie_story_url(url: str) -> bool:
     return legie_absolute_url(url).startswith(LEGIE_BASE_URL + "/povidka/")
 
 
+def is_manual_external_url(row: MatchRow) -> bool:
+    """Pozna rucni odkaz mimo podporovane zdroje, ktery se ma zapsat jen jako link."""
+    clean = row.chosen_url.strip().lower()
+    return row.reason == "manual" and clean.startswith(("http://", "https://"))
+
+
 def is_writable_match_row(row: MatchRow) -> bool:
     if row.status != "approve":
         return False
@@ -1273,7 +1279,7 @@ def is_writable_match_row(row: MatchRow) -> bool:
         return True
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return is_valid_legie_story_url(row.chosen_url)
-    return is_valid_apply_url(row.chosen_url) or is_valid_databaze_story_url(row.chosen_url)
+    return is_valid_apply_url(row.chosen_url) or is_valid_databaze_story_url(row.chosen_url) or is_manual_external_url(row)
 
 
 def calibre_pubdate_value(year: str) -> str:
@@ -1429,6 +1435,8 @@ def apply_match_row(
     if is_valid_databaze_story_url(row.chosen_url):
         return apply_manual_link_row(row, library, calibredb_path, runner)
     if not is_valid_apply_url(row.chosen_url):
+        if is_manual_external_url(row):
+            return apply_manual_link_row(row, library, calibredb_path, runner)
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
     detail_url = book_url_to_overview_url(row.chosen_url)
@@ -1551,7 +1559,7 @@ def apply_manual_link_row(
     runner: Callable[[Sequence[str]], CommandResult],
 ) -> ApplyResult:
     """Zapise jen rucne zadany odkaz, bez stahovani detailu a dalsich metadat."""
-    url = databaze_absolute_url(row.chosen_url)
+    url = databaze_absolute_url(row.chosen_url) if "databazeknih.cz" in row.chosen_url.lower() else row.chosen_url.strip()
     args = [
         calibredb_path,
         "set_metadata",
