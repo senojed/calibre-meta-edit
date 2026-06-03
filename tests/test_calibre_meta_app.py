@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.36")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.36")
+        self.assertEqual(app.APP_VERSION, "0.0.37")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.37")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -121,7 +121,7 @@ class AppModelTests(unittest.TestCase):
     def test_bottom_library_bar_order_contains_library_rebuild_and_rollback(self):
         self.assertEqual(
             app.bottom_library_bar_order(),
-            ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback"),
+            ("Zmenit", "Pouzit z Calibre", "Update vybrane", "Rebuild CSV", "Rollback"),
         )
 
     def test_url_bar_button_order_opens_after_use_link(self):
@@ -563,6 +563,27 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(calls, [("preview", args)])
+
+    def test_make_preview_with_legie_audit_action_audits_selected_refresh_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "none", "no-candidates")
+            cme.write_matches_csv(matches_path, [row], overwrite=False)
+            args = app.make_script_args("D:\\Knihy")
+            args.book_ids = [1]
+            calls = []
+
+            action = app.make_preview_with_legie_audit_action(
+                args=args,
+                matches_path=matches_path,
+                preview_runner=lambda received_args: calls.append(("preview", tuple(received_args.book_ids))) or 0,
+                audit_runner=lambda received_args: calls.append(("audit", tuple(received_args.book_ids))) or 0,
+            )
+
+            result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("preview", (1,)), ("audit", (1,))])
 
     def test_make_apply_action_audits_legie_only_for_rows_added_by_preview(self):
         with tempfile.TemporaryDirectory() as tmp:

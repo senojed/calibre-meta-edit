@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.36"
+APP_VERSION = "0.0.37"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -36,7 +36,7 @@ BUTTON_COLOR_MAP = {
 }
 TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 18}
 PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit odkazu", "Ulozit CSV")
-BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Rebuild CSV", "Rollback")
+BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Update vybrane", "Rebuild CSV", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 
 
@@ -385,10 +385,13 @@ def make_preview_with_legie_audit_action(
 ) -> Callable[[], int]:
     """Pripravi nacitani novych knih vcetne automatickeho Legie auditu."""
     def action() -> int:
+        selected_ids = set(getattr(args, "book_ids", None) or [])
         before_ids = match_row_book_ids(matches_path)
         preview_result = preview_runner(args)
         if preview_result != 0:
             return preview_result
+        if selected_ids:
+            return audit_runner(set_audit_book_ids(args, selected_ids))
         new_ids = match_row_book_ids(matches_path) - before_ids
         if not new_ids:
             print("Audit odkazu: zadne nove radky.")
@@ -588,8 +591,9 @@ class CalibreMetaApp:
         library_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[0], self.choose_library).pack(side=tk.LEFT, padx=(0, 6))
         self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[1], self.use_calibre_library).pack(side=tk.LEFT, padx=(0, 18))
-        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
-        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[3], self.run_rollback, "rollback").pack(side=tk.LEFT)
+        self._add_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[2], self.run_update_selected).pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[3], self.run_rebuild, "rebuild").pack(side=tk.LEFT, padx=(0, 6))
+        self._add_colored_button(library_bar, BOTTOM_LIBRARY_BAR_LABELS[4], self.run_rollback, "rollback").pack(side=tk.LEFT)
 
     def _add_button(self, parent: tk.Widget, text: str, command: Callable[[], object]) -> ttk.Button:
         button = ttk.Button(parent, text=text, command=command)
@@ -808,6 +812,18 @@ class CalibreMetaApp:
         args = make_script_args(self.library_path())
         action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
         self._run_background("Nacitani novych knih + Audit odkazu", action, reload_after=True)
+
+    def run_update_selected(self) -> None:
+        selected = self._selected_book_ids()
+        if not selected:
+            messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
+            return
+        if not self.save_csv(show_message=False):
+            return
+        args = make_script_args(self.library_path())
+        args.book_ids = sorted(selected)
+        action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
+        self._run_background("Update vybranych + Audit odkazu", action, reload_after=True)
 
     def run_rebuild(self) -> None:
         message = (

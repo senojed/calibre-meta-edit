@@ -335,6 +335,14 @@
 - Pri zapisu posle do Calibre `comments:` a tim vymaze komentar knihy.
 - Slouzi pro opravu spatne zapsanych starych odkazu.
 
+## Update 0.0.37 - update vybranych radku a kratsi Legie dotaz
+
+- Legie pri dlouhem nazvu zkusi po plnem dotazu jeste kratky zacatek nazvu.
+- To resi povidky, ktere Legie nenajde na presny dlouhy nazev, napr. `A opice si myslely, ze je to vsechno jen legrace`.
+- `preview` umi pres interni `book_ids` znovu nacist a nahradit existujici radky v `matches.csv`.
+- Desktop appka ma dole tlacitko `Update vybrane`.
+- `Update vybrane` znovu nacte z Calibre jen vybrane knihy, nahradi jen jejich radky v `matches.csv` a potom na ne spusti `Audit odkazu`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

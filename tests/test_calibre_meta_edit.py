@@ -754,6 +754,42 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "legie")
         self.assertEqual(updated[0].chosen_url, "https://www.legie.info/povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie")
 
+    def test_audit_legie_rows_retries_shortened_title_when_full_title_finds_nothing(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely, ze je to vsechno jen legrace",
+            "Orson Scott Card",
+            "skip",
+            "",
+            "",
+            "none",
+            "no-candidates",
+            "databazeknih",
+            "",
+        )
+        legie_html = """
+        <a href="https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace">
+          A opice si myslely, ze to vsechno je z legrace
+        </a>
+        <span>Orson Scott Card</span>
+        """
+
+        def fetcher(url: str) -> str:
+            if url == cme.LEGIE_SEARCH_URL + "A+opice+si+myslely":
+                return legie_html
+            return ""
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "legie")
+        self.assertEqual(updated[0].chosen_url, "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace")
+
     def test_audit_legie_rows_marks_existing_legie_url_as_review(self):
         row = cme.MatchRow(
             429,
@@ -1024,6 +1060,48 @@ class CsvAndFilesystemTests(unittest.TestCase):
             self.assertEqual(seen_book_ids, [2])
             self.assertEqual([row.book_id for row in rows], [1, 2])
             self.assertEqual(rows[0].status, "review")
+
+    def test_run_preview_with_book_ids_refreshes_existing_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.csv"
+            old_rows = [
+                cme.MatchRow(1, "Stara A", "Autor", "skip", "https://old/a", "", "manual", "manual"),
+                cme.MatchRow(2, "Stara B", "Autor", "skip", "https://old/b", "", "manual", "manual"),
+            ]
+            cme.write_matches_csv(path, old_rows, overwrite=False)
+
+            original_matches_path = cme.MATCHES_PATH
+            original_read_books = cme.read_books
+            original_preview_books = cme.preview_books
+            seen_book_ids = []
+            try:
+                cme.MATCHES_PATH = path
+                cme.read_books = lambda library, book_id=None, limit=None: [
+                    cme.Book(1, "Nova A", ["Autor"], ""),
+                    cme.Book(2, "Nova B", ["Autor"], ""),
+                ]
+
+                def fake_preview_books(books, sleep_seconds):
+                    seen_book_ids.extend(book.id for book in books)
+                    return [
+                        cme.MatchRow(2, "Nova B", "Autor", "review", "https://new/b", "", "title-only", "title-only")
+                    ]
+
+                cme.preview_books = fake_preview_books
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = cme.run_preview(
+                        SimpleNamespace(library="library", book_id=None, book_ids=[2], limit=None, sleep=0, overwrite=False)
+                    )
+            finally:
+                cme.MATCHES_PATH = original_matches_path
+                cme.read_books = original_read_books
+                cme.preview_books = original_preview_books
+
+            rows = cme.read_matches_csv(path)
+            self.assertEqual(result, 0)
+            self.assertEqual(seen_book_ids, [2])
+            self.assertEqual([(row.book_id, row.title, row.chosen_url) for row in rows], [(1, "Stara A", "https://old/a"), (2, "Nova B", "https://new/b")])
 
     def test_create_backup_makes_directory_and_copies_metadata_db(self):
         with tempfile.TemporaryDirectory() as tmp:

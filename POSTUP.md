@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.36`
+Aktualni verze: `0.0.37`
 
 Nejjednodussi pouziti:
 
@@ -23,11 +23,12 @@ V appce:
 - pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
 - `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
 - `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
+- `Update vybrane` dole znovu nacte z Calibre jen vybrane knihy v tabulce a potom na ne pusti `Audit odkazu`
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
 - `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
 - kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
-- kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu
+- kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu a pak kratky zacatek dlouheho nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek
 - slaba shoda z Databaze knih se stejnym jednim slovem v nazvu zustane bez odkazu, pokud Legie nic nenajde
 - `Rebuild CSV` dole - zalohuje stary `matches.csv` a vytvori ho znovu od nuly
@@ -71,6 +72,14 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 7. presne schvalene `approve` radky nemeni
 8. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
 9. nic nezapisuje do Calibre
+
+`Update vybrane` udela:
+
+1. ulozi aktualni `matches.csv`
+2. z Calibre databaze znovu nacte jen vybrane knihy
+3. v `matches.csv` nahradi jen tyto vybrane radky
+4. na vybrane radky spusti `Audit odkazu`
+5. nic nezapisuje do Calibre
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.

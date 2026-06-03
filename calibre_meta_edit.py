@@ -334,6 +334,15 @@ def build_legie_search_url(title: str, authors: Sequence[str]) -> str:
     return LEGIE_SEARCH_URL + urllib.parse.quote_plus(query.strip())
 
 
+def short_legie_title_query(title: str, max_words: int = 4) -> str:
+    """Zkrati dlouhy nazev pro Legii, kdyz plny dotaz nic nevrati."""
+    words = [part.strip(" ,;:.!?()[]\"'") for part in title.split()]
+    words = [word for word in words if word]
+    if len(words) <= max_words:
+        return ""
+    return " ".join(words[:max_words])
+
+
 class LegieSearchParser(HTMLParser):
     """Parser vysledku hledani na Legii pro odkazy na povidky."""
 
@@ -941,14 +950,23 @@ def find_legie_story(
     sleeper: Callable[[float], None] = time.sleep,
     sleep_seconds: float = 1.0,
 ) -> MatchRow | None:
-    """Hleda povidku na Legii: nejdriv nazev+autor, pak samotny nazev."""
-    search_authors = [book.authors]
+    """Hleda povidku na Legii: plny dotaz, pak kratsi zacatek nazvu."""
+    searches: list[tuple[str, Sequence[str]]] = [(book.title, book.authors)]
     if book.authors:
-        search_authors.append([])
-    for authors in search_authors:
+        searches.append((book.title, []))
+    short_title = short_legie_title_query(book.title)
+    if short_title:
+        searches.append((short_title, []))
+
+    seen_urls: set[str] = set()
+    for title, authors in searches:
+        url = build_legie_search_url(title, authors)
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         sleeper(sleep_seconds)
         try:
-            legie_html = fetcher(build_legie_search_url(book.title, authors))
+            legie_html = fetcher(url)
             legie_row = match_legie_story(book, parse_legie_search_results(legie_html))
         except Exception:
             legie_row = None
@@ -1183,9 +1201,17 @@ def find_calibredb(
     return CALIBREDB_FALLBACK if exists(CALIBREDB_FALLBACK) else None
 
 
-def select_books(books: Sequence[Book], book_id: int | None = None, limit: int | None = None) -> list[Book]:
+def select_books(
+    books: Sequence[Book],
+    book_id: int | None = None,
+    limit: int | None = None,
+    book_ids: set[int] | list[int] | tuple[int, ...] | None = None,
+) -> list[Book]:
     if book_id is not None:
         return [book for book in books if book.id == book_id]
+    if book_ids is not None:
+        selected_ids = set(book_ids)
+        return [book for book in books if book.id in selected_ids]
     selected = list(books)
     return selected[:limit] if limit is not None else selected
 
@@ -1209,6 +1235,22 @@ def filter_new_books(books: Sequence[Book], existing_rows: Sequence[MatchRow]) -
     """Vrati jen knihy, ktere jeste nejsou ulozene v matches.csv."""
     existing_book_ids = {row.book_id for row in existing_rows}
     return [book for book in books if book.id not in existing_book_ids]
+
+
+def replace_match_rows(existing_rows: Sequence[MatchRow], refreshed_rows: Sequence[MatchRow]) -> list[MatchRow]:
+    """Nahradi v CSV jen znovu nactene radky a ostatni necha beze zmeny."""
+    replacements = {row.book_id: row for row in refreshed_rows}
+    replaced_ids: set[int] = set()
+    merged: list[MatchRow] = []
+    for row in existing_rows:
+        replacement = replacements.get(row.book_id)
+        if replacement is None:
+            merged.append(row)
+            continue
+        merged.append(replacement)
+        replaced_ids.add(row.book_id)
+    merged.extend(row for row in refreshed_rows if row.book_id not in replaced_ids)
+    return merged
 
 
 def is_valid_apply_url(url: str) -> bool:
@@ -1677,11 +1719,19 @@ def run_preview(args: argparse.Namespace) -> int:
     output = MATCHES_PATH
     incremental = output.exists() and not args.overwrite
     existing_rows = read_matches_csv(output) if incremental else []
+    selected_book_ids = set(getattr(args, "book_ids", None) or [])
+    refresh_selected = args.book_id is None and bool(selected_book_ids)
 
-    books = read_books(args.library, book_id=args.book_id, limit=args.limit)
-    books_to_preview = filter_new_books(books, existing_rows) if incremental else books
+    read_limit = None if refresh_selected else args.limit
+    books = read_books(args.library, book_id=args.book_id, limit=read_limit)
+    if refresh_selected:
+        books = select_books(books, book_ids=selected_book_ids)
+    books_to_preview = books if refresh_selected or not incremental else filter_new_books(books, existing_rows)
     if incremental and not books_to_preview:
-        print("Zadne nove knihy. matches.csv zustava beze zmeny.")
+        if refresh_selected:
+            print("Zadne vybrane knihy k update. matches.csv zustava beze zmeny.")
+        else:
+            print("Zadne nove knihy. matches.csv zustava beze zmeny.")
         return 0
 
     try:
@@ -1690,9 +1740,16 @@ def run_preview(args: argparse.Namespace) -> int:
         print(f"Preview selhalo: {exc}")
         return 1
 
-    all_rows = existing_rows + rows if incremental else rows
+    if incremental and refresh_selected:
+        all_rows = replace_match_rows(existing_rows, rows)
+    elif incremental:
+        all_rows = existing_rows + rows
+    else:
+        all_rows = rows
     write_matches_csv(output, all_rows, overwrite=args.overwrite or incremental)
-    if incremental:
+    if incremental and refresh_selected:
+        print(f"Hotovo preview: update {len(rows)} vybranych radku, celkem {len(all_rows)} -> {output}")
+    elif incremental:
         print(f"Hotovo preview: pridano {len(rows)} novych radku, celkem {len(all_rows)} -> {output}")
     else:
         print(f"Hotovo preview: {len(rows)} radku -> {output}")
