@@ -458,6 +458,12 @@
 - Skupiny zaskrtavacich filtru maji vetsi odstupy.
 - Mazaci `X` v textovych polich je zvetsene pres Qt stylesheet.
 
+## Update 0.2.1 - Qt saved columns
+
+- Qt appka uklada do `settings.json` sirky a viditelnost sloupcu.
+- Nastaveni se obnovi pri startu a ulozi pri zavreni appky.
+- Sloupce `ID`, `Kniha`, `Autor` zustavaji vzdy viditelne.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

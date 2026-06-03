@@ -10,18 +10,20 @@ import os
 import threading
 import webbrowser
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 import calibre_meta_app as shared
 import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
+REQUIRED_COLUMN_INDEXES = {0, 1, 2}
+MIN_COLUMN_WIDTH = 36
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
 TYPE_FILTER_VALUES = ("", "povidka")
@@ -119,24 +121,48 @@ def normalize_theme(value: str) -> str:
     return normalized if normalized in THEME_VALUES else "system"
 
 
-def read_app_settings(settings_path: Path = shared.SETTINGS_PATH) -> dict[str, str]:
+def read_app_settings(settings_path: Path | None = None) -> dict[str, Any]:
     """Precte nase nastaveni a ignoruje rozbite hodnoty."""
+    settings_path = settings_path or shared.SETTINGS_PATH
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(data, dict):
         return {}
-    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+    return {str(key): value for key, value in data.items()}
 
 
-def save_app_settings(library: str, theme: str, settings_path: Path = shared.SETTINGS_PATH) -> None:
-    """Ulozi knihovnu i vzhled do jednoho settings.json."""
+def save_app_settings(library: str, theme: str, settings_path: Path | None = None) -> None:
+    """Ulozi knihovnu a vzhled, ale zachova dalsi nastaveni appky."""
+    settings_path = settings_path or shared.SETTINGS_PATH
+    settings = read_app_settings(settings_path)
+    settings["library_path"] = library
+    settings["theme"] = normalize_theme(theme)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(
-        json.dumps({"library_path": library, "theme": normalize_theme(theme)}, ensure_ascii=False, indent=2),
+        json.dumps(settings, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
+    """Vybere jen platne nastaveni sloupcu podle aktualni tabulky."""
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, dict[str, bool | int]] = {}
+    for column in TABLE_COLUMNS:
+        value = raw.get(column)
+        if not isinstance(value, dict):
+            continue
+        column_settings: dict[str, bool | int] = {}
+        if isinstance(value.get("visible"), bool):
+            column_settings["visible"] = value["visible"]
+        if isinstance(value.get("width"), int) and value["width"] >= MIN_COLUMN_WIDTH:
+            column_settings["width"] = value["width"]
+        if column_settings:
+            normalized[column] = column_settings
+    return normalized
 
 
 if PYSIDE6_AVAILABLE:
@@ -265,7 +291,8 @@ if PYSIDE6_AVAILABLE:
             super().__init__()
             self.matches_path = cme.MATCHES_PATH
             self.library_path = shared.initial_library_path()
-            self.theme = normalize_theme(read_app_settings().get("theme", "system"))
+            theme_setting = read_app_settings().get("theme", "system")
+            self.theme = normalize_theme(theme_setting if isinstance(theme_setting, str) else "system")
             self.rows: list[cme.MatchRow] = []
             self.filtered_rows: list[cme.MatchRow] = []
             self.worker_running = False
@@ -395,14 +422,55 @@ if PYSIDE6_AVAILABLE:
             self.table.verticalHeader().setVisible(False)
             self.table.verticalHeader().setDefaultSectionSize(22)
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.horizontalHeader().setStretchLastSection(False)
             self.table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self.table.horizontalHeader().customContextMenuRequested.connect(self.show_column_menu)
             self.table.itemSelectionChanged.connect(self.on_selection_changed)
+            self.apply_column_settings()
             splitter.addWidget(self.table)
             splitter.addWidget(self._build_detail_panel())
             splitter.setSizes([900, 360])
             return splitter
+
+        def apply_column_settings(self) -> None:
+            """Pri startu obnovi sirky a viditelnost sloupcu ze settings.json."""
+            settings = normalize_column_settings(read_app_settings().get("columns"))
+            for index, column in enumerate(TABLE_COLUMNS):
+                column_settings = settings.get(column, {})
+                width = column_settings.get("width")
+                if isinstance(width, int):
+                    self.table.setColumnWidth(index, width)
+                visible = column_settings.get("visible")
+                if index in REQUIRED_COLUMN_INDEXES:
+                    self.table.setColumnHidden(index, False)
+                elif isinstance(visible, bool):
+                    self.table.setColumnHidden(index, not visible)
+
+        def save_column_settings(self, width_overrides: dict[int, int] | None = None) -> None:
+            """Ulozi aktualni sirky a viditelnost sloupcu do settings.json."""
+            width_overrides = width_overrides or {}
+            settings = read_app_settings()
+            previous_columns = normalize_column_settings(settings.get("columns"))
+            columns: dict[str, dict[str, bool | int]] = {}
+            for index, column in enumerate(TABLE_COLUMNS):
+                previous_width = previous_columns.get(column, {}).get("width")
+                if index in width_overrides:
+                    width = width_overrides[index]
+                elif self.table.isColumnHidden(index) and isinstance(previous_width, int):
+                    width = previous_width
+                else:
+                    width = self.table.columnWidth(index)
+                columns[column] = {
+                    "visible": False if index in REQUIRED_COLUMN_INDEXES else not self.table.isColumnHidden(index),
+                    "width": max(MIN_COLUMN_WIDTH, width),
+                }
+            settings["columns"] = {
+                column: values for column, values in columns.items()
+            }
+            for index in REQUIRED_COLUMN_INDEXES:
+                settings["columns"][TABLE_COLUMNS[index]]["visible"] = True
+            shared.SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
         def show_column_menu(self, pos: QPoint) -> None:
             """Prave kliknuti na hlavicku sloupcu ukaze volbu viditelnosti."""
@@ -415,9 +483,30 @@ if PYSIDE6_AVAILABLE:
                 if index < 3:
                     action.setEnabled(False)
                 else:
-                    action.toggled.connect(lambda checked, col=index: self.table.setColumnHidden(col, not checked))
+                    action.toggled.connect(lambda checked, col=index: self.set_column_visible(col, checked))
                 menu.addAction(action)
             menu.exec(header.mapToGlobal(pos))
+
+        def set_column_visible(self, column: int, visible: bool) -> None:
+            """Zmeni viditelnost sloupce a hned ji ulozi."""
+            if column in REQUIRED_COLUMN_INDEXES:
+                return
+            column_settings = normalize_column_settings(read_app_settings().get("columns")).get(TABLE_COLUMNS[column], {})
+            previous_width = column_settings.get("width")
+            if visible:
+                self.table.setColumnHidden(column, False)
+                if isinstance(previous_width, int):
+                    self.table.setColumnWidth(column, previous_width)
+                self.save_column_settings()
+                return
+            width = self.table.columnWidth(column)
+            self.table.setColumnHidden(column, True)
+            self.save_column_settings({column: width})
+
+        def closeEvent(self, event: Any) -> None:
+            """Pred zavrenim ulozi rozlozeni sloupcu."""
+            self.save_column_settings()
+            super().closeEvent(event)
 
         def _build_detail_panel(self) -> QWidget:
             panel = QWidget()

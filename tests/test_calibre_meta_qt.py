@@ -1,7 +1,10 @@
 # Testy hlidaji Qt app helpery bez otevirani grafickeho okna.
 
 import importlib.util
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import calibre_meta_edit as cme
 
@@ -13,8 +16,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.0")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.0")
+        self.assertEqual(qt.APP_VERSION, "0.2.1")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.1")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -53,7 +56,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.0")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.1")
 
     def test_normalize_theme_accepts_only_known_values(self):
         import calibre_meta_qt as qt
@@ -61,6 +64,36 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.normalize_theme("dark"), "dark")
         self.assertEqual(qt.normalize_theme("LIGHT"), "light")
         self.assertEqual(qt.normalize_theme("bad"), "system")
+
+    def test_save_app_settings_preserves_column_settings(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            settings_path.write_text(
+                json.dumps({"columns": {"Status": {"visible": False, "width": 88}}}),
+                encoding="utf-8",
+            )
+
+            qt.save_app_settings("B:\\", "dark", settings_path)
+
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["library_path"], "B:\\")
+            self.assertEqual(data["theme"], "dark")
+            self.assertEqual(data["columns"]["Status"], {"visible": False, "width": 88})
+
+    def test_normalize_column_settings_ignores_unknown_and_broken_values(self):
+        import calibre_meta_qt as qt
+
+        result = qt.normalize_column_settings(
+            {
+                "Status": {"visible": False, "width": 92},
+                "Odkaz": {"visible": "yes", "width": 4},
+                "Nesmysl": {"visible": True, "width": 100},
+            }
+        )
+
+        self.assertEqual(result, {"Status": {"visible": False, "width": 92}})
 
     def test_selection_summary_handles_multiple_rows(self):
         import calibre_meta_qt as qt
