@@ -4,13 +4,13 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.1.0`
+Aktualni verze: `0.1.1`
 
 Spusteni nove Qt appky:
 
 ```text
 python -m pip install -r requirements.txt
-python calibre_meta_qt.py
+CalibreMetaEditQt.bat
 ```
 
 Stara Tkinter appka zustava jako zaloha, kdyby Qt zlobilo:

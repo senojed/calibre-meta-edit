@@ -13,8 +13,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.1.0")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.1.0")
+        self.assertEqual(qt.APP_VERSION, "0.1.1")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.1.1")
 
     def test_filter_rows_supports_title_author_status_source_type(self):
         import calibre_meta_qt as qt
@@ -33,7 +33,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | Calibre vypnuto | matches.csv nacteno | 0.1.0")
+        self.assertEqual(text, "Ready | Calibre vypnuto | matches.csv nacteno | 0.1.1")
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")

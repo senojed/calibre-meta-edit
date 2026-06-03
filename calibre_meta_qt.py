@@ -16,7 +16,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
 VALID_FILTER_VALUES = ("", "approve", "review", "skip")

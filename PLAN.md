@@ -390,6 +390,12 @@
 - Knihovna, `Rebuild CSV` a `Rollback` jsou v `Preferences`.
 - Statusbar ukazuje stav, jestli bezi Calibre, stav `matches.csv` a verzi.
 
+## Update 0.1.1 - Qt BAT launcher
+
+- Pridan `CalibreMetaEditQt.bat`.
+- Spousti novou Qt appku pres `pythonw.exe`, kdyz je dostupny.
+- Kdyz `pythonw.exe` neni dostupny, zkusi `python.exe`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
