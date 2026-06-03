@@ -546,7 +546,7 @@ class BookDetailParser(HTMLParser):
 
 
 class EditionListParser(HTMLParser):
-    """Parser seznamu vydani. Bere jen bloky, kde je odkaz na nakladatelstvi."""
+    """Parser seznamu vydani. Rok staci, vydavatel na webu nekdy chybi."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -555,7 +555,6 @@ class EditionListParser(HTMLParser):
         self._block_url = ""
         self._block_parts: list[str] = []
         self._block_depth = 0
-        self._block_has_publisher = False
         self._block_tag = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -571,8 +570,6 @@ class EditionListParser(HTMLParser):
             self._last_overview_url = databaze_absolute_url(href)
 
         if self._block_depth:
-            if lowered_tag == "a" and "/nakladatelstvi/" in href:
-                self._block_has_publisher = True
             if lowered_tag not in HTML_VOID_TAGS:
                 self._block_depth += 1
             return
@@ -582,11 +579,12 @@ class EditionListParser(HTMLParser):
         if is_current_publication or is_edition_publication:
             self._block_depth = 1
             self._block_tag = lowered_tag
-            self._block_url = self._last_overview_url
+            self._block_url = self._last_overview_url if is_edition_publication else ""
             self._block_parts = []
-            self._block_has_publisher = False
 
     def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in HTML_VOID_TAGS:
+            return
         if not self._block_depth:
             return
         self._block_depth -= 1
@@ -596,13 +594,12 @@ class EditionListParser(HTMLParser):
 
     def _finish_block(self) -> None:
         edition = _publication_metadata_from_text(" ".join(self._block_parts), self._block_url)
-        if self._block_has_publisher and edition.published_year:
+        if edition.published_year:
             self.editions.append(edition)
         self._block_depth = 0
         self._block_tag = ""
         self._block_url = ""
         self._block_parts = []
-        self._block_has_publisher = False
 
     def handle_data(self, data: str) -> None:
         if self._block_depth:

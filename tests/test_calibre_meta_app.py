@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.0.42")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.42")
+        self.assertEqual(app.APP_VERSION, "0.0.43")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.0.43")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []

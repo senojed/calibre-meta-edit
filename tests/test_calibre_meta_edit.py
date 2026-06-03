@@ -367,6 +367,27 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(edition.publisher, "Triton")
         self.assertEqual(edition.url, "https://www.databazeknih.cz/prehled-knihy/abaddonova-brana-386979")
 
+    def test_parse_oldest_edition_metadata_reads_year_without_publisher(self):
+        html = """
+        <a href='/prehled-knihy/cesta-krve-cynik-1064'>Cynik</a>
+        <div class='lora lineHeightMid'>
+          <a href='/zanry/romany-12'>Romany</a><span class='pozn'>,</span>
+          <a href='/zanry/sci-fi-19'>Sci-fi</a><br />
+          <img title="ekniha" src="/img/icons/formats/ebook.svg">
+          2004
+          <span class='pozn'>,</span>
+          <dl class='book-details'>
+            <span id='moreBookDetails' bookId='60133'>Vice info...</span>
+          </dl>
+        </div>
+        """
+
+        edition = cme.parse_oldest_edition_metadata(html)
+
+        self.assertEqual(edition.published_year, "2004")
+        self.assertEqual(edition.publisher, "")
+        self.assertEqual(edition.url, "")
+
     def test_match_book_approves_exact_title_and_author(self):
         book = cme.Book(309, "Loď osudu", ["Robin Hobb"], "")
         candidates = [cme.Candidate("Loď osudu", "Robin Hobb", "https://www.databazeknih.cz/knihy/zive-lode-lod-osudu-152421")]

@@ -375,6 +375,12 @@
 - Externi rucni odkazy mimo Databazi knih a Legii, napr. Goodreads, se zapisi jen jako HTML odkaz do komentare.
 - Rucni Databaze knih `prehled-knihy` odkaz porad pouzije obohaceny zapis metadat.
 
+## Update 0.0.43 - vydani bez vydavatele
+
+- Parser vydani z Databaze knih uz bere i vydani, kde web ukazuje jen rok a nema vydavatele.
+- To opravuje zapis knih jako `Kat`, kde existuje rok `2004`, ale vydavatel na strance vydani chybi.
+- Vydavatel se v takovem pripade neprepise, rok se zapise.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
