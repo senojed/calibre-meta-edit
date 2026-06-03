@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.39`
+Aktualni verze: `0.0.40`
 
 Nejjednodussi pouziti:
 
@@ -73,7 +73,8 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 6. nalezene povidky nastavi na `review`, zdroj `legie`, typ `povidka`
 7. presne schvalene `approve` radky nemeni
 8. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
-9. nic nezapisuje do Calibre
+9. u stareho `already-linked` odkazu, ktery uz nejde potvrdit hledanim, smaze URL v `matches.csv` a da radek na `review`
+10. nic nezapisuje do Calibre
 
 `Update vybrane` udela:
 

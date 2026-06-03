@@ -708,6 +708,31 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].status, "approve")
         self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/knihy/sapiens-254943")
 
+    def test_audit_legie_rows_clears_unconfirmed_already_linked_url(self):
+        row = cme.MatchRow(
+            171,
+            "Exercised",
+            "Daniel Lieberman",
+            "skip",
+            "https://www.databazeknih.cz/knihy/basic-grammar-exercises-367677",
+            "",
+            "none",
+            "already-linked",
+            "databazeknih",
+            "",
+        )
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: "",
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].chosen_url, "")
+        self.assertEqual(updated[0].reason, "stale-already-linked")
+
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(
             31031,

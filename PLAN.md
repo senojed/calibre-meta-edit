@@ -356,6 +356,13 @@
 - Mezera mezi `Skip` a `Povidka` je stejna jako mezera pred `Approve`.
 - Mezera mezi `Update vybrane` a `Rebuild CSV` je stejna jako mezera pred `Update vybrane`.
 
+## Update 0.0.40 - Audit odkazu cisti nepotvrzene stare odkazy
+
+- `Audit odkazu` u radku `reason=already-linked` zkusi odkaz znovu overit pres hledani podle aktualniho nazvu a autora.
+- Kdyz najde dobrou nahradu, radek aktualizuje.
+- Kdyz zadnou dobrou nahradu nenajde a nejde o HTTP chybu, smaze `chosen_url` v `matches.csv`, nastavi `status=review` a `reason=stale-already-linked`.
+- Audit porad nic nezapisuje do Calibre; smazani komentare vyzaduje rucni `approve` a potom `Zapsat do Calibre`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

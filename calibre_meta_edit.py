@@ -1696,11 +1696,13 @@ def audit_legie_rows(
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]
         book = Book(row.book_id, row.title, authors, "")
         databaze_row = None
+        databaze_failed = False
         sleeper(sleep_seconds)
         try:
             databaze_html = fetcher(build_search_url(book.title, book.authors))
             databaze_row = match_book(book, parse_search_results(databaze_html))
         except Exception:
+            databaze_failed = True
             databaze_row = None
         if databaze_row is not None and databaze_row.chosen_url and not should_try_legie(databaze_row):
             updated.append(databaze_row)
@@ -1710,6 +1712,21 @@ def audit_legie_rows(
             updated.append(legie_row)
         elif databaze_row is not None and databaze_row.chosen_url:
             updated.append(databaze_row)
+        elif row.reason == "already-linked" and row.chosen_url and not databaze_failed:
+            updated.append(
+                MatchRow(
+                    row.book_id,
+                    row.title,
+                    row.authors,
+                    "review",
+                    "",
+                    row.candidate_urls,
+                    "none",
+                    "stale-already-linked",
+                    row.source,
+                    row.work_type,
+                )
+            )
         else:
             updated.append(row)
     return updated
