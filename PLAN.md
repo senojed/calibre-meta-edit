@@ -363,6 +363,12 @@
 - Kdyz zadnou dobrou nahradu nenajde a nejde o HTTP chybu, smaze `chosen_url` v `matches.csv`, nastavi `status=review` a `reason=stale-already-linked`.
 - Audit porad nic nezapisuje do Calibre; smazani komentare vyzaduje rucni `approve` a potom `Zapsat do Calibre`.
 
+## Update 0.0.41 - manual odkazy audit nemaze
+
+- Kdyz uzivatel zmeni odkaz pres pole `Odkaz` a `Pouzit odkaz`, radek dostane `confidence=manual` a `reason=manual`.
+- `Audit odkazu` radky `manual` znovu nehleda a nesmaze jim `chosen_url`.
+- To chrani rucne vlozene odkazy, vcetne pripadnych Goodreads URL.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

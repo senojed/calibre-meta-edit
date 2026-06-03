@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.0.40"
+APP_VERSION = "0.0.41"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -215,6 +215,8 @@ def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
     url = chosen_url.strip()
     source = row.source
     work_type = row.work_type
+    confidence = row.confidence
+    reason = row.reason
     if cme.is_valid_legie_story_url(url):
         source = "legie"
         work_type = "povidka"
@@ -224,7 +226,10 @@ def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
     elif cme.is_valid_apply_url(url):
         source = "databazeknih"
         work_type = ""
-    return replace(row, status=status, chosen_url=url, source=source, work_type=work_type)
+    if url != row.chosen_url.strip():
+        confidence = "manual"
+        reason = "manual"
+    return replace(row, status=status, chosen_url=url, confidence=confidence, reason=reason, source=source, work_type=work_type)
 
 
 def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status: str) -> list[cme.MatchRow]:

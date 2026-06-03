@@ -733,6 +733,29 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].chosen_url, "")
         self.assertEqual(updated[0].reason, "stale-already-linked")
 
+    def test_audit_legie_rows_keeps_manual_url_without_recheck(self):
+        row = cme.MatchRow(
+            171,
+            "Exercised",
+            "Daniel Lieberman",
+            "review",
+            "https://www.goodreads.com/book/show/123-exercised",
+            "",
+            "manual",
+            "manual",
+            "goodreads",
+            "",
+        )
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: self.fail("manual rows must not be searched"),
+            sleeper=lambda seconds: self.fail("manual rows must not sleep"),
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated, [row])
+
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(
             31031,

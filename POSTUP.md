@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.40`
+Aktualni verze: `0.0.41`
 
 Nejjednodussi pouziti:
 
@@ -38,7 +38,7 @@ V appce:
 - male `X` u poli `Odkaz`, `Filter knih` a `Filter autoru` hned smaze cele pole
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
-- druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u vsech vybranych knih
+- druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u vsech vybranych knih a oznaci ho jako `manual`
 - `Ulozit CSV`
 - `Zapsat do Calibre`
 - `approve` radek s prazdnym odkazem vymaze komentar knihy v Calibre
@@ -74,7 +74,8 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 7. presne schvalene `approve` radky nemeni
 8. schvalene slabe shody muze vratit na `review`, kdyz najde lepsi povidku na Legii
 9. u stareho `already-linked` odkazu, ktery uz nejde potvrdit hledanim, smaze URL v `matches.csv` a da radek na `review`
-10. nic nezapisuje do Calibre
+10. rucne zadane odkazy `manual` nemaze ani znovu nehleda
+11. nic nezapisuje do Calibre
 
 `Update vybrane` udela:
 
