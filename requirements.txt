@@ -1,0 +1,2 @@
+# Runtime dependency pro novou Qt desktop appku.
+PySide6==6.11.1

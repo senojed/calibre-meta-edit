@@ -4,25 +4,29 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.0.43`
+Aktualni verze: `0.1.0`
 
-Nejjednodussi pouziti:
+Spusteni nove Qt appky:
+
+```text
+python -m pip install -r requirements.txt
+python calibre_meta_qt.py
+```
+
+Stara Tkinter appka zustava jako zaloha, kdyby Qt zlobilo:
 
 ```text
 CalibreMetaEdit.bat
 ```
 
-Otevre se normalni okno.
-CMD okno se po spusteni hned zavre.
-Konzolova okna pomocnych prikazu se appka snazi schovat.
+EXE se zatim nedela.
 
 V appce:
 
 - pri startu se samo nacte `matches.csv`
 - pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit odkazu` jen pro nove radky
-- pole `Knihovna` dole pod stavem ukazuje, s jakou Calibre knihovnou appka pracuje
-- `Zmenit` dole vybere jinou Calibre knihovnu a ulozi ji do `settings.json`
-- `Pouzit z Calibre` dole vezme aktualni knihovnu z Calibre configu
+- `Preferences` obsahuje knihovnu, `Rebuild CSV` a `Rollback`
+- statusbar ukazuje stav, jestli bezi Calibre, jestli je nactene `matches.csv`, a verzi
 - `Update vybrane` dole znovu nacte z Calibre jen vybrane knihy v tabulce a potom na ne pusti `Audit odkazu`
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
 - `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`

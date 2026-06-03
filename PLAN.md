@@ -381,6 +381,15 @@
 - To opravuje zapis knih jako `Kat`, kde existuje rok `2004`, ale vydavatel na strance vydani chybi.
 - Vydavatel se v takovem pripade neprepise, rok se zapise.
 
+## Update 0.1.0 - Qt desktop appka
+
+- Pridana nova PySide6/Qt appka `calibre_meta_qt.py`.
+- Spusteni bez EXE: `python calibre_meta_qt.py`.
+- Stara Tkinter appka zustava jako fallback.
+- Qt UI ma horni toolbar, filtry v liste, sortable tabulku, pravy detail panel a statusbar.
+- Knihovna, `Rebuild CSV` a `Rollback` jsou v `Preferences`.
+- Statusbar ukazuje stav, jestli bezi Calibre, stav `matches.csv` a verzi.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
