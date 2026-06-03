@@ -433,6 +433,12 @@
 - `Nahled komentare` odstraneny z detailu.
 - Kdyz vice vybranych radku ma ruzne odkazy, lze text `Ruzne adresy` smazat a pouzit prazdny odkaz pro vsechny vybrane.
 
+## Update 0.1.6 - Qt icon-only toolbar
+
+- Hlavni lista ma jen ikony bez textu; text zustava v tooltipu po najeti mysi.
+- Detail vybrane polozky ma status/link tlacitka bez ikon.
+- Vybrane radky v tabulce zustavaji modre i kdyz tabulka ztrati focus.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -302,15 +302,15 @@ if PYSIDE6_AVAILABLE:
             toolbar.setSpacing(6)
             self.buttons: list[QToolButton] = []
 
-            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open")
-            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save")
-            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", "chain")
-            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle")
+            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open", show_text=False)
+            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save", show_text=False)
+            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", "chain", show_text=False)
+            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle", show_text=False)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addStretch(1)
-            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear")
-            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply")
+            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
+            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
 
         def _add_button(
@@ -320,11 +320,14 @@ if PYSIDE6_AVAILABLE:
             callback: Callable[[], None],
             object_name: str = "",
             icon: str = "",
+            show_text: bool = True,
         ) -> QToolButton:
             button = QToolButton()
-            button.setText(text)
+            button.setText(text if show_text else "")
             button.setToolTip(text)
-            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show_text else Qt.ToolButtonStyle.ToolButtonIconOnly
+            )
             if icon:
                 button.setIcon(self.icon_for(icon))
             if object_name:
@@ -424,10 +427,10 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self.detail_author)
 
             status_buttons = QHBoxLayout()
-            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton", "approve")
-            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton", "review")
-            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton", "skip")
-            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton", "story")
+            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton")
+            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton")
+            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton")
+            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton")
             layout.addLayout(status_buttons)
 
             layout.addWidget(QLabel("Odkaz"))
@@ -436,8 +439,8 @@ if PYSIDE6_AVAILABLE:
             self.url_edit.textChanged.connect(self.update_link_buttons)
             layout.addWidget(self.url_edit)
             url_buttons = QHBoxLayout()
-            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton", "apply")
-            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton", "chrome")
+            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton")
+            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton")
             layout.addLayout(url_buttons)
 
             layout.addWidget(QLabel("Log"))
@@ -762,6 +765,10 @@ if PYSIDE6_AVAILABLE:
                 QLineEdit, QComboBox { min-height: 28px; }
                 QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
                 QTableWidget::item { color: #111111; }
+                QTableWidget::item:selected, QTableWidget::item:selected:!active {
+                    background: #0d6efd;
+                    color: #ffffff;
+                }
                 QTextEdit { font-family: Consolas; font-size: 10pt; }
             """
             if self.theme == "dark":
