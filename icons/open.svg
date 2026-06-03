@@ -1,0 +1,5 @@
+<!-- Ikona otevreni CSV. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <path d="M4 9h10l3 4h11v13H4z" fill="#f5f5f5"/>
+  <path d="M4 9h10l3 4H4z" fill="#d6d6d6"/>
+</svg>

@@ -1,0 +1,9 @@
+<!-- Jednoducha Chrome-like ikona pro Otevrit odkaz. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="14" fill="#fbbc05"/>
+  <path d="M16 16L5 16A14 14 0 0116 2h12z" fill="#ea4335"/>
+  <path d="M16 16l7 12A14 14 0 012 16z" fill="#34a853"/>
+  <path d="M16 16h14a14 14 0 01-7 12z" fill="#4285f4"/>
+  <circle cx="16" cy="16" r="6" fill="#ffffff"/>
+  <circle cx="16" cy="16" r="3.6" fill="#4285f4"/>
+</svg>

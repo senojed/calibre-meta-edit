@@ -17,9 +17,10 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
+ICON_DIR = APP_DIR / "icons"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
@@ -95,14 +96,14 @@ def selection_link_actions_enabled(rows: Sequence[cme.MatchRow]) -> bool:
     return bool(rows) and selection_link_text(rows) != "Ruzne adresy"
 
 
-def comment_preview_text(rows: Sequence[cme.MatchRow]) -> str:
-    """Ukaze rychly nahled komentare bez stahovani webu."""
-    if not rows:
-        return ""
-    link = selection_link_text(rows)
-    if link == "Ruzne adresy":
-        return "Vybrano vic knih s ruznymi odkazy."
-    return f'<a href="{link}" target="_blank">{link}</a>' if link else "(bez odkazu)"
+def use_link_enabled(rows: Sequence[cme.MatchRow], link_text: str) -> bool:
+    """Pouzit odkaz jde i pro prazdny text, ale ne pro informacni text."""
+    return bool(rows) and link_text.strip() != "Ruzne adresy"
+
+
+def open_link_enabled(rows: Sequence[cme.MatchRow], link_text: str) -> bool:
+    """Otevrit odkaz jde jen kdyz existuje jeden konkretni odkaz."""
+    return use_link_enabled(rows, link_text) and bool(link_text.strip())
 
 
 def is_calibre_running(runner: Callable[[Sequence[str]], cme.CommandResult] = cme.run_command) -> bool:
@@ -165,6 +166,7 @@ if PYSIDE6_AVAILABLE:
         QTableWidget,
         QTableWidgetItem,
         QTextEdit,
+        QToolButton,
         QVBoxLayout,
         QWidget,
     )
@@ -298,17 +300,17 @@ if PYSIDE6_AVAILABLE:
         def _build_toolbar(self) -> QHBoxLayout:
             toolbar = QHBoxLayout()
             toolbar.setSpacing(6)
-            self.buttons: list[QPushButton] = []
+            self.buttons: list[QToolButton] = []
 
-            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", QStyle.StandardPixmap.SP_DialogOpenButton)
-            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", QStyle.StandardPixmap.SP_DialogSaveButton)
-            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", QStyle.StandardPixmap.SP_BrowserReload)
-            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", QStyle.StandardPixmap.SP_ArrowRight)
+            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open")
+            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save")
+            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", "chain")
+            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle")
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addStretch(1)
-            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", QStyle.StandardPixmap.SP_FileDialogDetailedView)
-            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", QStyle.StandardPixmap.SP_DialogApplyButton)
+            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear")
+            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply")
             return toolbar
 
         def _add_button(
@@ -317,17 +319,32 @@ if PYSIDE6_AVAILABLE:
             text: str,
             callback: Callable[[], None],
             object_name: str = "",
-            icon: QStyle.StandardPixmap | None = None,
-        ) -> QPushButton:
-            button = QPushButton(text)
-            if icon is not None:
-                button.setIcon(self.style().standardIcon(icon))
+            icon: str = "",
+        ) -> QToolButton:
+            button = QToolButton()
+            button.setText(text)
+            button.setToolTip(text)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            if icon:
+                button.setIcon(self.icon_for(icon))
             if object_name:
                 button.setObjectName(object_name)
             button.clicked.connect(callback)
             layout.addWidget(button)
             self.buttons.append(button)
             return button
+
+        def icon_for(self, name: str) -> QIcon:
+            """Vrati vlastni SVG ikonu, nebo Qt fallback."""
+            path = ICON_DIR / f"{name}.svg"
+            if path.exists():
+                return QIcon(str(path))
+            fallback = {
+                "open": QStyle.StandardPixmap.SP_DialogOpenButton,
+                "save": QStyle.StandardPixmap.SP_DialogSaveButton,
+                "apply": QStyle.StandardPixmap.SP_DialogApplyButton,
+            }.get(name, QStyle.StandardPixmap.SP_FileIcon)
+            return self.style().standardIcon(fallback)
 
         def _build_filterbar(self, bar: QHBoxLayout) -> None:
             self.title_filter = self._filter_edit("Kniha", bar)
@@ -407,26 +424,21 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self.detail_author)
 
             status_buttons = QHBoxLayout()
-            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton", QStyle.StandardPixmap.SP_DialogApplyButton)
-            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton", QStyle.StandardPixmap.SP_MessageBoxWarning)
-            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton", QStyle.StandardPixmap.SP_DialogCancelButton)
-            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton", QStyle.StandardPixmap.SP_FileIcon)
+            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton", "approve")
+            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton", "review")
+            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton", "skip")
+            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton", "story")
             layout.addLayout(status_buttons)
 
             layout.addWidget(QLabel("Odkaz"))
             self.url_edit = QLineEdit()
             self.url_edit.setClearButtonEnabled(True)
+            self.url_edit.textChanged.connect(self.update_link_buttons)
             layout.addWidget(self.url_edit)
             url_buttons = QHBoxLayout()
-            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton", QStyle.StandardPixmap.SP_DialogApplyButton)
-            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton", QStyle.StandardPixmap.SP_DirLinkIcon)
+            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton", "apply")
+            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton", "chrome")
             layout.addLayout(url_buttons)
-
-            layout.addWidget(QLabel("Nahled komentare"))
-            self.comment_preview = QTextEdit()
-            self.comment_preview.setReadOnly(True)
-            self.comment_preview.setMaximumHeight(92)
-            layout.addWidget(self.comment_preview)
 
             layout.addWidget(QLabel("Log"))
             self.output = QTextEdit()
@@ -547,10 +559,14 @@ if PYSIDE6_AVAILABLE:
             link_text = selection_link_text(rows)
             if self.url_edit.text() != link_text:
                 self.url_edit.setText(link_text)
-            link_enabled = selection_link_actions_enabled(rows)
-            self.use_link_button.setEnabled(link_enabled)
-            self.open_link_button.setEnabled(link_enabled)
-            self.comment_preview.setPlainText(comment_preview_text(rows))
+            self.update_link_buttons()
+
+        def update_link_buttons(self) -> None:
+            """Zapne link tlacitka podle vyberu a textu v poli Odkaz."""
+            rows = self.selected_rows()
+            link_text = self.url_edit.text()
+            self.use_link_button.setEnabled(use_link_enabled(rows, link_text))
+            self.open_link_button.setEnabled(open_link_enabled(rows, link_text))
 
         def set_selected_status(self, status: str) -> None:
             selected = self.selected_book_ids()
@@ -574,6 +590,9 @@ if PYSIDE6_AVAILABLE:
             selected = self.selected_book_ids()
             if not selected:
                 QMessageBox.information(self, "Vyber radek", "Nejdriv vyber knihu v tabulce.")
+                return
+            if self.url_edit.text().strip() == "Ruzne adresy":
+                QMessageBox.information(self, "Odkaz", "Smaz text Ruzne adresy, nebo zadej konkretni odkaz.")
                 return
             self.rows = shared.update_rows_url(self.rows, selected, self.url_edit.text())
             self.refresh_table()
@@ -732,13 +751,14 @@ if PYSIDE6_AVAILABLE:
                 app.setStyle(QStyleFactory.create("Fusion"))
             base = """
                 * { font-family: "Segoe UI"; }
-                QPushButton { min-height: 30px; padding: 4px 10px; border-radius: 3px; }
-                QPushButton#approveButton { background: #2e7d32; color: white; }
-                QPushButton#reviewButton { background: #ef6c00; color: white; }
-                QPushButton#skipButton, QPushButton#neutralButton { background: #757575; color: white; }
-                QPushButton#storyButton, QPushButton#updateButton { background: #1565c0; color: white; }
-                QPushButton#applyButton, QPushButton#dangerButton { background: #c62828; color: white; }
-                QPushButton:disabled { background: #bdbdbd; color: #eeeeee; }
+                QPushButton, QToolButton { min-height: 30px; padding: 4px 8px; border-radius: 3px; }
+                QToolButton { font-size: 8pt; min-width: 58px; }
+                QPushButton#approveButton, QToolButton#approveButton { background: #2e7d32; color: white; }
+                QPushButton#reviewButton, QToolButton#reviewButton { background: #ef6c00; color: white; }
+                QPushButton#skipButton, QPushButton#neutralButton, QToolButton#skipButton, QToolButton#neutralButton { background: #757575; color: white; }
+                QPushButton#storyButton, QPushButton#updateButton, QToolButton#storyButton, QToolButton#updateButton { background: #1565c0; color: white; }
+                QPushButton#applyButton, QPushButton#dangerButton, QToolButton#applyButton, QToolButton#dangerButton { background: #c62828; color: white; }
+                QPushButton:disabled, QToolButton:disabled { background: #bdbdbd; color: #eeeeee; }
                 QLineEdit, QComboBox { min-height: 28px; }
                 QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
                 QTableWidget::item { color: #111111; }

@@ -13,8 +13,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.1.4")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.1.4")
+        self.assertEqual(qt.APP_VERSION, "0.1.5")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.1.5")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -53,7 +53,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.1.4")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.1.5")
 
     def test_normalize_theme_accepts_only_known_values(self):
         import calibre_meta_qt as qt
@@ -73,6 +73,8 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.selection_title(rows), "Vybrano 2 polozek")
         self.assertEqual(qt.selection_link_text(rows), "Ruzne adresy")
         self.assertFalse(qt.selection_link_actions_enabled(rows))
+        self.assertFalse(qt.use_link_enabled(rows, "Ruzne adresy"))
+        self.assertTrue(qt.use_link_enabled(rows, ""))
 
     def test_selection_link_actions_enabled_for_same_url(self):
         import calibre_meta_qt as qt
@@ -84,6 +86,7 @@ class QtHelperTests(unittest.TestCase):
 
         self.assertEqual(qt.selection_link_text(rows), "https://x")
         self.assertTrue(qt.selection_link_actions_enabled(rows))
+        self.assertTrue(qt.open_link_enabled(rows, "https://x"))
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")

@@ -426,6 +426,13 @@
 - Nebarevna tlacitka jsou seda a tlacitka maji standardni Qt ikony.
 - Z filtru odstraneny popisky `Status`, `Zdroj`, `Typ`.
 
+## Update 0.1.5 - Qt icons and link clearing
+
+- Toolbar a detail pouzivaji `QToolButton` s ikonou a malym textem pod ikonou.
+- `Preferences`, `Audit odkazu`, `Update vybrane` a `Otevrit odkaz` maji vlastni SVG ikony.
+- `Nahled komentare` odstraneny z detailu.
+- Kdyz vice vybranych radku ma ruzne odkazy, lze text `Ruzne adresy` smazat a pouzit prazdny odkaz pro vsechny vybrane.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

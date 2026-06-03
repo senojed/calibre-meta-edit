@@ -1,0 +1,6 @@
+<!-- Ikona ulozeni CSV. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <path d="M6 4h17l3 3v21H6z" fill="#f5f5f5"/>
+  <path d="M10 4h11v8H10z" fill="#757575"/>
+  <path d="M10 19h12v9H10z" fill="#d6d6d6"/>
+</svg>
