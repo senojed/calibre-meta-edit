@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
@@ -70,6 +70,41 @@ def filter_label(value: str) -> str:
     return value or "bez typu"
 
 
+def selection_title(rows: Sequence[cme.MatchRow]) -> str:
+    """Vrati text nad status tlacitka podle vyberu."""
+    if not rows:
+        return "Bez vyberu"
+    if len(rows) == 1:
+        row = rows[0]
+        return f"{row.book_id} - {row.title}"
+    return f"Vybrano {len(rows)} polozek"
+
+
+def selection_link_text(rows: Sequence[cme.MatchRow]) -> str:
+    """Vrati odkaz pro vyber; pri ruznych adresach vrati informacni text."""
+    urls = {row.chosen_url.strip() for row in rows}
+    if not rows:
+        return ""
+    if len(urls) == 1:
+        return next(iter(urls))
+    return "Ruzne adresy"
+
+
+def selection_link_actions_enabled(rows: Sequence[cme.MatchRow]) -> bool:
+    """Link tlacitka maji smysl jen pro jeden odkaz."""
+    return bool(rows) and selection_link_text(rows) != "Ruzne adresy"
+
+
+def comment_preview_text(rows: Sequence[cme.MatchRow]) -> str:
+    """Ukaze rychly nahled komentare bez stahovani webu."""
+    if not rows:
+        return ""
+    link = selection_link_text(rows)
+    if link == "Ruzne adresy":
+        return "Vybrano vic knih s ruznymi odkazy."
+    return f'<a href="{link}" target="_blank">{link}</a>' if link else "(bez odkazu)"
+
+
 def is_calibre_running(runner: Callable[[Sequence[str]], cme.CommandResult] = cme.run_command) -> bool:
     """Zjisti, jestli bezi Calibre GUI."""
     result = runner(["tasklist", "/FI", "IMAGENAME eq calibre.exe"])
@@ -104,7 +139,7 @@ def save_app_settings(library: str, theme: str, settings_path: Path = shared.SET
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, QPoint, Qt, Signal
+    from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
     from PySide6.QtGui import QAction, QColor, QFont, QIcon
     from PySide6.QtWidgets import (
         QApplication,
@@ -126,6 +161,7 @@ if PYSIDE6_AVAILABLE:
         QSizePolicy,
         QSplitter,
         QStatusBar,
+        QStyle,
         QTableWidget,
         QTableWidgetItem,
         QTextEdit,
@@ -155,9 +191,11 @@ if PYSIDE6_AVAILABLE:
             self.library_edit = QLineEdit(self.parent_window.library_path)
             form.addWidget(self.library_edit, 0, 1)
             browse = QPushButton("Zmenit")
+            browse.setObjectName("neutralButton")
             browse.clicked.connect(self.choose_library)
             form.addWidget(browse, 0, 2)
             use_calibre = QPushButton("Pouzit z Calibre")
+            use_calibre.setObjectName("neutralButton")
             use_calibre.clicked.connect(self.use_calibre_library)
             form.addWidget(use_calibre, 0, 3)
             form.addWidget(QLabel("Vzhled"), 1, 0)
@@ -175,8 +213,10 @@ if PYSIDE6_AVAILABLE:
             rollback.setObjectName("dangerButton")
             rollback.clicked.connect(self.run_rollback)
             save = QPushButton("Ulozit")
+            save.setObjectName("neutralButton")
             save.clicked.connect(self.save_library)
             close = QPushButton("Zavrit")
+            close.setObjectName("neutralButton")
             close.clicked.connect(self.accept)
             buttons.addWidget(rebuild)
             buttons.addWidget(rollback)
@@ -236,6 +276,9 @@ if PYSIDE6_AVAILABLE:
                 self.setWindowIcon(QIcon(str(ICON_PATH)))
             self.resize(1320, 780)
             self._build_ui()
+            self.calibre_timer = QTimer(self)
+            self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
+            self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
 
         def _build_ui(self) -> None:
@@ -244,7 +287,6 @@ if PYSIDE6_AVAILABLE:
             layout.setContentsMargins(10, 10, 10, 6)
             layout.setSpacing(8)
             layout.addLayout(self._build_toolbar())
-            layout.addLayout(self._build_filterbar())
             layout.addWidget(self._build_main_area(), stretch=1)
             self.setCentralWidget(root)
             self.setStatusBar(QStatusBar())
@@ -258,13 +300,15 @@ if PYSIDE6_AVAILABLE:
             toolbar.setSpacing(6)
             self.buttons: list[QPushButton] = []
 
-            self._add_button(toolbar, "Nacist CSV", self.load_csv)
-            self._add_button(toolbar, "Ulozit CSV", self.save_csv)
-            self._add_button(toolbar, "Audit odkazu", self.run_audit)
-            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton")
+            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", QStyle.StandardPixmap.SP_DialogOpenButton)
+            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", QStyle.StandardPixmap.SP_DialogSaveButton)
+            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", QStyle.StandardPixmap.SP_BrowserReload)
+            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", QStyle.StandardPixmap.SP_ArrowRight)
+            toolbar.addSpacing(10)
+            self._build_filterbar(toolbar)
             toolbar.addStretch(1)
-            self._add_button(toolbar, "Preferences", self.open_preferences)
-            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton")
+            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", QStyle.StandardPixmap.SP_DialogApplyButton)
             return toolbar
 
         def _add_button(
@@ -273,8 +317,11 @@ if PYSIDE6_AVAILABLE:
             text: str,
             callback: Callable[[], None],
             object_name: str = "",
+            icon: QStyle.StandardPixmap | None = None,
         ) -> QPushButton:
             button = QPushButton(text)
+            if icon is not None:
+                button.setIcon(self.style().standardIcon(icon))
             if object_name:
                 button.setObjectName(object_name)
             button.clicked.connect(callback)
@@ -282,15 +329,12 @@ if PYSIDE6_AVAILABLE:
             self.buttons.append(button)
             return button
 
-        def _build_filterbar(self) -> QHBoxLayout:
-            bar = QHBoxLayout()
-            bar.setSpacing(6)
+        def _build_filterbar(self, bar: QHBoxLayout) -> None:
             self.title_filter = self._filter_edit("Kniha", bar)
             self.author_filter = self._filter_edit("Autor", bar)
-            self.status_checks = self._filter_checks("Status", STATUS_FILTER_VALUES, bar)
-            self.source_checks = self._filter_checks("Zdroj", SOURCE_FILTER_VALUES, bar)
-            self.type_checks = self._filter_checks("Typ", TYPE_FILTER_VALUES, bar)
-            return bar
+            self.status_checks = self._filter_checks(STATUS_FILTER_VALUES, bar)
+            self.source_checks = self._filter_checks(SOURCE_FILTER_VALUES, bar)
+            self.type_checks = self._filter_checks(TYPE_FILTER_VALUES, bar)
 
         def _filter_edit(self, label: str, layout: QHBoxLayout) -> QLineEdit:
             layout.addWidget(QLabel(label))
@@ -300,12 +344,11 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(field, stretch=1)
             return field
 
-        def _filter_checks(self, label: str, values: Sequence[str], layout: QHBoxLayout) -> dict[str, QCheckBox]:
+        def _filter_checks(self, values: Sequence[str], layout: QHBoxLayout) -> dict[str, QCheckBox]:
             frame = QFrame()
             row = QHBoxLayout(frame)
             row.setContentsMargins(8, 0, 0, 0)
             row.setSpacing(4)
-            row.addWidget(QLabel(label))
             checks: dict[str, QCheckBox] = {}
             for value in values:
                 check = QCheckBox(filter_label(value))
@@ -364,10 +407,10 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self.detail_author)
 
             status_buttons = QHBoxLayout()
-            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton")
-            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton")
-            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton")
-            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton")
+            self._add_button(status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton", QStyle.StandardPixmap.SP_DialogApplyButton)
+            self._add_button(status_buttons, "Review", lambda: self.set_selected_status("review"), "reviewButton", QStyle.StandardPixmap.SP_MessageBoxWarning)
+            self._add_button(status_buttons, "Skip", lambda: self.set_selected_status("skip"), "skipButton", QStyle.StandardPixmap.SP_DialogCancelButton)
+            self._add_button(status_buttons, "Povidka", self.mark_selected_story, "storyButton", QStyle.StandardPixmap.SP_FileIcon)
             layout.addLayout(status_buttons)
 
             layout.addWidget(QLabel("Odkaz"))
@@ -375,11 +418,17 @@ if PYSIDE6_AVAILABLE:
             self.url_edit.setClearButtonEnabled(True)
             layout.addWidget(self.url_edit)
             url_buttons = QHBoxLayout()
-            self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url)
-            self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url)
+            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton", QStyle.StandardPixmap.SP_DialogApplyButton)
+            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton", QStyle.StandardPixmap.SP_DirLinkIcon)
             layout.addLayout(url_buttons)
 
-            layout.addWidget(QLabel("Log / nahled"))
+            layout.addWidget(QLabel("Nahled komentare"))
+            self.comment_preview = QTextEdit()
+            self.comment_preview.setReadOnly(True)
+            self.comment_preview.setMaximumHeight(92)
+            layout.addWidget(self.comment_preview)
+
+            layout.addWidget(QLabel("Log"))
             self.output = QTextEdit()
             self.output.setReadOnly(True)
             self.output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -482,17 +531,26 @@ if PYSIDE6_AVAILABLE:
             index = shared.find_row_index(self.rows, selected[0])
             return self.rows[index] if index is not None else None
 
+        def selected_rows(self) -> list[cme.MatchRow]:
+            """Vrati vsechny vybrane radky v poradi podle ID."""
+            rows: list[cme.MatchRow] = []
+            for book_id in sorted(self.selected_book_ids()):
+                index = shared.find_row_index(self.rows, book_id)
+                if index is not None:
+                    rows.append(self.rows[index])
+            return rows
+
         def on_selection_changed(self) -> None:
-            row = self.selected_row()
-            if row is None:
-                self.detail_title.setText("Bez vyberu")
-                self.detail_author.setText("")
-                self.url_edit.setText("")
-                return
-            self.detail_title.setText(f"{row.book_id} - {row.title}")
-            self.detail_author.setText(row.authors)
-            if self.url_edit.text() != row.chosen_url:
-                self.url_edit.setText(row.chosen_url)
+            rows = self.selected_rows()
+            self.detail_title.setText(selection_title(rows))
+            self.detail_author.setText(rows[0].authors if len(rows) == 1 else "")
+            link_text = selection_link_text(rows)
+            if self.url_edit.text() != link_text:
+                self.url_edit.setText(link_text)
+            link_enabled = selection_link_actions_enabled(rows)
+            self.use_link_button.setEnabled(link_enabled)
+            self.open_link_button.setEnabled(link_enabled)
+            self.comment_preview.setPlainText(comment_preview_text(rows))
 
         def set_selected_status(self, status: str) -> None:
             selected = self.selected_book_ids()
@@ -677,9 +735,10 @@ if PYSIDE6_AVAILABLE:
                 QPushButton { min-height: 30px; padding: 4px 10px; border-radius: 3px; }
                 QPushButton#approveButton { background: #2e7d32; color: white; }
                 QPushButton#reviewButton { background: #ef6c00; color: white; }
-                QPushButton#skipButton { background: #757575; color: white; }
+                QPushButton#skipButton, QPushButton#neutralButton { background: #757575; color: white; }
                 QPushButton#storyButton, QPushButton#updateButton { background: #1565c0; color: white; }
                 QPushButton#applyButton, QPushButton#dangerButton { background: #c62828; color: white; }
+                QPushButton:disabled { background: #bdbdbd; color: #eeeeee; }
                 QLineEdit, QComboBox { min-height: 28px; }
                 QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
                 QTableWidget::item { color: #111111; }
@@ -712,6 +771,8 @@ if PYSIDE6_AVAILABLE:
         def set_buttons_enabled(self, enabled: bool) -> None:
             for button in self.buttons:
                 button.setEnabled(enabled)
+            if enabled:
+                self.on_selection_changed()
 
         def write_output(self, text: str) -> None:
             self.output.setPlainText(text)
@@ -719,6 +780,15 @@ if PYSIDE6_AVAILABLE:
         def set_status(self, text: str) -> None:
             self.calibre_running = is_calibre_running()
             self.statusBar().showMessage(statusbar_text(text, self.calibre_running, self.csv_loaded))
+            self.update_calibre_indicator()
+
+        def refresh_calibre_indicator(self) -> None:
+            """Timerem hlida, jestli se mezitim Calibre zapnulo nebo vypnulo."""
+            self.calibre_running = is_calibre_running()
+            self.update_calibre_indicator()
+
+        def update_calibre_indicator(self) -> None:
+            """Prekresli puntik Calibre ve statusbaru."""
             color = "#2e7d32" if self.calibre_running else "#c62828"
             label = "Calibre zapnuto" if self.calibre_running else "Calibre vypnuto"
             self.calibre_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")

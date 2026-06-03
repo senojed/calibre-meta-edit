@@ -416,6 +416,16 @@
 - Stav Calibre je vpravo ve statusbaru jako zeleny/cerveny puntik s textem.
 - Radky tabulky jsou kompaktnejsi.
 
+## Update 0.1.4 - Qt detail and toolbar polish
+
+- Stav Calibre se kontroluje prubezne timerem.
+- Filtry jsou v hlavni liste mezi `Update vybrane` a `Preferences`.
+- U vyberu vice radku detail ukazuje pocet vybranych polozek.
+- Pokud ma vic vybranych radku ruzne odkazy, pole ukaze `Ruzne adresy` a link tlacitka se vypnou.
+- Do detailu pridan rychly `Nahled komentare` nad logem.
+- Nebarevna tlacitka jsou seda a tlacitka maji standardni Qt ikony.
+- Z filtru odstraneny popisky `Status`, `Zdroj`, `Typ`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
