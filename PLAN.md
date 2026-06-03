@@ -407,6 +407,15 @@
 - Status, zdroj a typ filtry jsou checkboxy a jde vybrat vice hodnot.
 - `Preferences` ma volbu vzhledu `system`, `light`, `dark`.
 
+## Update 0.1.3 - Qt table behavior
+
+- Vyber radku v Qt tabulce je jako ve Windows: klik vybere jeden, Ctrl/Shift vybere vice.
+- Prave kliknuti na hlavicky sloupcu ukaze menu pro zapnuti/vypnuti sloupcu.
+- Sloupce `ID`, `Kniha`, `Autor` nejdou vypnout.
+- Filtr `Typ` ma volbu `bez typu`, takze jde zobrazit radky bez hodnoty.
+- Stav Calibre je vpravo ve statusbaru jako zeleny/cerveny puntik s textem.
+- Radky tabulky jsou kompaktnejsi.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

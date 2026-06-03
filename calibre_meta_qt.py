@@ -17,13 +17,13 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
-TYPE_FILTER_VALUES = ("povidka",)
+TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
 
 
@@ -61,9 +61,13 @@ def filter_rows(
 
 def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
     """Slozi kratky text do spodni status listy."""
-    calibre_text = "Calibre zapnuto" if calibre_running else "Calibre vypnuto"
     csv_text = "matches.csv nacteno" if csv_loaded else "matches.csv nenacteno"
-    return f"{status} | {calibre_text} | {csv_text} | {APP_VERSION}"
+    return f"{status} | {csv_text} | {APP_VERSION}"
+
+
+def filter_label(value: str) -> str:
+    """Zobrazi prazdnou hodnotu filtru lidsky."""
+    return value or "bez typu"
 
 
 def is_calibre_running(runner: Callable[[Sequence[str]], cme.CommandResult] = cme.run_command) -> bool:
@@ -100,8 +104,8 @@ def save_app_settings(library: str, theme: str, settings_path: Path = shared.SET
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, Qt, Signal
-    from PySide6.QtGui import QColor, QFont, QIcon
+    from PySide6.QtCore import QObject, QPoint, Qt, Signal
+    from PySide6.QtGui import QAction, QColor, QFont, QIcon
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -115,6 +119,7 @@ if PYSIDE6_AVAILABLE:
         QLabel,
         QLineEdit,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QStyleFactory,
         QPushButton,
@@ -243,6 +248,8 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self._build_main_area(), stretch=1)
             self.setCentralWidget(root)
             self.setStatusBar(QStatusBar())
+            self.calibre_indicator = QLabel()
+            self.statusBar().addPermanentWidget(self.calibre_indicator)
             self.set_status("Ready")
             self.apply_theme()
 
@@ -301,7 +308,7 @@ if PYSIDE6_AVAILABLE:
             row.addWidget(QLabel(label))
             checks: dict[str, QCheckBox] = {}
             for value in values:
-                check = QCheckBox(value)
+                check = QCheckBox(filter_label(value))
                 check.setChecked(True)
                 check.stateChanged.connect(self.refresh_table)
                 row.addWidget(check)
@@ -314,16 +321,35 @@ if PYSIDE6_AVAILABLE:
             self.table = QTableWidget(0, len(TABLE_COLUMNS))
             self.table.setHorizontalHeaderLabels(TABLE_COLUMNS)
             self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-            self.table.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+            self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
             self.table.setSortingEnabled(True)
+            self.table.setAlternatingRowColors(True)
             self.table.verticalHeader().setVisible(False)
+            self.table.verticalHeader().setDefaultSectionSize(22)
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
             self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.table.horizontalHeader().customContextMenuRequested.connect(self.show_column_menu)
             self.table.itemSelectionChanged.connect(self.on_selection_changed)
             splitter.addWidget(self.table)
             splitter.addWidget(self._build_detail_panel())
             splitter.setSizes([900, 360])
             return splitter
+
+        def show_column_menu(self, pos: QPoint) -> None:
+            """Prave kliknuti na hlavicku sloupcu ukaze volbu viditelnosti."""
+            menu = QMenu(self)
+            header = self.table.horizontalHeader()
+            for index, column in enumerate(TABLE_COLUMNS):
+                action = QAction(column, menu)
+                action.setCheckable(True)
+                action.setChecked(not self.table.isColumnHidden(index))
+                if index < 3:
+                    action.setEnabled(False)
+                else:
+                    action.toggled.connect(lambda checked, col=index: self.table.setColumnHidden(col, not checked))
+                menu.addAction(action)
+            menu.exec(header.mapToGlobal(pos))
 
         def _build_detail_panel(self) -> QWidget:
             panel = QWidget()
@@ -693,6 +719,9 @@ if PYSIDE6_AVAILABLE:
         def set_status(self, text: str) -> None:
             self.calibre_running = is_calibre_running()
             self.statusBar().showMessage(statusbar_text(text, self.calibre_running, self.csv_loaded))
+            color = "#2e7d32" if self.calibre_running else "#c62828"
+            label = "Calibre zapnuto" if self.calibre_running else "Calibre vypnuto"
+            self.calibre_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")
 
     def status_color(status: str) -> QColor:
         """Vrati jemnou barvu radku podle statusu."""
