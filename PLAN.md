@@ -464,6 +464,10 @@
 - Nastaveni se obnovi pri startu a ulozi pri zavreni appky.
 - Sloupce `ID`, `Kniha`, `Autor` zustavaji vzdy viditelne.
 
+## Update 0.2.2 - Qt startup preview
+
+- Qt appka po startu znovu automaticky spousti nacitani novych knih a audit odkazu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

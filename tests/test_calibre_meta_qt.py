@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import calibre_meta_edit as cme
 
@@ -16,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.1")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.1")
+        self.assertEqual(qt.APP_VERSION, "0.2.2")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.2")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -56,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.1")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.2")
 
     def test_normalize_theme_accepts_only_known_values(self):
         import calibre_meta_qt as qt
@@ -128,3 +129,12 @@ class QtImportTests(unittest.TestCase):
         import calibre_meta_qt as qt
 
         self.assertIsNotNone(qt.CalibreMetaQtWindow)
+
+    def test_qt_startup_preview_uses_single_shot_timer(self):
+        import calibre_meta_qt as qt
+
+        callback = object()
+        with patch.object(qt.QTimer, "singleShot") as single_shot:
+            qt.schedule_qt_startup_preview(callback)
+
+        single_shot.assert_called_once_with(250, callback)

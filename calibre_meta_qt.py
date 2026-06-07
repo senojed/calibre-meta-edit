@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -197,6 +197,11 @@ if PYSIDE6_AVAILABLE:
         QWidget,
     )
 
+    def schedule_qt_startup_preview(preview_func: Callable[[], object]) -> None:
+        """Po startu Qt event loopu automaticky spusti nacitani novych knih."""
+        QTimer.singleShot(250, preview_func)
+
+
     class WorkerBridge(QObject):
         """Signalovy most z background threadu zpet do Qt event loopu."""
 
@@ -309,6 +314,7 @@ if PYSIDE6_AVAILABLE:
             self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
             self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
+            schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
             root = QWidget()

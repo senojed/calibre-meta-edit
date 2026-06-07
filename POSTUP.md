@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.1`
+Aktualni verze: `0.2.2`
 
 Spusteni nove Qt appky:
 
