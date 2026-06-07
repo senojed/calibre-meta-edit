@@ -1499,6 +1499,57 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("<strong>89 %</strong>", comments_field)
         self.assertIn("Novy popis.", comments_field)
 
+    def test_parse_book_detail_metadata_extracts_cover_url(self):
+        detail = cme.parse_book_detail_metadata(
+            """
+            <script type="application/ld+json">
+            {"@type": "Book", "image": "/img/books/123/big-cover.jpg"}
+            </script>
+            """
+        )
+
+        self.assertEqual(detail.cover_url, "https://www.databazeknih.cz/img/books/123/big-cover.jpg")
+
+    def test_cover_candidate_rows_uses_only_books_without_cover_and_databaze_url(self):
+        rows = [
+            cme.MatchRow(1, "Bez obalky", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
+            cme.MatchRow(2, "Ma obalku", "Autor", "skip", "https://www.databazeknih.cz/knihy/b-2", "", "manual", "manual"),
+            cme.MatchRow(3, "Review", "Autor", "review", "https://www.databazeknih.cz/knihy/c-3", "", "manual", "manual"),
+            cme.MatchRow(4, "Legie", "Autor", "skip", "https://www.legie.info/povidka/1", "", "manual", "manual", "legie", "povidka"),
+        ]
+
+        candidates = cme.cover_candidate_rows(
+            rows,
+            Path("library"),
+            cover_flags_reader=lambda library, book_ids: {1: False, 2: True, 3: False, 4: False},
+        )
+
+        self.assertEqual(candidates, [cme.CoverCandidate(1, "Bez obalky", "https://www.databazeknih.cz/prehled-knihy/a-1")])
+
+    def test_apply_cover_candidate_writes_cover_field(self):
+        candidate = cme.CoverCandidate(1, "Kniha", "https://www.databazeknih.cz/prehled-knihy/a-1")
+        calls = []
+
+        result = cme.apply_cover_candidate(
+            candidate,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: """
+                <script type="application/ld+json">
+                {"@type": "Book", "image": "https://img.databazeknih.cz/img/books/1/cover.jpg"}
+                </script>
+            """,
+            binary_fetcher=lambda url: b"jpg",
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://img.databazeknih.cz/img/books/1/cover.jpg")
+        self.assertEqual(calls[0][0], r"C:\calibredb.exe")
+        self.assertIn("--field", calls[0])
+        cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
+        self.assertTrue(cover_field.endswith(".jpg"))
+
     def test_apply_match_row_uses_oldest_available_edition_for_pubdate_publisher_and_link(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
         calls = []

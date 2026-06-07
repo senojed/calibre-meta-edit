@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -339,6 +339,7 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save", show_text=False)
             self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", "chain", show_text=False)
             self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle", show_text=False)
+            self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
@@ -762,6 +763,22 @@ if PYSIDE6_AVAILABLE:
             action = shared.make_apply_action(args=args, allow_force=allow_force, matches_path=self.matches_path)
             self.run_background("Zapis do Calibre", action, reload_after=True)
 
+        def run_covers(self) -> None:
+            selected = self.selected_book_ids()
+            try:
+                candidates = cme.cover_candidate_rows(self.rows, self.library_path, selected if selected else None)
+            except Exception as exc:
+                QMessageBox.warning(self, "Obalky", f"Nepodarilo se nacist stav obalek:\n{exc}")
+                return
+            confirmed, allow_force = self.ask_cover_confirmation(candidates, bool(selected))
+            if not confirmed:
+                return
+            if not self.save_csv(show_message=False):
+                return
+            args = shared.make_cover_args(self.library_path, selected if selected else None)
+            action = shared.make_cover_action(args=args, allow_force=allow_force)
+            self.run_background("Doplneni obalek", action, reload_after=True)
+
         def run_rebuild(self) -> None:
             message = (
                 "Rebuild prepise matches.csv.\n"
@@ -801,6 +818,33 @@ if PYSIDE6_AVAILABLE:
             box = QMessageBox(self)
             box.setWindowTitle("Zapsat do Calibre")
             box.setText(shared.apply_confirmation_message())
+            force = QCheckBox("Kdyz to nepujde normalne, vynutit zavreni Calibre pres /F")
+            force.setChecked(True)
+            box.setCheckBox(force)
+            box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(QMessageBox.StandardButton.Ok)
+            result = box.exec() == QMessageBox.StandardButton.Ok
+            return result, force.isChecked()
+
+        def ask_cover_confirmation(self, candidates: Sequence[cme.CoverCandidate], selected_only: bool) -> tuple[bool, bool]:
+            if not candidates:
+                QMessageBox.information(
+                    self,
+                    "Obalky",
+                    "Neni co doplnovat.\nBeru jen knihy bez obalky, s Databaze knih odkazem a mimo status review.",
+                )
+                return False, False
+            shown = "\n".join(f"- {candidate.book_id} {candidate.title}" for candidate in candidates[:25])
+            more = "" if len(candidates) <= 25 else f"\n... a dalsich {len(candidates) - 25}"
+            scope = "vybranych knih" if selected_only else "celeho seznamu"
+            box = QMessageBox(self)
+            box.setWindowTitle("Doplnit obalky")
+            box.setText(
+                f"Appka doplni obalky pro {len(candidates)} knih z {scope}.\n"
+                "Pouze tam, kde Calibre hlasi, ze obalka chybi.\n"
+                "Pred zapisem vytvori zalohu metadata.db.\n\n"
+                f"{shown}{more}"
+            )
             force = QCheckBox("Kdyz to nepujde normalne, vynutit zavreni Calibre pres /F")
             force.setChecked(True)
             box.setCheckBox(force)

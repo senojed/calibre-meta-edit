@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.parse
@@ -85,6 +86,7 @@ class BookDetailMetadata:
     tags: list[str] | None = None
     rating_percent: str = ""
     about_text: str = ""
+    cover_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,6 +124,13 @@ class ApplyResult:
     status: str
     chosen_url: str
     error: str = ""
+
+
+@dataclass(frozen=True)
+class CoverCandidate:
+    book_id: int
+    title: str
+    source_url: str
 
 
 def normalize_text(text: str) -> str:
@@ -427,6 +436,7 @@ class BookDetailParser(HTMLParser):
         self.publication_info = ""
         self.editions_url = ""
         self.user_tags: list[str] = []
+        self.cover_url = ""
 
         self._json_parts: list[str] = []
         self._inside_json_ld = False
@@ -456,6 +466,21 @@ class BookDetailParser(HTMLParser):
 
         if not self.editions_url and "/dalsi-vydani/" in href:
             self.editions_url = databaze_absolute_url(href)
+
+        image_url = attrs_dict.get("content", "") if lowered_tag == "meta" else attrs_dict.get("src", "")
+        image_key = " ".join(
+            part
+            for part in (
+                attrs_dict.get("property", ""),
+                attrs_dict.get("name", ""),
+                attrs_dict.get("itemprop", ""),
+                attrs_dict.get("class", ""),
+                attrs_dict.get("alt", ""),
+            )
+            if part
+        ).lower()
+        if not self.cover_url and image_url and _looks_like_cover_image(image_url, image_key):
+            self.cover_url = normalize_image_url(image_url)
 
         if "ratValue" in classes:
             self._rating_depth = 1
@@ -662,6 +687,43 @@ def _genre_tags(value: object) -> list[str]:
     return []
 
 
+def normalize_image_url(url: str) -> str:
+    """Prevede relativni URL obrazku na absolutni URL."""
+    clean = html.unescape(url.strip())
+    if clean.startswith("//"):
+        clean = "https:" + clean
+    return urllib.parse.urljoin(BASE_URL + "/", clean)
+
+
+def _looks_like_cover_image(url: str, context: str = "") -> bool:
+    lowered = (url + " " + context).lower()
+    if not url.strip() or lowered.startswith("data:"):
+        return False
+    if any(skip in lowered for skip in ("blank", "placeholder", "no-cover", "nocover", "avatar", "logo")):
+        return False
+    if "og:image" in lowered or "itemprop image" in lowered:
+        return True
+    return any(word in lowered for word in ("obal", "cover", "/img/books", "/knihy/")) and re.search(
+        r"\.(jpe?g|png|webp)(?:[?#].*)?$", url, flags=re.IGNORECASE
+    ) is not None
+
+
+def _image_url_from_json(value: object) -> str:
+    if isinstance(value, str) and _looks_like_cover_image(value, "json image"):
+        return normalize_image_url(value)
+    if isinstance(value, dict):
+        for key in ("url", "contentUrl"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and _looks_like_cover_image(candidate, "json image"):
+                return normalize_image_url(candidate)
+    if isinstance(value, list):
+        for item in value:
+            candidate = _image_url_from_json(item)
+            if candidate:
+                return candidate
+    return ""
+
+
 def _rating_from_json(value: object) -> str:
     if not isinstance(value, dict):
         return ""
@@ -739,6 +801,7 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
         tags=tags,
         rating_percent=rating,
         about_text=about_text,
+        cover_url=_image_url_from_json(book_json.get("image")) or parser.cover_url,
     )
 
 
@@ -1355,6 +1418,105 @@ def get_current_tags(library: str | Path, book_id: int) -> list[str]:
     return [row["name"] for row in rows]
 
 
+def get_cover_flags(library: str | Path, book_ids: set[int] | None = None) -> dict[int, bool]:
+    """Read-only zjisti, ktere knihy uz maji v Calibre obalku."""
+    query = "select id, has_cover from books"
+    params: list[object] = []
+    if book_ids:
+        placeholders = ",".join("?" for _ in book_ids)
+        query += f" where id in ({placeholders})"
+        params.extend(sorted(book_ids))
+    connection = open_calibre_db_readonly(library)
+    try:
+        rows = connection.execute(query, params).fetchall()
+    finally:
+        connection.close()
+    return {int(row["id"]): bool(row["has_cover"]) for row in rows}
+
+
+def cover_candidate_rows(
+    rows: Sequence[MatchRow],
+    library: str | Path,
+    book_ids: set[int] | None = None,
+    cover_flags_reader: Callable[[str | Path, set[int] | None], dict[int, bool]] = get_cover_flags,
+) -> list[CoverCandidate]:
+    """Vybere radky, ktere maji Databaze knih odkaz a v Calibre nemaji obalku."""
+    selected_rows = select_match_rows(rows, book_ids=book_ids) if book_ids else list(rows)
+    supported_rows = [
+        row
+        for row in selected_rows
+        if row.status != "review" and row.chosen_url.strip() and is_valid_apply_url(row.chosen_url)
+    ]
+    if not supported_rows:
+        return []
+    flags = cover_flags_reader(library, {row.book_id for row in supported_rows})
+    return [
+        CoverCandidate(row.book_id, row.title, book_url_to_overview_url(row.chosen_url))
+        for row in supported_rows
+        if not flags.get(row.book_id, False)
+    ]
+
+
+def fetch_binary(url: str, timeout: int = 30) -> bytes:
+    """Stahne binarni soubor se stejnym User-Agentem jako HTML."""
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _cover_suffix(url: str) -> str:
+    path = urllib.parse.urlparse(url).path.lower()
+    for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+        if path.endswith(suffix):
+            return suffix
+    return ".jpg"
+
+
+def apply_cover_candidate(
+    candidate: CoverCandidate,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+    fetcher: Callable[[str], str] | None = None,
+    binary_fetcher: Callable[[str], bytes] | None = None,
+) -> ApplyResult:
+    """Najde obalku na Databazi knih a zapise ji do Calibre."""
+    run = runner or run_command
+    fetch_detail = fetcher or fetch_text
+    fetch_cover = binary_fetcher or fetch_binary
+    try:
+        detail = parse_book_detail_metadata(fetch_detail(candidate.source_url))
+    except Exception as exc:
+        return ApplyResult(candidate.book_id, candidate.title, "failed", candidate.source_url, f"detail-fetch-error: {exc}")
+    if not detail.cover_url:
+        return ApplyResult(candidate.book_id, candidate.title, "skipped", candidate.source_url, "cover-not-found")
+    try:
+        cover_bytes = fetch_cover(detail.cover_url)
+    except Exception as exc:
+        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, f"cover-fetch-error: {exc}")
+    if not cover_bytes:
+        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, "cover-empty")
+
+    with tempfile.TemporaryDirectory(prefix="calibre-meta-cover-") as tmp:
+        cover_path = Path(tmp) / ("cover" + _cover_suffix(detail.cover_url))
+        cover_path.write_bytes(cover_bytes)
+        result = run(
+            [
+                calibredb_path,
+                "set_metadata",
+                str(candidate.book_id),
+                "--with-library",
+                str(library),
+                "--field",
+                "cover:" + str(cover_path),
+            ]
+        )
+    if result.returncode != 0:
+        error = (result.stderr or result.stdout or "calibredb failed").strip()
+        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, error)
+    return ApplyResult(candidate.book_id, candidate.title, "updated", detail.cover_url, "")
+
+
 def format_legie_comment(url: str, detail: LegieStoryMetadata) -> str:
     """Vytvori Calibre komentar pro povidku z Legie."""
     safe_url = html.escape(url, quote=True)
@@ -1459,6 +1621,7 @@ def apply_match_row(
             tags=detail.tags,
             rating_percent=detail.rating_percent,
             about_text=detail.about_text,
+            cover_url=detail.cover_url,
         )
         written_url = oldest_edition.url or detail_url
 
@@ -1930,6 +2093,60 @@ def run_repair_links(args: argparse.Namespace) -> int:
     return 1 if counts["failed"] else 0
 
 
+def run_covers(args: argparse.Namespace) -> int:
+    """Doplni obalky jen kniham, ktere v Calibre zatim obalku nemaji."""
+    library = Path(args.library)
+    sidecars = find_sqlite_sidecars(library)
+    if sidecars:
+        print("Databaze ma vedlejsi SQLite soubory. Zavri Calibre a zkus znovu:")
+        for sidecar in sidecars:
+            print(f"- {sidecar}")
+        return 1
+
+    calibredb_path = find_calibredb()
+    if not calibredb_path:
+        print("calibredb nenalezen. Nainstaluj Calibre nebo pridej calibredb do PATH.")
+        return 1
+
+    smoke = run_calibredb_smoke(calibredb_path, library)
+    if smoke.returncode != 0:
+        print("calibredb neumi pristoupit ke knihovne. Zavri Calibre nebo pouzij namapovanou cestu.")
+        print((smoke.stderr or smoke.stdout).strip())
+        return 1
+
+    all_rows = read_matches_csv(MATCHES_PATH)
+    selected_ids = {int(book_id) for book_id in getattr(args, "book_ids", None) or []}
+    if getattr(args, "book_id", None) is not None:
+        selected_ids = {int(args.book_id)}
+    candidates = cover_candidate_rows(all_rows, library, selected_ids or None)
+    if getattr(args, "limit", None) is not None:
+        candidates = candidates[: int(args.limit)]
+    if not candidates:
+        print("Neni co doplnovat. updated=0")
+        return 0
+
+    backup_path = create_backup(library, Path("backups"))
+    print(f"Zaloha: {backup_path}")
+
+    results: list[ApplyResult] = []
+    for candidate in candidates:
+        result = apply_cover_candidate(candidate, library, calibredb_path)
+        results.append(result)
+        if result.status == "failed" and _is_global_calibredb_error(result.error):
+            print("Globalni chyba knihovny. Batch zastaven.")
+            break
+        if getattr(args, "sleep", 0):
+            time.sleep(float(args.sleep))
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    results_path = apply_results_path(stamp)
+    write_apply_results(results_path, results)
+    counts = {status: sum(1 for result in results if result.status == status) for status in ("updated", "skipped", "failed")}
+    print(f"Vysledek: {results_path}")
+    print(f"updated={counts['updated']} skipped={counts['skipped']} failed={counts['failed']}")
+    return 1 if counts["failed"] else 0
+
+
 def run_restore_backup(args: argparse.Namespace) -> int:
     """Obnovi Calibre metadata.db z vybrane zalohy."""
     library = Path(args.library)
@@ -1985,6 +2202,13 @@ def build_parser() -> argparse.ArgumentParser:
     repair_parser.add_argument("--sleep", type=float, default=1.0)
     repair_parser.add_argument("--overwrite", action="store_true")
     repair_parser.set_defaults(func=run_repair_links)
+
+    covers_parser = subparsers.add_parser("covers", help="Doplni obalky kniham bez obalky z Databaze knih.")
+    covers_parser.add_argument("--library", default=DEFAULT_LIBRARY)
+    covers_parser.add_argument("--limit", type=int)
+    covers_parser.add_argument("--book-id", type=int)
+    covers_parser.add_argument("--sleep", type=float, default=1.0)
+    covers_parser.set_defaults(func=run_covers)
 
     restore_parser = subparsers.add_parser("restore-backup", help="Obnovi metadata.db z vybrane zalohy.")
     restore_parser.add_argument("--library", default=DEFAULT_LIBRARY)

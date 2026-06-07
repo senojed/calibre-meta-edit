@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.2.2")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.2")
+        self.assertEqual(app.APP_VERSION, "0.2.3")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.3")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -38,6 +38,25 @@ class AppModelTests(unittest.TestCase):
         self.assertIn("zalozku Vydani", message)
         self.assertIn("nacte nove knihy a spusti Audit odkazu", message)
         self.assertNotIn("stahne detail", message)
+
+    def test_make_cover_args_preserves_selected_book_ids(self):
+        args = app.make_cover_args("B:\\", {3, 1})
+
+        self.assertEqual(args.library, "B:\\")
+        self.assertEqual(args.book_ids, [1, 3])
+
+    def test_make_cover_action_quits_calibre_before_cover_runner(self):
+        calls = []
+        args = app.make_cover_args("B:\\")
+        action = app.make_cover_action(
+            args,
+            allow_force=True,
+            quit_runner=lambda force: calls.append(("quit", force)) or 0,
+            cover_runner=lambda cover_args: calls.append(("covers", cover_args.library)) or 0,
+        )
+
+        self.assertEqual(action(), 0)
+        self.assertEqual(calls, [("quit", True), ("covers", "B:\\")])
 
     def test_open_url_in_new_window_uses_new_window_opener(self):
         calls = []

@@ -468,6 +468,12 @@
 
 - Qt appka po startu znovu automaticky spousti nacitani novych knih a audit odkazu.
 
+## Update 0.2.3 - Cover fill
+
+- Pridana akce pro doplneni obalek z Databaze knih.
+- Obalka se zapisuje jen kniham, ktere v Calibre nemaji obalku.
+- Pred zapisem appka ukaze potvrzeni a backend vytvori zalohu `metadata.db`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

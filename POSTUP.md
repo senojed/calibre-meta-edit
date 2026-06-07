@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.2`
+Aktualni verze: `0.2.3`
 
 Spusteni nove Qt appky:
 
@@ -31,6 +31,7 @@ V appce:
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
 - `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
+- `Obalky` doplni obalky z Databaze knih jen kniham, ktere v Calibre obalku nemaji
 - kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
 - kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu a pak kratky zacatek dlouheho nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek
@@ -46,6 +47,16 @@ V appce:
 - `Ulozit CSV`
 - `Zapsat do Calibre`
 - `approve` radek s prazdnym odkazem vymaze komentar knihy v Calibre
+
+`Obalky` udela:
+
+1. vezme vybrane radky; kdyz neni vybrane nic, projde cely seznam
+2. preskoci knihy, ktere uz v Calibre obalku maji
+3. preskoci radky bez odkazu na Databazi knih a radky ve statusu `review`
+4. ukaze potvrzeni se seznamem knih
+5. pokusi se normalne zavrit Calibre
+6. vytvori zalohu `metadata.db`
+7. stahne obalku z Databaze knih a zapise ji do Calibre
 
 `Zapsat do Calibre` udela:
 

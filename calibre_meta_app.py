@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -182,6 +182,14 @@ def make_legie_audit_args(library: str, book_ids: set[int] | None = None) -> Sim
     """Sestavi parametry pro Legie audit; bez vyberu projede vsechny radky."""
     args = make_script_args(library)
     args.book_ids = sorted(book_ids) if book_ids else None
+    return args
+
+
+def make_cover_args(library: str, book_ids: set[int] | None = None) -> SimpleNamespace:
+    """Argumenty pro doplneni obalek."""
+    args = SimpleNamespace(library=library, book_id=None, limit=None, sleep=1.0)
+    if book_ids:
+        args.book_ids = sorted(book_ids)
     return args
 
 
@@ -463,6 +471,24 @@ def make_apply_action(
         preview_func=preview_with_audit_action,
         failed_summary_func=lambda: format_new_failed_apply_results(base_dir, known_apply_results),
     )
+
+
+def make_cover_action(
+    args: SimpleNamespace,
+    allow_force: bool,
+    quit_runner: Callable[[bool], int] | None = None,
+    cover_runner: Callable[[SimpleNamespace], int] = cme.run_covers,
+) -> Callable[[], int]:
+    """Pripravi zapis obalek: nejdriv zavre Calibre, potom spusti cover workflow."""
+    quit_action = quit_runner or (lambda force: quit_calibre(allow_force=force))
+
+    def action() -> int:
+        quit_result = quit_action(allow_force)
+        if quit_result != 0:
+            return quit_result
+        return cover_runner(args)
+
+    return action
 
 
 def make_rebuild_action(
