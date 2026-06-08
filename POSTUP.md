@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.4`
+Aktualni verze: `0.2.5`
 
 Spusteni nove Qt appky:
 
@@ -44,6 +44,7 @@ V appce:
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
 - druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u vsech vybranych knih a oznaci ho jako `manual`
+- detail vpravo ukazuje nahled obalky: `Obalka v Calibre`, `Kandidat z Databaze knih`, `Kandidat z Legie`, nebo `Bez obalky`
 - `Ulozit CSV`
 - `Zapsat do Calibre`
 - `approve` radek s prazdnym odkazem vymaze komentar knihy v Calibre

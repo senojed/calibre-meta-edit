@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -167,7 +167,7 @@ def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
 
 if PYSIDE6_AVAILABLE:
     from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon
+    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -206,6 +206,7 @@ if PYSIDE6_AVAILABLE:
         """Signalovy most z background threadu zpet do Qt event loopu."""
 
         finished = Signal(str, int, str, bool)
+        cover_ready = Signal(int, str, str, str, bytes)
 
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
@@ -305,6 +306,9 @@ if PYSIDE6_AVAILABLE:
             self.calibre_running = False
             self.bridge = WorkerBridge()
             self.bridge.finished.connect(self.finish_background)
+            self.bridge.cover_ready.connect(self.finish_cover_preview)
+            self.cover_preview_request_id = 0
+            self.cover_preview_cache: dict[str, tuple[str, bytes]] = {}
             self.setWindowTitle(app_title())
             if ICON_PATH.exists():
                 self.setWindowIcon(QIcon(str(ICON_PATH)))
@@ -555,6 +559,20 @@ if PYSIDE6_AVAILABLE:
             url_buttons.setStretch(1, 1)
             layout.addLayout(url_buttons)
 
+            self.cover_status = QLabel("Bez obalky")
+            self.cover_status.setObjectName("coverStatus")
+            self.cover_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.cover_image = QLabel("")
+            self.cover_image.setObjectName("coverImage")
+            self.cover_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.cover_image.setFixedSize(150, 220)
+            self.cover_image.setScaledContents(False)
+            self.cover_source = QLabel("")
+            self.cover_source.setWordWrap(True)
+            layout.addWidget(self.cover_status)
+            layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
+            layout.addWidget(self.cover_source)
+
             layout.addWidget(QLabel("Log"))
             self.output = QTextEdit()
             self.output.setReadOnly(True)
@@ -675,6 +693,94 @@ if PYSIDE6_AVAILABLE:
             if self.url_edit.text() != link_text:
                 self.url_edit.setText(link_text)
             self.update_link_buttons()
+            self.update_cover_preview(rows)
+
+        def set_cover_placeholder(self, status: str, source: str = "") -> None:
+            """Nastavi textovy stav nahledu obalky."""
+            self.cover_status.setText(status)
+            self.cover_source.setText(source)
+            self.cover_image.clear()
+            self.cover_image.setText("Bez nahledu")
+
+        def set_cover_pixmap(self, status: str, image_bytes: bytes, source: str = "") -> None:
+            """Zobrazi obrazek obalky v detailu."""
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(image_bytes):
+                self.set_cover_placeholder("Obalku nejde zobrazit", source)
+                return
+            scaled = pixmap.scaled(
+                self.cover_image.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.cover_status.setText(status)
+            self.cover_source.setText(source)
+            self.cover_image.setText("")
+            self.cover_image.setPixmap(scaled)
+
+        def update_cover_preview(self, rows: Sequence[cme.MatchRow]) -> None:
+            """Ukaze lokalni obalku, nebo na pozadi stahne kandidatni nahled."""
+            self.cover_preview_request_id += 1
+            request_id = self.cover_preview_request_id
+            if not rows:
+                self.set_cover_placeholder("Bez vyberu")
+                return
+            if len(rows) > 1:
+                self.set_cover_placeholder(f"Vybrano {len(rows)} knih")
+                return
+            row = rows[0]
+            try:
+                local_cover = cme.get_local_cover_path(self.library_path, row.book_id)
+            except Exception as exc:
+                self.set_cover_placeholder("Obalku nejde nacist", str(exc))
+                return
+            if local_cover is not None:
+                try:
+                    self.set_cover_pixmap("Obalka v Calibre", local_cover.read_bytes(), str(local_cover))
+                except OSError as exc:
+                    self.set_cover_placeholder("Obalku nejde nacist", str(exc))
+                return
+            candidates = cme.cover_candidate_rows(
+                [row],
+                self.library_path,
+                {row.book_id},
+                cover_flags_reader=lambda _library, _book_ids: {row.book_id: False},
+            )
+            if not candidates:
+                self.set_cover_placeholder("Bez obalky")
+                return
+            candidate = candidates[0]
+            cached = self.cover_preview_cache.get(candidate.source_url)
+            label = "Kandidat z Legie" if cme.is_valid_legie_story_url(candidate.source_url) else "Kandidat z Databaze knih"
+            if cached:
+                source, image_bytes = cached
+                self.set_cover_pixmap(label, image_bytes, source)
+                return
+            self.set_cover_placeholder(label + " - nacitam", candidate.source_url)
+
+            def worker() -> None:
+                try:
+                    detail_html = cme.fetch_text(candidate.source_url)
+                    if cme.is_valid_legie_story_url(candidate.source_url):
+                        cover_url = cme.parse_legie_story_detail(detail_html, candidate.source_url).cover_url
+                    else:
+                        cover_url = cme.parse_book_detail_metadata(detail_html).cover_url
+                    image_bytes = cme.fetch_binary(cover_url) if cover_url else b""
+                    self.bridge.cover_ready.emit(request_id, label, candidate.source_url, cover_url or candidate.source_url, image_bytes)
+                except Exception as exc:
+                    self.bridge.cover_ready.emit(request_id, "Bez obalky", candidate.source_url, str(exc), b"")
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def finish_cover_preview(self, request_id: int, label: str, cache_key: str, source: str, image_bytes: bytes) -> None:
+            """Prevezme nahled obalky z background threadu."""
+            if request_id != self.cover_preview_request_id:
+                return
+            if not image_bytes:
+                self.set_cover_placeholder("Bez obalky", source)
+                return
+            self.cover_preview_cache[cache_key] = (source, image_bytes)
+            self.set_cover_pixmap(label, image_bytes, source)
 
         def update_link_buttons(self) -> None:
             """Zapne link tlacitka podle vyberu a textu v poli Odkaz."""
@@ -935,6 +1041,8 @@ if PYSIDE6_AVAILABLE:
                     padding: 0;
                     margin: 0 3px 0 0;
                 }
+                QLabel#coverStatus { font-weight: 700; padding: 4px; border-radius: 3px; background: #eeeeee; color: #111111; }
+                QLabel#coverImage { border: 1px solid #b8b8b8; background: #fafafa; color: #777777; }
                 QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
                 QTableWidget::item { color: #111111; }
                 QTableWidget::item:selected, QTableWidget::item:selected:!active {

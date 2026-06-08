@@ -478,6 +478,11 @@
 
 - Akce `Obalky` umi doplnit obalku i z Legie u povidek.
 
+## Update 0.2.5 - Cover preview
+
+- Detail vybrane knihy v Qt appce ukazuje nahled obalky.
+- Stitek rozlisuje lokalni obalku v Calibre a kandidatni obalku z Databaze knih nebo Legie.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

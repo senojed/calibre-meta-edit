@@ -1544,6 +1544,21 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             ],
         )
 
+    def test_get_local_cover_path_returns_existing_cover_when_calibre_has_cover(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            book_dir = library / "Autor" / "Kniha (1)"
+            book_dir.mkdir(parents=True)
+            cover = book_dir / "cover.jpg"
+            cover.write_bytes(b"jpg")
+            connection = sqlite3.connect(library / "metadata.db")
+            connection.execute("create table books (id integer primary key, path text, has_cover bool)")
+            connection.execute("insert into books(id, path, has_cover) values(1, ?, 1)", ("Autor/Kniha (1)",))
+            connection.commit()
+            connection.close()
+
+            self.assertEqual(cme.get_local_cover_path(library, 1), cover)
+
     def test_apply_cover_candidate_writes_cover_field(self):
         candidate = cme.CoverCandidate(1, "Kniha", "https://www.databazeknih.cz/prehled-knihy/a-1")
         calls = []

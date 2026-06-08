@@ -1450,6 +1450,19 @@ def get_cover_flags(library: str | Path, book_ids: set[int] | None = None) -> di
     return {int(row["id"]): bool(row["has_cover"]) for row in rows}
 
 
+def get_local_cover_path(library: str | Path, book_id: int) -> Path | None:
+    """Vrati lokalni cover.jpg, pokud Calibre hlasi obalku a soubor existuje."""
+    connection = open_calibre_db_readonly(library)
+    try:
+        row = connection.execute("select path, has_cover from books where id = ?", (book_id,)).fetchone()
+    finally:
+        connection.close()
+    if row is None or not row["has_cover"]:
+        return None
+    cover_path = Path(library) / row["path"] / "cover.jpg"
+    return cover_path if cover_path.exists() else None
+
+
 def cover_candidate_rows(
     rows: Sequence[MatchRow],
     library: str | Path,
