@@ -474,6 +474,10 @@
 - Obalka se zapisuje jen kniham, ktere v Calibre nemaji obalku.
 - Pred zapisem appka ukaze potvrzeni a backend vytvori zalohu `metadata.db`.
 
+## Update 0.2.4 - Legie covers
+
+- Akce `Obalky` umi doplnit obalku i z Legie u povidek.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

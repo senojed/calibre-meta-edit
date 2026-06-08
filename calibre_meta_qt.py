@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -831,7 +831,7 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.information(
                     self,
                     "Obalky",
-                    "Neni co doplnovat.\nBeru jen knihy bez obalky, s Databaze knih odkazem a mimo status review.",
+                    "Neni co doplnovat.\nBeru jen knihy bez obalky, s odkazem na Databazi knih nebo Legii a mimo status review.",
                 )
                 return False, False
             shown = "\n".join(f"- {candidate.book_id} {candidate.title}" for candidate in candidates[:25])

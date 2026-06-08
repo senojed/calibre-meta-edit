@@ -173,6 +173,18 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.czech_publication, "Ikarie 1995/05")
         self.assertIn("Petr Kotrle", detail.about_text)
 
+    def test_parse_legie_story_detail_extracts_cover_url(self):
+        detail = cme.parse_legie_story_detail(
+            """
+            <div id="pro_obal">
+              <img src="images/kniha-small/1/138-2213.jpg" class="obal_kniha" title="prebal knihy" />
+            </div>
+            """,
+            "https://www.legie.info/povidka/40",
+        )
+
+        self.assertEqual(detail.cover_url, "https://www.legie.info/images/kniha-small/1/138-2213.jpg")
+
     def test_parse_legie_story_detail_handles_missing_publication_and_void_tags(self):
         html = """
         <h2 id="nazev_povidky">Povidka</h2>
@@ -1510,7 +1522,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertEqual(detail.cover_url, "https://www.databazeknih.cz/img/books/123/big-cover.jpg")
 
-    def test_cover_candidate_rows_uses_only_books_without_cover_and_databaze_url(self):
+    def test_cover_candidate_rows_uses_only_books_without_cover_and_supported_url(self):
         rows = [
             cme.MatchRow(1, "Bez obalky", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
             cme.MatchRow(2, "Ma obalku", "Autor", "skip", "https://www.databazeknih.cz/knihy/b-2", "", "manual", "manual"),
@@ -1524,7 +1536,13 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             cover_flags_reader=lambda library, book_ids: {1: False, 2: True, 3: False, 4: False},
         )
 
-        self.assertEqual(candidates, [cme.CoverCandidate(1, "Bez obalky", "https://www.databazeknih.cz/prehled-knihy/a-1")])
+        self.assertEqual(
+            candidates,
+            [
+                cme.CoverCandidate(1, "Bez obalky", "https://www.databazeknih.cz/prehled-knihy/a-1"),
+                cme.CoverCandidate(4, "Legie", "https://www.legie.info/povidka/1"),
+            ],
+        )
 
     def test_apply_cover_candidate_writes_cover_field(self):
         candidate = cme.CoverCandidate(1, "Kniha", "https://www.databazeknih.cz/prehled-knihy/a-1")
@@ -1549,6 +1567,28 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("--field", calls[0])
         cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
         self.assertTrue(cover_field.endswith(".jpg"))
+
+    def test_apply_cover_candidate_writes_legie_cover_field(self):
+        candidate = cme.CoverCandidate(40, "Moře a malé rybky", "https://www.legie.info/povidka/40")
+        calls = []
+
+        result = cme.apply_cover_candidate(
+            candidate,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: """
+                <div id="pro_obal">
+                  <img src="images/kniha-small/1/138-2213.jpg" class="obal_kniha" />
+                </div>
+            """,
+            binary_fetcher=lambda url: b"jpg",
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://www.legie.info/images/kniha-small/1/138-2213.jpg")
+        self.assertIn("--field", calls[0])
+        self.assertTrue(next(arg for arg in calls[0] if arg.startswith("cover:")).endswith(".jpg"))
 
     def test_apply_match_row_uses_oldest_available_edition_for_pubdate_publisher_and_link(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")

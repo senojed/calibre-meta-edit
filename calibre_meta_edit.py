@@ -101,6 +101,7 @@ class LegieStoryMetadata:
     original_publication: str = ""
     czech_publication: str = ""
     about_text: str = ""
+    cover_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -695,6 +696,14 @@ def normalize_image_url(url: str) -> str:
     return urllib.parse.urljoin(BASE_URL + "/", clean)
 
 
+def normalize_legie_image_url(url: str) -> str:
+    """Prevede relativni URL obrazku z Legie na absolutni URL."""
+    clean = html.unescape(url.strip())
+    if clean.startswith("//"):
+        clean = "https:" + clean
+    return urllib.parse.urljoin(LEGIE_BASE_URL + "/", clean)
+
+
 def _looks_like_cover_image(url: str, context: str = "") -> bool:
     lowered = (url + " " + context).lower()
     if not url.strip() or lowered.startswith("data:"):
@@ -819,6 +828,7 @@ class LegieStoryParser(HTMLParser):
         self.original_publication = ""
         self.czech_publication = ""
         self.about_text = ""
+        self.cover_url = ""
 
         self._capture = ""
         self._parts: list[str] = []
@@ -834,6 +844,11 @@ class LegieStoryParser(HTMLParser):
         lowered_tag = tag.lower()
         element_id = attrs_dict.get("id", "")
         itemprop = attrs_dict.get("itemprop", "")
+        classes = set(attrs_dict.get("class", "").split())
+        src = attrs_dict.get("src", "")
+
+        if not self.cover_url and lowered_tag == "img" and "obal_kniha" in classes and src:
+            self.cover_url = normalize_legie_image_url(src)
 
         if lowered_tag == "h3":
             self._author_next = True
@@ -917,6 +932,7 @@ def parse_legie_story_detail(html_text: str, url: str) -> LegieStoryMetadata:
         original_publication=parser.original_publication,
         czech_publication=parser.czech_publication,
         about_text=parser.about_text,
+        cover_url=parser.cover_url,
     )
 
 
@@ -1440,18 +1456,24 @@ def cover_candidate_rows(
     book_ids: set[int] | None = None,
     cover_flags_reader: Callable[[str | Path, set[int] | None], dict[int, bool]] = get_cover_flags,
 ) -> list[CoverCandidate]:
-    """Vybere radky, ktere maji Databaze knih odkaz a v Calibre nemaji obalku."""
+    """Vybere radky, ktere maji podporovany odkaz a v Calibre nemaji obalku."""
     selected_rows = select_match_rows(rows, book_ids=book_ids) if book_ids else list(rows)
     supported_rows = [
         row
         for row in selected_rows
-        if row.status != "review" and row.chosen_url.strip() and is_valid_apply_url(row.chosen_url)
+        if row.status != "review"
+        and row.chosen_url.strip()
+        and (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url))
     ]
     if not supported_rows:
         return []
     flags = cover_flags_reader(library, {row.book_id for row in supported_rows})
     return [
-        CoverCandidate(row.book_id, row.title, book_url_to_overview_url(row.chosen_url))
+        CoverCandidate(
+            row.book_id,
+            row.title,
+            legie_absolute_url(row.chosen_url) if is_valid_legie_story_url(row.chosen_url) else book_url_to_overview_url(row.chosen_url),
+        )
         for row in supported_rows
         if not flags.get(row.book_id, False)
     ]
@@ -1485,20 +1507,24 @@ def apply_cover_candidate(
     fetch_detail = fetcher or fetch_text
     fetch_cover = binary_fetcher or fetch_binary
     try:
-        detail = parse_book_detail_metadata(fetch_detail(candidate.source_url))
+        detail_html = fetch_detail(candidate.source_url)
+        if is_valid_legie_story_url(candidate.source_url):
+            cover_url = parse_legie_story_detail(detail_html, candidate.source_url).cover_url
+        else:
+            cover_url = parse_book_detail_metadata(detail_html).cover_url
     except Exception as exc:
         return ApplyResult(candidate.book_id, candidate.title, "failed", candidate.source_url, f"detail-fetch-error: {exc}")
-    if not detail.cover_url:
+    if not cover_url:
         return ApplyResult(candidate.book_id, candidate.title, "skipped", candidate.source_url, "cover-not-found")
     try:
-        cover_bytes = fetch_cover(detail.cover_url)
+        cover_bytes = fetch_cover(cover_url)
     except Exception as exc:
-        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, f"cover-fetch-error: {exc}")
+        return ApplyResult(candidate.book_id, candidate.title, "failed", cover_url, f"cover-fetch-error: {exc}")
     if not cover_bytes:
-        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, "cover-empty")
+        return ApplyResult(candidate.book_id, candidate.title, "failed", cover_url, "cover-empty")
 
     with tempfile.TemporaryDirectory(prefix="calibre-meta-cover-") as tmp:
-        cover_path = Path(tmp) / ("cover" + _cover_suffix(detail.cover_url))
+        cover_path = Path(tmp) / ("cover" + _cover_suffix(cover_url))
         cover_path.write_bytes(cover_bytes)
         result = run(
             [
@@ -1513,8 +1539,8 @@ def apply_cover_candidate(
         )
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
-        return ApplyResult(candidate.book_id, candidate.title, "failed", detail.cover_url, error)
-    return ApplyResult(candidate.book_id, candidate.title, "updated", detail.cover_url, "")
+        return ApplyResult(candidate.book_id, candidate.title, "failed", cover_url, error)
+    return ApplyResult(candidate.book_id, candidate.title, "updated", cover_url, "")
 
 
 def format_legie_comment(url: str, detail: LegieStoryMetadata) -> str:
@@ -2203,7 +2229,7 @@ def build_parser() -> argparse.ArgumentParser:
     repair_parser.add_argument("--overwrite", action="store_true")
     repair_parser.set_defaults(func=run_repair_links)
 
-    covers_parser = subparsers.add_parser("covers", help="Doplni obalky kniham bez obalky z Databaze knih.")
+    covers_parser = subparsers.add_parser("covers", help="Doplni obalky kniham bez obalky z Databaze knih nebo Legie.")
     covers_parser.add_argument("--library", default=DEFAULT_LIBRARY)
     covers_parser.add_argument("--limit", type=int)
     covers_parser.add_argument("--book-id", type=int)
