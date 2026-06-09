@@ -1510,6 +1510,67 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("<strong>80 %", comments_field)
         self.assertIn("Ikarie 1995/05", comments_field)
 
+    def test_apply_match_row_writes_selected_cover_with_databaze_metadata(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/new-2",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            selected_cover_url="https://img/2.jpg",
+        )
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: "<div></div>",
+            cover_fetcher=lambda url: b"cover-bytes",
+        )
+
+        self.assertEqual(result.status, "updated")
+        cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
+        self.assertTrue(cover_field.endswith(".jpg"))
+
+    def test_apply_match_row_writes_selected_cover_with_legie_metadata(self):
+        row = cme.MatchRow(
+            429,
+            "A opice si myslely",
+            "Orson Scott Card",
+            "approve",
+            "https://www.legie.info/povidka/7347-a-opice-si-myslely-ze-to-vsechno-je-z-legrace",
+            "",
+            "exact-title-author",
+            "legie-story-candidate",
+            "legie",
+            "povidka",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            selected_cover_url="https://img/2.jpg",
+        )
+        fixture = Path(__file__).parent / "fixtures" / "legie_story_7347.html"
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: fixture.read_text(encoding="utf-8"),
+            identifiers_reader=lambda library, book_id: {},
+            tags_reader=lambda library, book_id: [],
+            cover_fetcher=lambda url: b"cover-bytes",
+        )
+
+        self.assertEqual(result.status, "updated")
+        cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
+        self.assertTrue(cover_field.endswith(".jpg"))
+
     def test_apply_match_row_overwrites_comment_and_metadata_from_databaze_detail(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/new-2", "", "exact-title-author", "exact-title-author")
         calls = []

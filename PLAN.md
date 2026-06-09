@@ -483,6 +483,14 @@
 - Detail vybrane knihy v Qt appce ukazuje nahled obalky.
 - Stitek rozlisuje lokalni obalku v Calibre a kandidatni obalku z Databaze knih nebo Legie.
 
+## Update 0.2.6 - Cover candidates review
+
+- Start appky a `Update vybrane` po auditu odkazu pripravi kandidatni obalky bez zapisu do Calibre.
+- Knihy, ktere uz maji v Calibre obalku, se pri hledani kandidatnich obalek preskoci.
+- Vice kandidatnich obalek se zobrazi jako male nahledy; jednu je potreba vybrat pred `Approve`.
+- Vybrana obalka se pri `Zapsat do Calibre` zapise spolu s metadaty.
+- Pro import knih v rade `0.3.x` zvazit prechod pracovnich dat z CSV do samostatne SQLite databaze aplikace, ne do Calibre `metadata.db`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

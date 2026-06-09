@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.2.5")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.5")
+        self.assertEqual(app.APP_VERSION, "0.2.6")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.6")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -366,6 +366,89 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual([row.status for row in updated], ["review", "review", "review"])
         self.assertEqual([row.chosen_url for row in updated], ["", "url-b", ""])
 
+    def test_cover_urls_from_row_splits_saved_cover_urls(self):
+        row = cme.MatchRow(
+            1,
+            "A",
+            "Autor",
+            "review",
+            "",
+            "",
+            "databazeknih",
+            "",
+            cover_urls=" https://img/1.jpg | https://img/2.jpg | ",
+        )
+
+        self.assertEqual(app.cover_urls_from_row(row), ["https://img/1.jpg", "https://img/2.jpg"])
+
+    def test_update_rows_selected_cover_sets_existing_cover_url(self):
+        rows = [
+            cme.MatchRow(
+                1,
+                "A",
+                "Autor",
+                "review",
+                "",
+                "",
+                "databazeknih",
+                "",
+                cover_urls="https://img/1.jpg|https://img/2.jpg",
+            )
+        ]
+
+        updated = app.update_rows_selected_cover(rows, 1, "https://img/2.jpg")
+
+        self.assertEqual(updated[0].selected_cover_url, "https://img/2.jpg")
+
+    def test_update_rows_selected_cover_rejects_unknown_cover_url(self):
+        rows = [
+            cme.MatchRow(
+                1,
+                "A",
+                "Autor",
+                "review",
+                "",
+                "",
+                "databazeknih",
+                "",
+                cover_urls="https://img/1.jpg",
+            )
+        ]
+
+        with self.assertRaises(ValueError):
+            app.update_rows_selected_cover(rows, 1, "https://img/2.jpg")
+
+    def test_rows_missing_cover_choice_finds_multiple_unselected_cover_candidates(self):
+        rows = [
+            cme.MatchRow(
+                1,
+                "A",
+                "Autor",
+                "review",
+                "",
+                "",
+                "databazeknih",
+                "",
+                cover_urls="https://img/1.jpg|https://img/2.jpg",
+            ),
+            cme.MatchRow(
+                2,
+                "B",
+                "Autor",
+                "review",
+                "",
+                "",
+                "databazeknih",
+                "",
+                cover_urls="https://img/3.jpg|https://img/4.jpg",
+                selected_cover_url="https://img/4.jpg",
+            ),
+        ]
+
+        missing = app.rows_missing_cover_choice(rows, {1, 2})
+
+        self.assertEqual([row.book_id for row in missing], [1])
+
     def test_filter_rows_matches_title_and_author_without_diacritics(self):
         rows = [
             cme.MatchRow(1, "A opice si myslely", "Orson Scott Card", "review", "", "", "none", "x"),
@@ -589,6 +672,30 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(calls, ["preview"])
 
+    def test_run_preview_audit_then_cover_audit_runs_in_order(self):
+        calls = []
+
+        result = app.run_preview_audit_then_cover_audit(
+            preview_func=lambda: calls.append("preview") or 0,
+            link_audit_func=lambda: calls.append("links") or 0,
+            cover_audit_func=lambda: calls.append("covers") or 0,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, ["preview", "links", "covers"])
+
+    def test_run_preview_audit_then_cover_audit_stops_after_link_failure(self):
+        calls = []
+
+        result = app.run_preview_audit_then_cover_audit(
+            preview_func=lambda: calls.append("preview") or 0,
+            link_audit_func=lambda: calls.append("links") or 2,
+            cover_audit_func=lambda: calls.append("covers") or 0,
+        )
+
+        self.assertEqual(result, 2)
+        self.assertEqual(calls, ["preview", "links"])
+
     def test_make_preview_with_legie_audit_action_audits_only_new_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             matches_path = Path(tmp) / "matches.csv"
@@ -662,6 +769,78 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(calls, [("preview", (1,)), ("audit", (1,))])
+
+    def test_make_cover_audit_action_updates_selected_cover_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            row_one = cme.MatchRow(1, "Jedna", "Autor", "skip", "", "", "databazeknih", "")
+            row_two = cme.MatchRow(2, "Dva", "Autor", "skip", "", "", "databazeknih", "")
+            cme.write_matches_csv(matches_path, [row_one, row_two], overwrite=False)
+            args = app.make_script_args("D:\\Knihy")
+            args.book_ids = [2]
+
+            def audit_func(rows, library):
+                self.assertEqual(library, "D:\\Knihy")
+                self.assertEqual([row.book_id for row in rows], [2])
+                return [
+                    cme.MatchRow(
+                        2,
+                        "Dva",
+                        "Autor",
+                        "review",
+                        "",
+                        "",
+                        "databazeknih",
+                        "",
+                        cover_urls="https://img.example/2.jpg",
+                        selected_cover_url="",
+                        cover_reason="multiple-cover-candidates",
+                    )
+                ]
+
+            action = app.make_cover_audit_action(args, matches_path=matches_path, audit_func=audit_func)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = action()
+
+            rows = cme.read_matches_csv(matches_path)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(rows[0].cover_urls, "")
+        self.assertEqual(rows[1].cover_urls, "https://img.example/2.jpg")
+        self.assertEqual(rows[1].cover_reason, "multiple-cover-candidates")
+
+    def test_make_preview_with_audits_action_runs_cover_audit_after_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            row = cme.MatchRow(1, "Nova", "Autor", "skip", "", "", "none", "no-candidates")
+            args = app.make_script_args("D:\\Knihy")
+            calls = []
+
+            def preview_runner(received_args):
+                calls.append(("preview", received_args))
+                cme.write_matches_csv(matches_path, [row], overwrite=True)
+                return 0
+
+            def link_audit_runner(received_args):
+                calls.append(("links", tuple(received_args.book_ids)))
+                return 0
+
+            def cover_factory(received_args, received_matches_path):
+                return lambda: calls.append(("covers", received_args, received_matches_path)) or 0
+
+            action = app.make_preview_with_audits_action(
+                args=args,
+                matches_path=matches_path,
+                preview_runner=preview_runner,
+                link_audit_runner=link_audit_runner,
+                cover_audit_factory=cover_factory,
+            )
+
+            result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [("preview", args), ("links", (1,)), ("covers", args, matches_path)])
 
     def test_make_apply_action_audits_legie_only_for_rows_added_by_preview(self):
         with tempfile.TemporaryDirectory() as tmp:

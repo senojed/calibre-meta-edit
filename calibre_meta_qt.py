@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.6"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -309,6 +309,7 @@ if PYSIDE6_AVAILABLE:
             self.bridge.cover_ready.connect(self.finish_cover_preview)
             self.cover_preview_request_id = 0
             self.cover_preview_cache: dict[str, tuple[str, bytes]] = {}
+            self.cover_option_buttons: dict[str, QToolButton] = {}
             self.setWindowTitle(app_title())
             if ICON_PATH.exists():
                 self.setWindowIcon(QIcon(str(ICON_PATH)))
@@ -569,9 +570,15 @@ if PYSIDE6_AVAILABLE:
             self.cover_image.setScaledContents(False)
             self.cover_source = QLabel("")
             self.cover_source.setWordWrap(True)
+            self.cover_options_widget = QWidget()
+            self.cover_options_layout = QGridLayout(self.cover_options_widget)
+            self.cover_options_layout.setContentsMargins(0, 0, 0, 0)
+            self.cover_options_layout.setHorizontalSpacing(6)
+            self.cover_options_layout.setVerticalSpacing(6)
             layout.addWidget(self.cover_status)
             layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
             layout.addWidget(self.cover_source)
+            layout.addWidget(self.cover_options_widget)
 
             layout.addWidget(QLabel("Log"))
             self.output = QTextEdit()
@@ -701,6 +708,7 @@ if PYSIDE6_AVAILABLE:
             self.cover_source.setText(source)
             self.cover_image.clear()
             self.cover_image.setText("Bez nahledu")
+            self.clear_cover_options()
 
         def set_cover_pixmap(self, status: str, image_bytes: bytes, source: str = "") -> None:
             """Zobrazi obrazek obalky v detailu."""
@@ -718,10 +726,78 @@ if PYSIDE6_AVAILABLE:
             self.cover_image.setText("")
             self.cover_image.setPixmap(scaled)
 
-        def update_cover_preview(self, rows: Sequence[cme.MatchRow]) -> None:
-            """Ukaze lokalni obalku, nebo na pozadi stahne kandidatni nahled."""
-            self.cover_preview_request_id += 1
+        def clear_cover_options(self) -> None:
+            """Smaze mala tlacitka kandidatnich obalek."""
+            self.cover_option_buttons = {}
+            while self.cover_options_layout.count():
+                item = self.cover_options_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        def cover_button_style(self, selected: bool) -> str:
+            """Vrati jednoduchy ramecek pro vybranou obalku."""
+            if selected:
+                return "QToolButton { border: 2px solid #1565c0; background: #e3f2fd; }"
+            return "QToolButton { border: 1px solid #bdbdbd; background: #eeeeee; }"
+
+        def set_cover_button_image(self, button: QToolButton, image_bytes: bytes) -> bool:
+            """Nastavi nahled do maleho tlacitka obalky."""
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(image_bytes):
+                return False
+            button.setIcon(QIcon(pixmap))
+            button.setIconSize(QSize(58, 82))
+            button.setText("")
+            return True
+
+        def select_cover_candidate(self, book_id: int, cover_url: str) -> None:
+            """Ulozi vybranou kandidatni obalku do CSV radku."""
+            try:
+                self.rows = shared.update_rows_selected_cover(self.rows, book_id, cover_url)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Obalka", str(exc))
+                return
+            self.save_csv(show_message=False)
+            self.refresh_table()
+            self.update_cover_preview(self.selected_rows())
+
+        def show_cover_options(self, row: cme.MatchRow, cover_urls: Sequence[str]) -> None:
+            """Zobrazi grid kandidatnich obalek z matches.csv."""
+            self.clear_cover_options()
+            selected_url = row.selected_cover_url.strip()
+            for index, cover_url in enumerate(cover_urls):
+                button = QToolButton()
+                button.setToolTip(cover_url)
+                button.setText(str(index + 1))
+                button.setFixedSize(70, 96)
+                button.setStyleSheet(self.cover_button_style(cover_url == selected_url))
+                button.clicked.connect(lambda _checked=False, url=cover_url, book_id=row.book_id: self.select_cover_candidate(book_id, url))
+                self.cover_option_buttons[cover_url] = button
+                self.cover_options_layout.addWidget(button, index // 3, index % 3)
+                cached = self.cover_preview_cache.get(cover_url)
+                if cached:
+                    self.set_cover_button_image(button, cached[1])
+                else:
+                    self.load_cover_url(cover_url)
+
+        def load_cover_url(self, cover_url: str) -> None:
+            """Stahne obrazek kandidata na pozadi."""
             request_id = self.cover_preview_request_id
+
+            def worker() -> None:
+                try:
+                    image_bytes = cme.fetch_binary(cover_url)
+                    self.bridge.cover_ready.emit(request_id, "Kandidat obalky", cover_url, cover_url, image_bytes)
+                except Exception as exc:
+                    self.bridge.cover_ready.emit(request_id, "Obalku nejde nacist", cover_url, str(exc), b"")
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def update_cover_preview(self, rows: Sequence[cme.MatchRow]) -> None:
+            """Ukaze lokalni obalku, nebo kandidatni obalky z matches.csv."""
+            self.cover_preview_request_id += 1
+            self.clear_cover_options()
             if not rows:
                 self.set_cover_placeholder("Bez vyberu")
                 return
@@ -740,47 +816,46 @@ if PYSIDE6_AVAILABLE:
                 except OSError as exc:
                     self.set_cover_placeholder("Obalku nejde nacist", str(exc))
                 return
-            candidates = cme.cover_candidate_rows(
-                [row],
-                self.library_path,
-                {row.book_id},
-                cover_flags_reader=lambda _library, _book_ids: {row.book_id: False},
-            )
-            if not candidates:
+            cover_urls = shared.cover_urls_from_row(row)
+            if not cover_urls:
                 self.set_cover_placeholder("Bez obalky")
                 return
-            candidate = candidates[0]
-            cached = self.cover_preview_cache.get(candidate.source_url)
-            label = "Kandidat z Legie" if cme.is_valid_legie_story_url(candidate.source_url) else "Kandidat z Databaze knih"
+            selected_url = row.selected_cover_url.strip()
+            preview_url = selected_url or cover_urls[0]
+            status = "Vybrana kandidatni obalka" if selected_url else "Kandidatni obalky - vyber jednu"
+            cached = self.cover_preview_cache.get(preview_url)
             if cached:
-                source, image_bytes = cached
-                self.set_cover_pixmap(label, image_bytes, source)
-                return
-            self.set_cover_placeholder(label + " - nacitam", candidate.source_url)
-
-            def worker() -> None:
-                try:
-                    detail_html = cme.fetch_text(candidate.source_url)
-                    if cme.is_valid_legie_story_url(candidate.source_url):
-                        cover_url = cme.parse_legie_story_detail(detail_html, candidate.source_url).cover_url
-                    else:
-                        cover_url = cme.parse_book_detail_metadata(detail_html).cover_url
-                    image_bytes = cme.fetch_binary(cover_url) if cover_url else b""
-                    self.bridge.cover_ready.emit(request_id, label, candidate.source_url, cover_url or candidate.source_url, image_bytes)
-                except Exception as exc:
-                    self.bridge.cover_ready.emit(request_id, "Bez obalky", candidate.source_url, str(exc), b"")
-
-            threading.Thread(target=worker, daemon=True).start()
+                self.set_cover_pixmap(status, cached[1], preview_url)
+            else:
+                self.cover_status.setText(status + " - nacitam")
+                self.cover_source.setText(preview_url)
+                self.cover_image.clear()
+                self.cover_image.setText("Nacitam")
+                self.load_cover_url(preview_url)
+            self.show_cover_options(row, cover_urls)
 
         def finish_cover_preview(self, request_id: int, label: str, cache_key: str, source: str, image_bytes: bytes) -> None:
             """Prevezme nahled obalky z background threadu."""
             if request_id != self.cover_preview_request_id:
                 return
             if not image_bytes:
+                button = self.cover_option_buttons.get(cache_key)
+                if button is not None:
+                    button.setText("!")
+                    button.setToolTip(source)
+                    return
                 self.set_cover_placeholder("Bez obalky", source)
                 return
             self.cover_preview_cache[cache_key] = (source, image_bytes)
-            self.set_cover_pixmap(label, image_bytes, source)
+            button = self.cover_option_buttons.get(cache_key)
+            if button is not None:
+                self.set_cover_button_image(button, image_bytes)
+            rows = self.selected_rows()
+            if len(rows) == 1:
+                cover_urls = shared.cover_urls_from_row(rows[0])
+                selected_url = rows[0].selected_cover_url.strip() or (cover_urls[0] if cover_urls else "")
+                if selected_url == cache_key:
+                    self.set_cover_pixmap(label, image_bytes, source)
 
         def update_link_buttons(self) -> None:
             """Zapne link tlacitka podle vyberu a textu v poli Odkaz."""
@@ -793,6 +868,11 @@ if PYSIDE6_AVAILABLE:
             selected = self.selected_book_ids()
             if not selected:
                 QMessageBox.information(self, "Vyber radek", "Nejdriv vyber knihu v tabulce.")
+                return
+            missing_cover = shared.rows_missing_cover_choice(self.rows, selected) if status == "approve" else []
+            if missing_cover:
+                titles = "\n".join(f"- {row.book_id} {row.title}" for row in missing_cover[:8])
+                QMessageBox.information(self, "Vyber obalku", "Nejdriv vyber jednu obalku:\n" + titles)
                 return
             self.rows = shared.update_rows_status(self.rows, selected, status)
             self.refresh_table()
@@ -834,8 +914,8 @@ if PYSIDE6_AVAILABLE:
             if not self.save_csv(show_message=False):
                 return
             args = shared.make_script_args(self.library_path)
-            action = shared.make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
-            self.run_background("Nacitani novych knih + Audit odkazu", action, reload_after=True)
+            action = shared.make_preview_with_audits_action(args, matches_path=self.matches_path)
+            self.run_background("Nacitani novych knih + Audit odkazu + Audit obalek", action, reload_after=True)
 
         def run_update_selected(self) -> None:
             selected = self.selected_book_ids()
@@ -846,8 +926,8 @@ if PYSIDE6_AVAILABLE:
                 return
             args = shared.make_script_args(self.library_path)
             args.book_ids = sorted(selected)
-            action = shared.make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
-            self.run_background("Update vybranych + Audit odkazu", action, reload_after=True)
+            action = shared.make_preview_with_audits_action(args, matches_path=self.matches_path)
+            self.run_background("Update vybranych + Audit odkazu + Audit obalek", action, reload_after=True)
 
         def run_audit(self) -> None:
             selected = self.selected_book_ids()

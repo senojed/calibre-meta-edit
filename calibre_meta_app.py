@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.6"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -252,6 +252,36 @@ def update_rows_url(rows: Sequence[cme.MatchRow], book_ids: set[int], chosen_url
     return [update_row(row, row.status, chosen_url) if row.book_id in book_ids else row for row in rows]
 
 
+def cover_urls_from_row(row: cme.MatchRow) -> list[str]:
+    """Vrati ulozene kandidatni obalky z jednoho CSV radku."""
+    return [url.strip() for url in row.cover_urls.split("|") if url.strip()]
+
+
+def update_rows_selected_cover(rows: Sequence[cme.MatchRow], book_id: int, selected_cover_url: str) -> list[cme.MatchRow]:
+    """Ulozi vybranou obalku jen pokud je mezi kandidatnimi obalkami radku."""
+    updated: list[cme.MatchRow] = []
+    for row in rows:
+        if row.book_id != book_id:
+            updated.append(row)
+            continue
+        cover_urls = cover_urls_from_row(row)
+        if selected_cover_url not in cover_urls:
+            raise ValueError("Vybrana obalka neni mezi kandidaty.")
+        updated.append(replace(row, selected_cover_url=selected_cover_url))
+    return updated
+
+
+def rows_missing_cover_choice(rows: Sequence[cme.MatchRow], book_ids: set[int]) -> list[cme.MatchRow]:
+    """Najde vybrane radky, kde je vice obalek a zadna neni vybrana."""
+    missing: list[cme.MatchRow] = []
+    for row in rows:
+        if row.book_id not in book_ids:
+            continue
+        if len(cover_urls_from_row(row)) > 1 and not row.selected_cover_url.strip():
+            missing.append(row)
+    return missing
+
+
 def sync_single_selected_url(rows: Sequence[cme.MatchRow], book_ids: set[int], edit_url: str) -> list[cme.MatchRow]:
     """U jednoho vybraneho radku pouzije aktualni text z pole Odkaz."""
     if len(book_ids) != 1:
@@ -417,6 +447,21 @@ def run_preview_then_legie_audit(
     return audit_func()
 
 
+def run_preview_audit_then_cover_audit(
+    preview_func: Callable[[], int],
+    link_audit_func: Callable[[], int],
+    cover_audit_func: Callable[[], int],
+) -> int:
+    """Nejdriv odkazy, potom kandidatni obalky. Obalky nic nezapisuji do Calibre."""
+    preview_result = preview_func()
+    if preview_result != 0:
+        return preview_result
+    link_result = link_audit_func()
+    if link_result != 0:
+        return link_result
+    return cover_audit_func()
+
+
 def make_preview_with_legie_audit_action(
     args: SimpleNamespace,
     matches_path: Path = cme.MATCHES_PATH,
@@ -439,6 +484,56 @@ def make_preview_with_legie_audit_action(
         return audit_runner(set_audit_book_ids(args, new_ids))
 
     return action
+
+
+def make_cover_audit_action(
+    args: SimpleNamespace,
+    matches_path: Path = cme.MATCHES_PATH,
+    audit_func: Callable[[Sequence[cme.MatchRow], str | Path], list[cme.MatchRow]] = cme.audit_cover_rows,
+) -> Callable[[], int]:
+    """Pripravi audit kandidatnich obalek bez zapisu do Calibre."""
+    def action() -> int:
+        if not matches_path.exists():
+            print("Audit obalek: matches.csv neexistuje.")
+            return 0
+        rows = cme.read_matches_csv(matches_path)
+        selected_ids = set(getattr(args, "book_ids", None) or [])
+        selected_rows = cme.select_match_rows(rows, book_ids=selected_ids) if selected_ids else rows
+        audited_selected = audit_func(selected_rows, args.library)
+        if selected_ids:
+            replacements = {row.book_id: row for row in audited_selected}
+            updated_rows = [replacements.get(row.book_id, row) for row in rows]
+        else:
+            updated_rows = audited_selected
+        changed = sum(1 for old, new in zip(rows, updated_rows) if old != new)
+        if changed:
+            cme.write_matches_csv(matches_path, updated_rows, overwrite=True)
+        print(f"Audit obalek: zmeneno {changed} radku")
+        return 0
+
+    return action
+
+
+def make_preview_with_audits_action(
+    args: SimpleNamespace,
+    matches_path: Path = cme.MATCHES_PATH,
+    preview_runner: Callable[[SimpleNamespace], int] = cme.run_preview,
+    link_audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
+    cover_audit_factory: Callable[[SimpleNamespace, Path], Callable[[], int]] | None = None,
+) -> Callable[[], int]:
+    """Pripravi startup workflow: nove knihy, audit odkazu, audit obalek."""
+    preview_with_links = make_preview_with_legie_audit_action(
+        args=args,
+        matches_path=matches_path,
+        preview_runner=preview_runner,
+        audit_runner=link_audit_runner,
+    )
+    cover_factory = cover_audit_factory or make_cover_audit_action
+    return lambda: run_preview_audit_then_cover_audit(
+        preview_func=lambda: preview_with_links(),
+        link_audit_func=lambda: 0,
+        cover_audit_func=cover_factory(args, matches_path),
+    )
 
 
 def make_apply_action(
@@ -838,6 +933,11 @@ class CalibreMetaApp:
         if not selected:
             messagebox.showinfo("Vyber radek", "Nejdriv vyber knihu v tabulce.")
             return
+        missing_cover = rows_missing_cover_choice(self.rows, selected) if status == "approve" else []
+        if missing_cover:
+            titles = "\n".join(f"- {row.book_id} {row.title}" for row in missing_cover[:8])
+            messagebox.showinfo("Vyber obalku", "Nejdriv vyber jednu obalku:\n" + titles)
+            return
         try:
             self.rows = update_rows_status(self.rows, selected, status)
         except ValueError as exc:
@@ -879,8 +979,8 @@ class CalibreMetaApp:
         if not self.save_csv(show_message=False):
             return
         args = make_script_args(self.library_path())
-        action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
-        self._run_background("Nacitani novych knih + Audit odkazu", action, reload_after=True)
+        action = make_preview_with_audits_action(args, matches_path=self.matches_path)
+        self._run_background("Nacitani novych knih + Audit odkazu + Audit obalek", action, reload_after=True)
 
     def run_update_selected(self) -> None:
         selected = self._selected_book_ids()
@@ -891,8 +991,8 @@ class CalibreMetaApp:
             return
         args = make_script_args(self.library_path())
         args.book_ids = sorted(selected)
-        action = make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
-        self._run_background("Update vybranych + Audit odkazu", action, reload_after=True)
+        action = make_preview_with_audits_action(args, matches_path=self.matches_path)
+        self._run_background("Update vybranych + Audit odkazu + Audit obalek", action, reload_after=True)
 
     def run_rebuild(self) -> None:
         message = (

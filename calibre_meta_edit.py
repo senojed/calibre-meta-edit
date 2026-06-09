@@ -1772,6 +1772,29 @@ def run_command(args: Sequence[str]) -> CommandResult:
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
 
 
+def run_metadata_command_with_cover(
+    args: Sequence[str],
+    selected_cover_url: str,
+    runner: Callable[[Sequence[str]], CommandResult],
+    cover_fetcher: Callable[[str], bytes] = fetch_binary,
+) -> CommandResult:
+    """Spusti calibredb a volitelne prida vybranou obalku z docasneho souboru."""
+    cover_url = selected_cover_url.strip()
+    if not cover_url:
+        return runner(args)
+    try:
+        cover_bytes = cover_fetcher(cover_url)
+    except Exception as exc:
+        return CommandResult(1, "", f"cover-fetch-error: {exc}")
+    if not cover_bytes:
+        return CommandResult(1, "", "cover-empty")
+    with tempfile.TemporaryDirectory() as tmp:
+        cover_path = Path(tmp) / ("cover" + _cover_suffix(cover_url))
+        cover_path.write_bytes(cover_bytes)
+        args_with_cover = list(args) + ["--field", "cover:" + str(cover_path)]
+        return runner(args_with_cover)
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,
@@ -1780,6 +1803,7 @@ def apply_match_row(
     fetcher: Callable[[str], str] | None = None,
     identifiers_reader: Callable[[str | Path, int], dict[str, str]] = get_current_identifiers,
     tags_reader: Callable[[str | Path, int], list[str]] = get_current_tags,
+    cover_fetcher: Callable[[str], bytes] = fetch_binary,
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
@@ -1794,12 +1818,13 @@ def apply_match_row(
             fetcher or fetch_text,
             identifiers_reader,
             tags_reader,
+            cover_fetcher,
         )
     if is_valid_databaze_story_url(row.chosen_url):
-        return apply_manual_link_row(row, library, calibredb_path, runner)
+        return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
     if not is_valid_apply_url(row.chosen_url):
         if is_manual_external_url(row):
-            return apply_manual_link_row(row, library, calibredb_path, runner)
+            return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
     detail_url = book_url_to_overview_url(row.chosen_url)
@@ -1845,7 +1870,7 @@ def apply_match_row(
         args.extend(["--field", "publisher:" + detail.publisher])
     if detail.tags:
         args.extend(["--field", "tags:" + ",".join(detail.tags)])
-    result = runner(args)
+    result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
@@ -1883,6 +1908,7 @@ def apply_legie_story_row(
     fetcher: Callable[[str], str],
     identifiers_reader: Callable[[str | Path, int], dict[str, str]],
     tags_reader: Callable[[str | Path, int], list[str]],
+    cover_fetcher: Callable[[str], bytes] = fetch_binary,
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
@@ -1909,7 +1935,7 @@ def apply_legie_story_row(
         "--field",
         "identifiers:" + identifiers_field_value(identifiers),
     ]
-    result = runner(args)
+    result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
@@ -1921,6 +1947,7 @@ def apply_manual_link_row(
     library: str | Path,
     calibredb_path: str,
     runner: Callable[[Sequence[str]], CommandResult],
+    cover_fetcher: Callable[[str], bytes] = fetch_binary,
 ) -> ApplyResult:
     """Zapise jen rucne zadany odkaz, bez stahovani detailu a dalsich metadat."""
     url = databaze_absolute_url(row.chosen_url) if "databazeknih.cz" in row.chosen_url.lower() else row.chosen_url.strip()
@@ -1933,7 +1960,7 @@ def apply_manual_link_row(
         "--field",
         "comments:" + format_link_html(url),
     ]
-    result = runner(args)
+    result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", url, error)

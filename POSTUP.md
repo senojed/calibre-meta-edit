@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.5`
+Aktualni verze: `0.2.6`
 
 Spusteni nove Qt appky:
 
@@ -24,14 +24,14 @@ EXE se zatim nedela.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
-- pri startu automaticky nacte nove knihy bez dotazu a potom spusti `Audit odkazu` jen pro nove radky
+- pri startu automaticky nacte nove knihy bez dotazu, spusti `Audit odkazu` a potom pripravi kandidatni obalky
 - `Preferences` obsahuje knihovnu, `Rebuild CSV` a `Rollback`
 - statusbar ukazuje stav, jestli bezi Calibre, jestli je nactene `matches.csv`, a verzi
-- `Update vybrane` dole znovu nacte z Calibre jen vybrane knihy v tabulce a potom na ne pusti `Audit odkazu`
-- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy a potom spusti `Audit odkazu` jen pro nove radky
+- `Update vybrane` dole znovu nacte z Calibre jen vybrane knihy v tabulce, pusti `Audit odkazu` a pripravi kandidatni obalky
+- `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy, pusti `Audit odkazu` a pripravi kandidatni obalky
 - `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
-- `Obalky` doplni obalky z Databaze knih nebo Legie jen kniham, ktere v Calibre obalku nemaji
+- knihy, ktere uz v Calibre obalku maji, se pri hledani obalek preskoci
 - kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
 - kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu a pak kratky zacatek dlouheho nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek
@@ -44,20 +44,21 @@ V appce:
 - v tabulce vyber jednu nebo vic knih
 - horni `Approve`, `Review`, `Skip` zmeni status vsem vybranym kniham
 - druhy horni radek `Odkaz` a `Pouzit odkaz` upravuje odkaz u vsech vybranych knih a oznaci ho jako `manual`
-- detail vpravo ukazuje nahled obalky: `Obalka v Calibre`, `Kandidat z Databaze knih`, `Kandidat z Legie`, nebo `Bez obalky`
+- detail vpravo ukazuje lokalni obalku z Calibre nebo kandidatni obalky z Databaze knih / Legie
+- kdyz je kandidatnich obalek vic, vyber jednu kliknutim na maly nahled; bez vyberu nejde dat `Approve`
 - `Ulozit CSV`
 - `Zapsat do Calibre`
 - `approve` radek s prazdnym odkazem vymaze komentar knihy v Calibre
 
-`Obalky` udela:
+Automaticky audit obalek udela:
 
-1. vezme vybrane radky; kdyz neni vybrane nic, projde cely seznam
+1. vezme nove nebo vybrane radky podle akce
 2. preskoci knihy, ktere uz v Calibre obalku maji
-3. preskoci radky bez odkazu na Databazi knih nebo Legii a radky ve statusu `review`
-4. ukaze potvrzeni se seznamem knih
-5. pokusi se normalne zavrit Calibre
-6. vytvori zalohu `metadata.db`
-7. stahne obalku z Databaze knih nebo Legie a zapise ji do Calibre
+3. preskoci radky bez odkazu na Databazi knih nebo Legii
+4. najde kandidatni obalky a ulozi je do `matches.csv`
+5. kdyz najde jednu obalku, predvybere ji
+6. kdyz najde vice obalek, da radek na `review`
+7. nic nezapisuje do Calibre
 
 `Zapsat do Calibre` udela:
 
@@ -70,9 +71,10 @@ V appce:
 7. do `vydano` posila datum jako `ROK-00-00`, aby Calibre ulozilo `ROK-01-01`
 8. do stitku da nejdriv zanry z Databaze knih, potom spodni stitky knihy
 9. rucni `manual` odkazy mimo podporovane zdroje, treba Goodreads, zapise jen jako odkaz do komentare
-10. hotove `approve` radky zmeni na `skip`
-11. po zapisu nacte nove knihy a spusti `Audit odkazu` jen pro nove radky
-12. znovu nacte `matches.csv` do tabulky
+10. pokud ma radek vybranou kandidatni obalku, zapise ji spolu s metadaty
+11. hotove `approve` radky zmeni na `skip`
+12. po zapisu nacte nove knihy, spusti `Audit odkazu` a pripravi kandidatni obalky
+13. znovu nacte `matches.csv` do tabulky
 
 V potvrzeni zapisu je zaskrtavatko pro vynucene zavreni `/F`.
 Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.
@@ -100,7 +102,8 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 2. z Calibre databaze znovu nacte jen vybrane knihy
 3. v `matches.csv` nahradi jen tyto vybrane radky
 4. na vybrane radky spusti `Audit odkazu`
-5. nic nezapisuje do Calibre
+5. pripravi kandidatni obalky pro vybrane radky
+6. nic nezapisuje do Calibre
 
 Legie radky zapisuj az po rucnim prepnuti na `approve`.
 Pri zapisu Legie se do Calibre ulozi komentar, tag `povidka` a identifikator `legie:ID`.
