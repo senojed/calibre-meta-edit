@@ -46,6 +46,9 @@ MATCHES_FIELDS = [
     "reason",
     "source",
     "work_type",
+    "cover_urls",
+    "selected_cover_url",
+    "cover_reason",
 ]
 APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error"]
 
@@ -77,6 +80,9 @@ class MatchRow:
     reason: str
     source: str = "databazeknih"
     work_type: str = ""
+    cover_urls: str = ""
+    selected_cover_url: str = ""
+    cover_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,25 @@ class CoverCandidate:
     book_id: int
     title: str
     source_url: str
+
+
+def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
+    """Prenese stav obalek ze stareho radku do noveho radku."""
+    return MatchRow(
+        target.book_id,
+        target.title,
+        target.authors,
+        target.status,
+        target.chosen_url,
+        target.candidate_urls,
+        target.confidence,
+        target.reason,
+        target.source,
+        target.work_type,
+        source.cover_urls,
+        source.selected_cover_url,
+        source.cover_reason,
+    )
 
 
 def normalize_text(text: str) -> str:
@@ -1216,6 +1241,9 @@ def read_matches_csv(path: Path) -> list[MatchRow]:
                     raw["reason"],
                     raw.get("source") or "databazeknih",
                     raw.get("work_type") or "",
+                    raw.get("cover_urls") or "",
+                    raw.get("selected_cover_url") or "",
+                    raw.get("cover_reason") or "",
                 )
             )
     return rows
@@ -1323,7 +1351,7 @@ def replace_match_rows(existing_rows: Sequence[MatchRow], refreshed_rows: Sequen
         if replacement is None:
             merged.append(row)
             continue
-        merged.append(replacement)
+        merged.append(copy_cover_fields(row, replacement))
         replaced_ids.add(row.book_id)
     merged.extend(row for row in refreshed_rows if row.book_id not in replaced_ids)
     return merged
@@ -2030,6 +2058,9 @@ def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence
                     row.reason,
                     row.source,
                     row.work_type,
+                    row.cover_urls,
+                    row.selected_cover_url,
+                    row.cover_reason,
                 )
             )
             continue

@@ -1069,6 +1069,9 @@ class CsvAndFilesystemTests(unittest.TestCase):
 
         self.assertEqual(rows[0].source, "databazeknih")
         self.assertEqual(rows[0].work_type, "")
+        self.assertEqual(rows[0].cover_urls, "")
+        self.assertEqual(rows[0].selected_cover_url, "")
+        self.assertEqual(rows[0].cover_reason, "")
 
     def test_write_matches_csv_writes_source_and_work_type_columns(self):
         row = cme.MatchRow(
@@ -1090,6 +1093,34 @@ class CsvAndFilesystemTests(unittest.TestCase):
 
         self.assertIn("source", headers)
         self.assertIn("work_type", headers)
+        self.assertIn("cover_urls", headers)
+        self.assertIn("selected_cover_url", headers)
+        self.assertIn("cover_reason", headers)
+
+    def test_write_matches_csv_writes_cover_columns(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            "databazeknih",
+            "",
+            "https://img/1.jpg|https://img/2.jpg",
+            "https://img/2.jpg",
+            "multiple-cover-candidates",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.csv"
+            cme.write_matches_csv(path, [row], overwrite=False)
+            rows = cme.read_matches_csv(path)
+
+        self.assertEqual(rows[0].cover_urls, "https://img/1.jpg|https://img/2.jpg")
+        self.assertEqual(rows[0].selected_cover_url, "https://img/2.jpg")
+        self.assertEqual(rows[0].cover_reason, "multiple-cover-candidates")
 
     def test_filter_new_books_skips_books_already_in_matches_csv(self):
         books = [
