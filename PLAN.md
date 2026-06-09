@@ -502,6 +502,12 @@
 - Behem background akce se appka prepne na `Log` a vypne ovladani, aby neslo menit data za behu.
 - `Preferences` maji zatrzitka pro automaticke nacitani novych knih, audit odkazu a audit obalek.
 
+## Update 0.2.9 - Current data detail labels
+
+- Zalozka `Aktualni data` ukazuje prehled aktualniho radku vcetne mist pro rok, hodnoceni, vydani, vydavatele, tagy a obalku.
+- Web metadata se zatim zobrazuji jako `nenacteno`, dokud se neulozi do pracovniho modelu.
+- Tlacitka jsou prejmenovana na `Najit / overit odkaz` a `Nacist z Calibre`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.8")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.8")
+        self.assertEqual(qt.APP_VERSION, "0.2.9")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.9")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.8")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.9")
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -166,6 +166,33 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.selection_link_text(rows), "https://x")
         self.assertTrue(qt.selection_link_actions_enabled(rows))
         self.assertTrue(qt.open_link_enabled(rows, "https://x"))
+
+    def test_current_data_fields_include_future_metadata_slots(self):
+        import calibre_meta_qt as qt
+
+        row = cme.MatchRow(
+            1,
+            "Straze! Straze!",
+            "Terry Pratchett",
+            "review",
+            "https://www.databazeknih.cz/knihy/straze-straze-459",
+            "",
+            "title-only",
+            "title-only",
+            "databazeknih",
+            "",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+        )
+
+        fields = dict(qt.current_data_fields([row]))
+
+        self.assertEqual(fields["Kniha"], "Straze! Straze!")
+        self.assertEqual(fields["Rok vydani"], "nenacteno")
+        self.assertEqual(fields["Hodnoceni"], "nenacteno")
+        self.assertEqual(fields["Vydani"], "nenacteno")
+        self.assertEqual(fields["Vydavatel"], "nenacteno")
+        self.assertEqual(fields["Tagy"], "nenacteno")
+        self.assertEqual(fields["Obalka"], "kandidati: 2")
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")

@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.8`
+Aktualni verze: `0.2.9`
 
 Spusteni nove Qt appky:
 
@@ -29,10 +29,10 @@ V appce:
 - pravy panel ma zalozky `Aktualni data`, `Review` a `Log`
 - kdyz appka pracuje, prepne se na `Log` a ovladani se docasne vypne
 - statusbar ukazuje stav, jestli bezi Calibre, jestli je nactene `matches.csv`, a verzi
-- `Update vybrane` dole znovu nacte z Calibre jen vybrane knihy v tabulce, pusti `Audit odkazu` a pripravi kandidatni obalky
+- `Nacist z Calibre` znovu nacte z Calibre jen vybrane knihy v tabulce, pusti audit odkazu a pripravi kandidatni obalky
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy, pusti `Audit odkazu` a pripravi kandidatni obalky
-- `Audit odkazu` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
-- `Audit odkazu` zkusi nejdriv Databazi knih, potom Legii
+- `Najit / overit odkaz` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
+- `Najit / overit odkaz` zkusi nejdriv Databazi knih, potom Legii
 - kdyz prvni hledani na Databazi knih neni dost jiste, zkusi jeste dotaz bez diakritiky a interpunkce
 - knihy, ktere uz v Calibre obalku maji, se pri hledani obalek preskoci
 - kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
@@ -85,7 +85,7 @@ Je zapnute automaticky. Vypni ho, kdyz v Calibre mas neulozenou praci.
 Kdyz pri zapisu neco selze, appka vypise `Failed zapisy` ve spodnim vystupu.
 Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `approve`.
 
-`Audit odkazu` udela:
+`Najit / overit odkaz` udela:
 
 1. ulozi aktualni `matches.csv`
 2. zalohuje `matches.csv` do `backups\matches\`
@@ -99,7 +99,7 @@ Kdyz nejde stahnout detail knihy z Databaze knih, kniha se nezapise a zustane `a
 10. rucne zadane odkazy `manual` nemaze ani znovu nehleda
 11. nic nezapisuje do Calibre
 
-`Update vybrane` udela:
+`Nacist z Calibre` udela:
 
 1. ulozi aktualni `matches.csv`
 2. z Calibre databaze znovu nacte jen vybrane knihy

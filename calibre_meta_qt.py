@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.8"
+APP_VERSION = "0.2.9"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -111,6 +111,37 @@ def use_link_enabled(rows: Sequence[cme.MatchRow], link_text: str) -> bool:
 def open_link_enabled(rows: Sequence[cme.MatchRow], link_text: str) -> bool:
     """Otevrit odkaz jde jen kdyz existuje jeden konkretni odkaz."""
     return use_link_enabled(rows, link_text) and bool(link_text.strip())
+
+
+def current_data_fields(rows: Sequence[cme.MatchRow]) -> list[tuple[str, str]]:
+    """Vrati data pro zalozku Aktualni data; web metadata zatim nejsou v CSV."""
+    if not rows:
+        return [("Vyber", "bez vyberu")]
+    if len(rows) > 1:
+        return [("Vyber", f"vybrano {len(rows)} knih")]
+    row = rows[0]
+    cover_count = len(shared.cover_urls_from_row(row))
+    if row.selected_cover_url.strip():
+        cover_text = "vybrana kandidatni"
+    elif cover_count:
+        cover_text = f"kandidati: {cover_count}"
+    else:
+        cover_text = "nenacteno"
+    return [
+        ("ID", str(row.book_id)),
+        ("Kniha", row.title),
+        ("Autor", row.authors),
+        ("Status", row.status),
+        ("Zdroj", row.source),
+        ("Typ", row.work_type or "kniha"),
+        ("Odkaz", row.chosen_url or "nenacteno"),
+        ("Rok vydani", "nenacteno"),
+        ("Hodnoceni", "nenacteno"),
+        ("Vydani", "nenacteno"),
+        ("Vydavatel", "nenacteno"),
+        ("Tagy", "nenacteno"),
+        ("Obalka", cover_text),
+    ]
 
 
 def is_calibre_running(runner: Callable[[Sequence[str]], cme.CommandResult] = cme.run_command) -> bool:
@@ -387,8 +418,8 @@ if PYSIDE6_AVAILABLE:
 
             self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open", show_text=False)
             self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save", show_text=False)
-            self._add_button(toolbar, "Audit odkazu", self.run_audit, "neutralButton", "chain", show_text=False)
-            self._add_button(toolbar, "Update vybrane", self.run_update_selected, "updateButton", "recycle", show_text=False)
+            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
+            self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
@@ -575,12 +606,19 @@ if PYSIDE6_AVAILABLE:
 
             current_tab = QWidget()
             current_layout = QVBoxLayout(current_tab)
-            self.detail_title = QLabel("Bez vyberu")
-            self.detail_title.setWordWrap(True)
-            self.detail_author = QLabel("")
-            self.detail_author.setWordWrap(True)
-            current_layout.addWidget(self.detail_title)
-            current_layout.addWidget(self.detail_author)
+            self.current_data_grid = QGridLayout()
+            self.current_data_labels: dict[str, QLabel] = {}
+            for row_index, field in enumerate(
+                ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Rok vydani", "Hodnoceni", "Vydani", "Vydavatel", "Tagy", "Obalka")
+            ):
+                name = QLabel(field)
+                name.setObjectName("fieldName")
+                value = QLabel("")
+                value.setWordWrap(True)
+                self.current_data_grid.addWidget(name, row_index, 0)
+                self.current_data_grid.addWidget(value, row_index, 1)
+                self.current_data_labels[field] = value
+            current_layout.addLayout(self.current_data_grid)
             current_layout.addStretch(1)
             self.detail_tabs.addTab(current_tab, "Aktualni data")
 
@@ -752,13 +790,18 @@ if PYSIDE6_AVAILABLE:
 
         def on_selection_changed(self) -> None:
             rows = self.selected_rows()
-            self.detail_title.setText(selection_title(rows))
-            self.detail_author.setText(rows[0].authors if len(rows) == 1 else "")
+            self.update_current_data(rows)
             link_text = selection_link_text(rows)
             if self.url_edit.text() != link_text:
                 self.url_edit.setText(link_text)
             self.update_link_buttons()
             self.update_cover_preview(rows)
+
+        def update_current_data(self, rows: Sequence[cme.MatchRow]) -> None:
+            """Prekresli zalozku Aktualni data."""
+            values = dict(current_data_fields(rows))
+            for field, label in self.current_data_labels.items():
+                label.setText(values.get(field, ""))
 
         def set_cover_placeholder(self, status: str, source: str = "") -> None:
             """Nastavi textovy stav nahledu obalky."""
@@ -985,7 +1028,7 @@ if PYSIDE6_AVAILABLE:
             args = shared.make_script_args(self.library_path)
             args.book_ids = sorted(selected)
             action = self.make_preview_action(args)
-            self.run_background("Update vybranych + " + auto_workflow_title(self.auto_settings), action, reload_after=True)
+            self.run_background("Nacist z Calibre + " + auto_workflow_title(self.auto_settings), action, reload_after=True)
 
         def make_preview_action(self, args: Any) -> Callable[[], int]:
             """Sestavi preview workflow podle nastaveni automatickych auditu."""
@@ -1011,7 +1054,7 @@ if PYSIDE6_AVAILABLE:
                 return
             args = shared.make_legie_audit_args(self.library_path, selected if selected else None)
             action = shared.make_legie_audit_action(args)
-            self.run_background("Audit odkazu", action, reload_after=True)
+            self.run_background("Najit / overit odkaz", action, reload_after=True)
 
         def run_apply(self) -> None:
             confirmed, allow_force = self.ask_apply_confirmation()
