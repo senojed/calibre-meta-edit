@@ -140,6 +140,13 @@ class CoverCandidate:
     source_url: str
 
 
+@dataclass(frozen=True)
+class CoverOption:
+    url: str
+    source: str
+    label: str = ""
+
+
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
     """Prenese stav obalek ze stareho radku do noveho radku."""
     return MatchRow(
@@ -463,6 +470,7 @@ class BookDetailParser(HTMLParser):
         self.editions_url = ""
         self.user_tags: list[str] = []
         self.cover_url = ""
+        self.cover_urls: list[str] = []
 
         self._json_parts: list[str] = []
         self._inside_json_ld = False
@@ -506,7 +514,13 @@ class BookDetailParser(HTMLParser):
             if part
         ).lower()
         if not self.cover_url and image_url and _looks_like_cover_image(image_url, image_key):
-            self.cover_url = normalize_image_url(image_url)
+            normalized = normalize_image_url(image_url)
+            self.cover_url = normalized
+            self.cover_urls.append(normalized)
+        elif image_url and _looks_like_cover_image(image_url, image_key):
+            normalized = normalize_image_url(image_url)
+            if normalized not in self.cover_urls:
+                self.cover_urls.append(normalized)
 
         if "ratValue" in classes:
             self._rating_depth = 1
@@ -758,6 +772,31 @@ def _image_url_from_json(value: object) -> str:
     return ""
 
 
+def _image_urls_from_json(value: object) -> list[str]:
+    urls: list[str] = []
+    if isinstance(value, str) and _looks_like_cover_image(value, "json image"):
+        urls.append(normalize_image_url(value))
+    elif isinstance(value, dict):
+        for key in ("url", "contentUrl"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and _looks_like_cover_image(candidate, "json image"):
+                urls.append(normalize_image_url(candidate))
+    elif isinstance(value, list):
+        for item in value:
+            urls.extend(_image_urls_from_json(item))
+    return list(dict.fromkeys(urls))
+
+
+def _dedupe_cover_options(options: Sequence[CoverOption]) -> list[CoverOption]:
+    seen: set[str] = set()
+    result: list[CoverOption] = []
+    for option in options:
+        if option.url and option.url not in seen:
+            seen.add(option.url)
+            result.append(option)
+    return result
+
+
 def _rating_from_json(value: object) -> str:
     if not isinstance(value, dict):
         return ""
@@ -839,6 +878,16 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     )
 
 
+def parse_databaze_cover_options(html_text: str) -> list[CoverOption]:
+    """Vrati vsechny rozpoznane kandidatni obalky z detailu Databaze knih."""
+    parser = BookDetailParser()
+    parser.feed(html_text)
+    parser.close()
+    book_json = _book_json_from_blocks(parser.json_ld_blocks)
+    urls = _image_urls_from_json(book_json.get("image")) + parser.cover_urls
+    return _dedupe_cover_options(CoverOption(url, "databazeknih", "Databaze knih") for url in urls)
+
+
 class LegieStoryParser(HTMLParser):
     """Parser detailu povidky na Legii."""
 
@@ -854,6 +903,7 @@ class LegieStoryParser(HTMLParser):
         self.czech_publication = ""
         self.about_text = ""
         self.cover_url = ""
+        self.cover_urls: list[str] = []
 
         self._capture = ""
         self._parts: list[str] = []
@@ -873,7 +923,13 @@ class LegieStoryParser(HTMLParser):
         src = attrs_dict.get("src", "")
 
         if not self.cover_url and lowered_tag == "img" and "obal_kniha" in classes and src:
-            self.cover_url = normalize_legie_image_url(src)
+            normalized = normalize_legie_image_url(src)
+            self.cover_url = normalized
+            self.cover_urls.append(normalized)
+        elif lowered_tag == "img" and "obal_kniha" in classes and src:
+            normalized = normalize_legie_image_url(src)
+            if normalized not in self.cover_urls:
+                self.cover_urls.append(normalized)
 
         if lowered_tag == "h3":
             self._author_next = True
@@ -958,6 +1014,16 @@ def parse_legie_story_detail(html_text: str, url: str) -> LegieStoryMetadata:
         czech_publication=parser.czech_publication,
         about_text=parser.about_text,
         cover_url=parser.cover_url,
+    )
+
+
+def parse_legie_cover_options(html_text: str) -> list[CoverOption]:
+    """Vrati vsechny obalky z Legie detailu povidky."""
+    parser = LegieStoryParser()
+    parser.feed(html_text)
+    parser.close()
+    return _dedupe_cover_options(
+        CoverOption(url, "legie", f"Legie {index}") for index, url in enumerate(parser.cover_urls, start=1)
     )
 
 
@@ -1518,6 +1584,77 @@ def cover_candidate_rows(
         for row in supported_rows
         if not flags.get(row.book_id, False)
     ]
+
+
+def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None) -> list[CoverOption]:
+    """Stahne detail podporovaneho zdroje a vrati kandidatni obalky."""
+    fetch = fetcher or fetch_text
+    if is_valid_legie_story_url(url):
+        return parse_legie_cover_options(fetch(legie_absolute_url(url)))
+    if is_valid_apply_url(url):
+        return parse_databaze_cover_options(fetch(book_url_to_overview_url(url)))
+    return []
+
+
+def _cover_urls_text(options: Sequence[CoverOption]) -> str:
+    return "|".join(option.url for option in options)
+
+
+def with_cover_fields(
+    row: MatchRow,
+    cover_urls: str,
+    selected_cover_url: str,
+    cover_reason: str,
+    status: str | None = None,
+) -> MatchRow:
+    """Vrati radek se zmenenym stavem obalek."""
+    return MatchRow(
+        row.book_id,
+        row.title,
+        row.authors,
+        status or row.status,
+        row.chosen_url,
+        row.candidate_urls,
+        row.confidence,
+        row.reason,
+        row.source,
+        row.work_type,
+        cover_urls,
+        selected_cover_url,
+        cover_reason,
+    )
+
+
+def audit_cover_rows(
+    rows: Sequence[MatchRow],
+    library: str | Path,
+    cover_flags_reader: Callable[[str | Path, set[int] | None], dict[int, bool]] = get_cover_flags,
+    fetcher: Callable[[str], str] | None = None,
+) -> list[MatchRow]:
+    """Najde kandidatni obalky a ulozi je do radku bez zapisu do Calibre."""
+    flags = cover_flags_reader(library, {row.book_id for row in rows})
+    updated: list[MatchRow] = []
+    for row in rows:
+        if flags.get(row.book_id, False):
+            updated.append(row)
+            continue
+        if not (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url)):
+            updated.append(row)
+            continue
+        try:
+            options = cover_options_for_url(row.chosen_url, fetcher)
+        except Exception:
+            updated.append(with_cover_fields(row, "", "", "cover-fetch-error"))
+            continue
+        if not options:
+            updated.append(with_cover_fields(row, "", "", "cover-not-found"))
+            continue
+        urls_text = _cover_urls_text(options)
+        if len(options) == 1:
+            updated.append(with_cover_fields(row, urls_text, options[0].url, "single-cover-candidate"))
+            continue
+        updated.append(with_cover_fields(row, urls_text, "", "multiple-cover-candidates", status="review"))
+    return updated
 
 
 def fetch_binary(url: str, timeout: int = 30) -> bytes:

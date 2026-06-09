@@ -1553,6 +1553,42 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertEqual(detail.cover_url, "https://www.databazeknih.cz/img/books/123/big-cover.jpg")
 
+    def test_parse_databaze_cover_options_reads_json_and_meta_images(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://img.databazeknih.cz/img/books/1/main.jpg"}
+        </script>
+        <meta property="og:image" content="https://img.databazeknih.cz/img/books/1/og.jpg">
+        """
+
+        options = cme.parse_databaze_cover_options(html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://img.databazeknih.cz/img/books/1/main.jpg",
+                "https://img.databazeknih.cz/img/books/1/og.jpg",
+            ],
+        )
+
+    def test_parse_legie_cover_options_reads_multiple_story_covers(self):
+        html = """
+        <div id="pro_obal">
+          <img src="images/kniha-small/1/138-2213.jpg" class="obal_kniha" title="prebal 1" />
+          <img src="images/kniha-small/3/394-4329.jpg" class="obal_kniha" title="prebal 2" />
+        </div>
+        """
+
+        options = cme.parse_legie_cover_options(html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://www.legie.info/images/kniha-small/1/138-2213.jpg",
+                "https://www.legie.info/images/kniha-small/3/394-4329.jpg",
+            ],
+        )
+
     def test_cover_candidate_rows_uses_only_books_without_cover_and_supported_url(self):
         rows = [
             cme.MatchRow(1, "Bez obalky", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
@@ -1589,6 +1625,45 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             connection.close()
 
             self.assertEqual(cme.get_local_cover_path(library, 1), cover)
+
+    def test_audit_cover_rows_marks_multiple_cover_candidates_review(self):
+        rows = [
+            cme.MatchRow(1, "Povidka", "Autor", "skip", "https://www.legie.info/povidka/40", "", "manual", "manual", "legie", "povidka"),
+        ]
+
+        updated = cme.audit_cover_rows(
+            rows,
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=lambda url: """
+                <div id="pro_obal">
+                  <img src="images/kniha-small/1/a.jpg" class="obal_kniha" />
+                  <img src="images/kniha-small/1/b.jpg" class="obal_kniha" />
+                </div>
+            """,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
+        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertIn("https://www.legie.info/images/kniha-small/1/a.jpg", updated[0].cover_urls)
+
+    def test_audit_cover_rows_selects_single_cover_without_approve(self):
+        rows = [
+            cme.MatchRow(1, "Kniha", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
+        ]
+
+        updated = cme.audit_cover_rows(
+            rows,
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=lambda url: '<script type="application/ld+json">{"@type":"Book","image":"https://img.databazeknih.cz/img/books/a.jpg"}</script>',
+        )
+
+        self.assertEqual(updated[0].status, "skip")
+        self.assertEqual(updated[0].cover_urls, "https://img.databazeknih.cz/img/books/a.jpg")
+        self.assertEqual(updated[0].selected_cover_url, "https://img.databazeknih.cz/img/books/a.jpg")
+        self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
 
     def test_apply_cover_candidate_writes_cover_field(self):
         candidate = cme.CoverCandidate(1, "Kniha", "https://www.databazeknih.cz/prehled-knihy/a-1")
