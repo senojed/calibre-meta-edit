@@ -496,6 +496,12 @@
 - Porovnani nazvu ignoruje diakritiku i interpunkci, napr. `Straze straze` vs. `Straze! Straze!`.
 - Audit Databaze knih zkusi fallback dotaz bez diakritiky a interpunkce, kdyz prvni dotaz neda dost jistou shodu.
 
+## Update 0.2.8 - Review tabs and automation settings
+
+- Pravy Qt panel je rozdeleny na zalozky `Aktualni data`, `Review` a `Log`.
+- Behem background akce se appka prepne na `Log` a vypne ovladani, aby neslo menit data za behu.
+- `Preferences` maji zatrzitka pro automaticke nacitani novych knih, audit odkazu a audit obalek.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

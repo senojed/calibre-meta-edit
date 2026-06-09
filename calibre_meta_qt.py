@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.7"
+APP_VERSION = "0.2.8"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -28,6 +28,11 @@ STATUS_FILTER_VALUES = ("approve", "review", "skip")
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
+AUTO_SETTING_DEFAULTS = {
+    "startup_preview": True,
+    "auto_link_audit": True,
+    "auto_cover_audit": True,
+}
 
 
 def app_title() -> str:
@@ -121,6 +126,26 @@ def normalize_theme(value: str) -> str:
     return normalized if normalized in THEME_VALUES else "system"
 
 
+def normalize_auto_settings(raw: Any) -> dict[str, bool]:
+    """Vrati nastaveni automatickych akci s rozumnymi vychozimi hodnotami."""
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        key: raw.get(key) if isinstance(raw.get(key), bool) else default
+        for key, default in AUTO_SETTING_DEFAULTS.items()
+    }
+
+
+def auto_workflow_title(auto_settings: dict[str, bool]) -> str:
+    """Slozi titulek background akce podle zapnutych automatickych kroku."""
+    parts = ["Nacitani novych knih"]
+    if auto_settings.get("auto_link_audit", True):
+        parts.append("Audit odkazu")
+    if auto_settings.get("auto_cover_audit", True):
+        parts.append("Audit obalek")
+    return " + ".join(parts)
+
+
 def read_app_settings(settings_path: Path | None = None) -> dict[str, Any]:
     """Precte nase nastaveni a ignoruje rozbite hodnoty."""
     settings_path = settings_path or shared.SETTINGS_PATH
@@ -191,6 +216,7 @@ if PYSIDE6_AVAILABLE:
         QStyle,
         QTableWidget,
         QTableWidgetItem,
+        QTabWidget,
         QTextEdit,
         QToolButton,
         QVBoxLayout,
@@ -237,6 +263,16 @@ if PYSIDE6_AVAILABLE:
             self.theme_combo.addItems(THEME_VALUES)
             self.theme_combo.setCurrentText(self.parent_window.theme)
             form.addWidget(self.theme_combo, 1, 1)
+            auto_settings = normalize_auto_settings(read_app_settings())
+            self.startup_preview_check = QCheckBox("Po startu nacist nove knihy")
+            self.startup_preview_check.setChecked(auto_settings["startup_preview"])
+            self.auto_link_audit_check = QCheckBox("Po nacteni spustit audit odkazu")
+            self.auto_link_audit_check.setChecked(auto_settings["auto_link_audit"])
+            self.auto_cover_audit_check = QCheckBox("Po auditu pripravit obalky")
+            self.auto_cover_audit_check.setChecked(auto_settings["auto_cover_audit"])
+            form.addWidget(self.startup_preview_check, 2, 1, 1, 3)
+            form.addWidget(self.auto_link_audit_check, 3, 1, 1, 3)
+            form.addWidget(self.auto_cover_audit_check, 4, 1, 1, 3)
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -277,8 +313,14 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.warning(self, "Knihovna", "Zadej cestu ke knihovne.")
                 return
             save_app_settings(library, self.theme_combo.currentText())
+            settings = read_app_settings()
+            settings["startup_preview"] = self.startup_preview_check.isChecked()
+            settings["auto_link_audit"] = self.auto_link_audit_check.isChecked()
+            settings["auto_cover_audit"] = self.auto_cover_audit_check.isChecked()
+            shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
             self.parent_window.library_path = library
             self.parent_window.theme = normalize_theme(self.theme_combo.currentText())
+            self.parent_window.auto_settings = normalize_auto_settings(settings)
             self.parent_window.apply_theme()
             self.parent_window.set_status("Knihovna ulozena")
 
@@ -297,8 +339,10 @@ if PYSIDE6_AVAILABLE:
             super().__init__()
             self.matches_path = cme.MATCHES_PATH
             self.library_path = shared.initial_library_path()
-            theme_setting = read_app_settings().get("theme", "system")
+            settings = read_app_settings()
+            theme_setting = settings.get("theme", "system")
             self.theme = normalize_theme(theme_setting if isinstance(theme_setting, str) else "system")
+            self.auto_settings = normalize_auto_settings(settings)
             self.rows: list[cme.MatchRow] = []
             self.filtered_rows: list[cme.MatchRow] = []
             self.worker_running = False
@@ -319,7 +363,8 @@ if PYSIDE6_AVAILABLE:
             self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
             self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
-            schedule_qt_startup_preview(self.run_preview)
+            if self.auto_settings["startup_preview"]:
+                schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
             root = QWidget()
@@ -525,13 +570,22 @@ if PYSIDE6_AVAILABLE:
             panel.setMinimumWidth(320)
             panel.setMaximumWidth(460)
             layout = QVBoxLayout(panel)
+            self.detail_tabs = QTabWidget()
+            layout.addWidget(self.detail_tabs)
+
+            current_tab = QWidget()
+            current_layout = QVBoxLayout(current_tab)
             self.detail_title = QLabel("Bez vyberu")
             self.detail_title.setWordWrap(True)
             self.detail_author = QLabel("")
             self.detail_author.setWordWrap(True)
-            layout.addWidget(self.detail_title)
-            layout.addWidget(self.detail_author)
+            current_layout.addWidget(self.detail_title)
+            current_layout.addWidget(self.detail_author)
+            current_layout.addStretch(1)
+            self.detail_tabs.addTab(current_tab, "Aktualni data")
 
+            review_tab = QWidget()
+            review_layout = QVBoxLayout(review_tab)
             status_buttons = QHBoxLayout()
             self.approve_button = self._add_button(
                 status_buttons, "Approve", lambda: self.set_selected_status("approve"), "approveButton"
@@ -544,13 +598,13 @@ if PYSIDE6_AVAILABLE:
             for index, button in enumerate((self.approve_button, self.review_button, self.skip_button, self.story_button)):
                 button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                 status_buttons.setStretch(index, 1)
-            layout.addLayout(status_buttons)
+            review_layout.addLayout(status_buttons)
 
-            layout.addWidget(QLabel("Odkaz"))
+            review_layout.addWidget(QLabel("Odkaz"))
             self.url_edit = QLineEdit()
             self.url_edit.setClearButtonEnabled(True)
             self.url_edit.textChanged.connect(self.update_link_buttons)
-            layout.addWidget(self.url_edit)
+            review_layout.addWidget(self.url_edit)
             url_buttons = QHBoxLayout()
             self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton")
             self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton")
@@ -558,7 +612,7 @@ if PYSIDE6_AVAILABLE:
             self.open_link_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             url_buttons.setStretch(0, 1)
             url_buttons.setStretch(1, 1)
-            layout.addLayout(url_buttons)
+            review_layout.addLayout(url_buttons)
 
             self.cover_status = QLabel("Bez obalky")
             self.cover_status.setObjectName("coverStatus")
@@ -575,16 +629,20 @@ if PYSIDE6_AVAILABLE:
             self.cover_options_layout.setContentsMargins(0, 0, 0, 0)
             self.cover_options_layout.setHorizontalSpacing(6)
             self.cover_options_layout.setVerticalSpacing(6)
-            layout.addWidget(self.cover_status)
-            layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
-            layout.addWidget(self.cover_source)
-            layout.addWidget(self.cover_options_widget)
+            review_layout.addWidget(self.cover_status)
+            review_layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
+            review_layout.addWidget(self.cover_source)
+            review_layout.addWidget(self.cover_options_widget)
+            review_layout.addStretch(1)
+            self.detail_tabs.addTab(review_tab, "Review")
 
-            layout.addWidget(QLabel("Log"))
+            self.log_tab = QWidget()
+            log_layout = QVBoxLayout(self.log_tab)
             self.output = QTextEdit()
             self.output.setReadOnly(True)
             self.output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            layout.addWidget(self.output, stretch=1)
+            log_layout.addWidget(self.output, stretch=1)
+            self.detail_tabs.addTab(self.log_tab, "Log")
             return panel
 
         def load_csv(self, show_message: bool = True) -> None:
@@ -914,8 +972,8 @@ if PYSIDE6_AVAILABLE:
             if not self.save_csv(show_message=False):
                 return
             args = shared.make_script_args(self.library_path)
-            action = shared.make_preview_with_audits_action(args, matches_path=self.matches_path)
-            self.run_background("Nacitani novych knih + Audit odkazu + Audit obalek", action, reload_after=True)
+            action = self.make_preview_action(args)
+            self.run_background(auto_workflow_title(self.auto_settings), action, reload_after=True)
 
         def run_update_selected(self) -> None:
             selected = self.selected_book_ids()
@@ -926,8 +984,24 @@ if PYSIDE6_AVAILABLE:
                 return
             args = shared.make_script_args(self.library_path)
             args.book_ids = sorted(selected)
-            action = shared.make_preview_with_audits_action(args, matches_path=self.matches_path)
-            self.run_background("Update vybranych + Audit odkazu + Audit obalek", action, reload_after=True)
+            action = self.make_preview_action(args)
+            self.run_background("Update vybranych + " + auto_workflow_title(self.auto_settings), action, reload_after=True)
+
+        def make_preview_action(self, args: Any) -> Callable[[], int]:
+            """Sestavi preview workflow podle nastaveni automatickych auditu."""
+            if self.auto_settings["auto_link_audit"] and self.auto_settings["auto_cover_audit"]:
+                return shared.make_preview_with_audits_action(args, matches_path=self.matches_path)
+            if self.auto_settings["auto_link_audit"]:
+                return shared.make_preview_with_legie_audit_action(args, matches_path=self.matches_path)
+            preview_action = lambda: cme.run_preview(args)
+            if not self.auto_settings["auto_cover_audit"]:
+                return preview_action
+            cover_action = shared.make_cover_audit_action(args, matches_path=self.matches_path)
+            return lambda: shared.run_preview_audit_then_cover_audit(
+                preview_func=preview_action,
+                link_audit_func=lambda: 0,
+                cover_audit_func=cover_action,
+            )
 
         def run_audit(self) -> None:
             selected = self.selected_book_ids()
@@ -1062,7 +1136,8 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.information(self, "Bezi akce", "Pockej, az skonci aktualni akce.")
                 return
             self.worker_running = True
-            self.set_buttons_enabled(False)
+            self.set_ui_enabled(False)
+            self.detail_tabs.setCurrentWidget(self.log_tab)
             self.write_output(f"{title}...")
             self.set_status(title)
 
@@ -1081,7 +1156,7 @@ if PYSIDE6_AVAILABLE:
 
         def finish_background(self, title: str, result: int, text: str, reload_after: bool) -> None:
             self.worker_running = False
-            self.set_buttons_enabled(True)
+            self.set_ui_enabled(True)
             if reload_after and result == 0:
                 self.load_csv(show_message=False)
             suffix = "OK" if result == 0 else "CHYBA"
@@ -1155,8 +1230,20 @@ if PYSIDE6_AVAILABLE:
         def open_preferences(self) -> None:
             PreferencesDialog(self).exec()
 
-        def set_buttons_enabled(self, enabled: bool) -> None:
+        def set_ui_enabled(self, enabled: bool) -> None:
+            """Pri background akci vypne ovladani, log zustava citelny."""
+            self.table.setEnabled(enabled)
+            self.title_filter.setEnabled(enabled)
+            self.author_filter.setEnabled(enabled)
+            for check in list(self.status_checks.values()) + list(self.source_checks.values()) + list(self.type_checks.values()):
+                check.setEnabled(enabled)
+            self.url_edit.setEnabled(enabled)
+            self.detail_tabs.setTabEnabled(0, enabled)
+            self.detail_tabs.setTabEnabled(1, enabled)
+            self.detail_tabs.setTabEnabled(2, True)
             for button in self.buttons:
+                button.setEnabled(enabled)
+            for button in (self.approve_button, self.review_button, self.skip_button, self.story_button, self.use_link_button, self.open_link_button):
                 button.setEnabled(enabled)
             if enabled:
                 self.on_selection_changed()

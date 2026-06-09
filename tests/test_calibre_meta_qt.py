@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.7")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.7")
+        self.assertEqual(qt.APP_VERSION, "0.2.8")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.8")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,52 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.7")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.8")
+
+    def test_normalize_auto_settings_defaults_to_enabled(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_auto_settings({})
+
+        self.assertEqual(
+            settings,
+            {
+                "startup_preview": True,
+                "auto_link_audit": True,
+                "auto_cover_audit": True,
+            },
+        )
+
+    def test_normalize_auto_settings_reads_saved_booleans(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_auto_settings(
+            {
+                "startup_preview": False,
+                "auto_link_audit": True,
+                "auto_cover_audit": False,
+            }
+        )
+
+        self.assertEqual(settings["startup_preview"], False)
+        self.assertEqual(settings["auto_link_audit"], True)
+        self.assertEqual(settings["auto_cover_audit"], False)
+
+    def test_auto_workflow_title_reflects_enabled_steps(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(
+            qt.auto_workflow_title({"auto_link_audit": True, "auto_cover_audit": True}),
+            "Nacitani novych knih + Audit odkazu + Audit obalek",
+        )
+        self.assertEqual(
+            qt.auto_workflow_title({"auto_link_audit": False, "auto_cover_audit": True}),
+            "Nacitani novych knih + Audit obalek",
+        )
+        self.assertEqual(
+            qt.auto_workflow_title({"auto_link_audit": False, "auto_cover_audit": False}),
+            "Nacitani novych knih",
+        )
 
     def test_normalize_theme_accepts_only_known_values(self):
         import calibre_meta_qt as qt
