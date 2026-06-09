@@ -171,7 +171,8 @@ def normalize_text(text: str) -> str:
     without_series_number = re.sub(r"\(\s*\d+\s*\)", " ", text)
     decomposed = unicodedata.normalize("NFKD", without_series_number)
     without_marks = "".join(char for char in decomposed if not unicodedata.combining(char))
-    normalized_spaces = re.sub(r"\s+", " ", without_marks.lower())
+    without_punctuation = re.sub(r"[^a-z0-9]+", " ", without_marks.lower())
+    normalized_spaces = re.sub(r"\s+", " ", without_punctuation)
     return normalized_spaces.strip()
 
 
@@ -209,6 +210,18 @@ def book_url_to_overview_url(url: str) -> str:
 def build_search_url(title: str, authors: Sequence[str]) -> str:
     query = title + " " + " ".join(authors)
     return SEARCH_URL + urllib.parse.quote_plus(query.strip())
+
+
+def search_variants(title: str, authors: Sequence[str]) -> list[tuple[str, list[str]]]:
+    """Vrati puvodni hledani a fallback bez diakritiky/interpunkce."""
+    variants: list[tuple[str, list[str]]] = [(title, list(authors))]
+    plain_title = normalize_text(title)
+    plain_authors = [normalize_text(author) for author in authors if normalize_text(author)]
+    original_title = re.sub(r"\s+", " ", title.strip().lower())
+    original_authors = [re.sub(r"\s+", " ", author.strip().lower()) for author in authors]
+    if plain_title and (plain_title != original_title or plain_authors != original_authors):
+        variants.append((plain_title, plain_authors))
+    return variants
 
 
 def legie_absolute_url(url: str) -> str:
@@ -1150,6 +1163,34 @@ def should_try_legie(row: MatchRow) -> bool:
     return row.reason in LEGIE_FALLBACK_REASONS
 
 
+def find_databaze_book(
+    book: Book,
+    fetcher: Callable[[str], str],
+    sleeper: Callable[[float], None],
+    sleep_seconds: float,
+) -> MatchRow:
+    """Najde knihu na Databazi knih, s fallbackem bez diakritiky/interpunkce."""
+    best_row: MatchRow | None = None
+    last_error: Exception | None = None
+    for title, authors in search_variants(book.title, book.authors):
+        sleeper(sleep_seconds)
+        try:
+            html = fetcher(build_search_url(title, authors))
+        except Exception as exc:
+            last_error = exc
+            continue
+        row = match_book(book, parse_search_results(html))
+        if best_row is None or (not best_row.chosen_url and row.chosen_url):
+            best_row = row
+        if not should_try_legie(row):
+            return row
+    if best_row is not None:
+        return best_row
+    if last_error is not None:
+        raise last_error
+    return match_book(book, [])
+
+
 def source_and_work_type_for_url(url: str) -> tuple[str, str]:
     """Urci zdroj a typ prace podle odkazu z vyhledavani."""
     if is_valid_legie_story_url(url):
@@ -2045,12 +2086,9 @@ def preview_books(
         if comment_has_databaze_link(book.comment):
             rows.append(match_book(book, []))
             continue
-        # robots.txt byl predchozi HTTP pozadavek, proto pauza patri i pred prvni hledani.
-        sleeper(sleep_seconds)
         searched += 1
         try:
-            html = fetcher(build_search_url(book.title, book.authors))
-            row = match_book(book, parse_search_results(html))
+            row = find_databaze_book(book, fetcher, sleeper, sleep_seconds)
         except Exception:
             authors_text = " & ".join(book.authors)
             row = MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "http-error")
@@ -2096,10 +2134,8 @@ def audit_legie_rows(
         book = Book(row.book_id, row.title, authors, "")
         databaze_row = None
         databaze_failed = False
-        sleeper(sleep_seconds)
         try:
-            databaze_html = fetcher(build_search_url(book.title, book.authors))
-            databaze_row = match_book(book, parse_search_results(databaze_html))
+            databaze_row = find_databaze_book(book, fetcher, sleeper, sleep_seconds)
         except Exception:
             databaze_failed = True
             databaze_row = None

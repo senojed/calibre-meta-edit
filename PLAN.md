@@ -491,6 +491,11 @@
 - Vybrana obalka se pri `Zapsat do Calibre` zapise spolu s metadaty.
 - Pro import knih v rade `0.3.x` zvazit prechod pracovnich dat z CSV do samostatne SQLite databaze aplikace, ne do Calibre `metadata.db`.
 
+## Update 0.2.7 - Search fallback without accents
+
+- Porovnani nazvu ignoruje diakritiku i interpunkci, napr. `Straze straze` vs. `Straze! Straze!`.
+- Audit Databaze knih zkusi fallback dotaz bez diakritiky a interpunkce, kdyz prvni dotaz neda dost jistou shodu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

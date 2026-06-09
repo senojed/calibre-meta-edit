@@ -14,6 +14,9 @@ import calibre_meta_edit as cme
 
 
 class TextAndUrlTests(unittest.TestCase):
+    def test_normalize_text_removes_punctuation_from_title_words(self):
+        self.assertEqual(cme.normalize_text("Stráže! Stráže!"), "straze straze")
+
     def test_normalize_text_removes_diacritics_series_number_and_extra_spaces(self):
         self.assertEqual(cme.normalize_text("  Bouřková   fronta (1)  "), "bourkova fronta")
 
@@ -46,6 +49,11 @@ class TextAndUrlTests(unittest.TestCase):
             url,
             "https://www.databazeknih.cz/vyhledavani/knihy?q=Lo%C4%8F+osudu+Robin+Hobb+Megan+Lindholm",
         )
+
+    def test_search_variants_add_plain_ascii_fallback(self):
+        variants = cme.search_variants("Stráže! Stráže!", ["Terry Pratchett"])
+
+        self.assertEqual(variants, [("Stráže! Stráže!", ["Terry Pratchett"]), ("straze straze", ["terry pratchett"])])
 
     def test_build_legie_search_url_uses_quote_plus_for_title_and_authors(self):
         url = cme.build_legie_search_url("A opice si myslely", ["Orson Scott Card"])
@@ -709,6 +717,42 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/povidky/samuela-2229")
         self.assertEqual(updated[0].source, "databazeknih")
         self.assertEqual(updated[0].work_type, "povidka")
+
+    def test_audit_legie_rows_retries_databaze_without_diacritics_and_punctuation(self):
+        row = cme.MatchRow(
+            459,
+            "Stráže stráže",
+            "Terry Pratchett",
+            "skip",
+            "",
+            "",
+            "none",
+            "no-candidates",
+            "databazeknih",
+            "",
+        )
+        db_html = """
+        <a href="https://www.databazeknih.cz/prehled-knihy/straze-straze-459">
+          <img title="Stráže! Stráže!" />
+          Stráže! Stráže!
+        </a>
+        <p>Terry Pratchett</p>
+        """
+        fetched_urls = []
+
+        def fetcher(url: str) -> str:
+            fetched_urls.append(url)
+            return db_html if "straze+straze+terry+pratchett" in url else ""
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].chosen_url, "https://www.databazeknih.cz/knihy/straze-straze-459")
+        self.assertIn(cme.build_search_url("straze straze", ["terry pratchett"]), fetched_urls)
 
     def test_audit_legie_rows_rechecks_already_linked_row_when_url_was_cleared(self):
         row = cme.MatchRow(
