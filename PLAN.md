@@ -550,6 +550,11 @@
 - V `Review` je prostor pro obrazek obalky skryty, dokud neni potreba vybrat kandidatni obalku.
 - Obnova vyberu po filtru, sortu nebo vyberu obalky hleda radek podle skutecneho ID v tabulce, ne podle stareho indexu.
 
+## Update 0.2.17 - Toolbar order
+
+- V horni liste je mezera za `Ulozit CSV`.
+- `Nacist z Calibre` je pred `Najit / overit odkaz`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

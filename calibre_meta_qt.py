@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.16"
+APP_VERSION = "0.2.17"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -443,8 +443,9 @@ if PYSIDE6_AVAILABLE:
 
             self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open", show_text=False)
             self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save", show_text=False)
-            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
+            toolbar.addSpacing(10)
             self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
+            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
