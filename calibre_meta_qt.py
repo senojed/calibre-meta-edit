@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.13"
+APP_VERSION = "0.2.14"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -133,6 +133,41 @@ def current_data_fields(rows: Sequence[cme.MatchRow], metadata: cme.CurrentBookM
         ("Vydavatel", metadata.publisher or "nenacteno"),
         ("Tagy", ", ".join(metadata.tags or []) or "nenacteno"),
         ("Obalka", "nenacteno"),
+    ]
+
+
+def review_data_fields(
+    rows: Sequence[cme.MatchRow],
+    written_url: str = "",
+    detail: cme.BookDetailMetadata | None = None,
+    error: str = "",
+) -> list[tuple[str, str]]:
+    """Vrati data pro zalozku Review, tedy co se bude zapisovat."""
+    if not rows:
+        return [("Vyber", "bez vyberu")]
+    if len(rows) > 1:
+        return [("Vyber", f"vybrano {len(rows)} knih")]
+    row = rows[0]
+    if error:
+        return [("Chyba", error)]
+    if detail is None:
+        return [
+            ("Status", row.status),
+            ("Zdroj", row.source),
+            ("Typ", row.work_type or "kniha"),
+            ("Zapisovany odkaz", written_url or row.chosen_url or "nenacteno"),
+        ]
+    return [
+        ("Status", row.status),
+        ("Zdroj", row.source),
+        ("Typ", row.work_type or "kniha"),
+        ("Zapisovany odkaz", written_url or row.chosen_url or "nenacteno"),
+        ("Rok vydani", detail.published_year or "nenacteno"),
+        ("Vydavatel", detail.publisher or "nenacteno"),
+        ("Tagy", ", ".join(detail.tags or []) or "nenacteno"),
+        ("Hodnoceni", detail.rating_percent or "nenacteno"),
+        ("Originalni nazev", detail.original_title or "nenacteno"),
+        ("Originalne vyslo", detail.original_publication or "nenacteno"),
     ]
 
 
@@ -256,6 +291,7 @@ if PYSIDE6_AVAILABLE:
 
         finished = Signal(str, int, str, bool)
         cover_ready = Signal(int, str, str, str, bytes)
+        review_ready = Signal(int, int, str, object, str)
 
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
@@ -374,7 +410,9 @@ if PYSIDE6_AVAILABLE:
             self.bridge = WorkerBridge()
             self.bridge.finished.connect(self.finish_background)
             self.bridge.cover_ready.connect(self.finish_cover_preview)
+            self.bridge.review_ready.connect(self.finish_review_metadata_preview)
             self.cover_preview_request_id = 0
+            self.review_preview_request_id = 0
             self.cover_preview_cache: dict[str, tuple[str, bytes]] = {}
             self.cover_option_buttons: dict[str, QToolButton] = {}
             self.setWindowTitle(app_title())
@@ -673,7 +711,25 @@ if PYSIDE6_AVAILABLE:
             review_layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
             review_layout.addWidget(self.cover_source)
             review_layout.addWidget(self.cover_options_widget)
-            review_layout.addStretch(1)
+            review_layout.addWidget(QLabel("Metadata k zapisu"))
+            self.review_data_grid = QGridLayout()
+            self.review_data_labels: dict[str, QLabel] = {}
+            for row_index, field in enumerate(
+                ("Status", "Zdroj", "Typ", "Zapisovany odkaz", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo", "Chyba")
+            ):
+                name = QLabel(field)
+                name.setObjectName("fieldName")
+                value = QLabel("")
+                value.setWordWrap(True)
+                self.review_data_grid.addWidget(name, row_index, 0)
+                self.review_data_grid.addWidget(value, row_index, 1)
+                self.review_data_labels[field] = value
+            review_layout.addLayout(self.review_data_grid)
+            review_layout.addWidget(QLabel("Komentar po zapisu"))
+            self.review_comment_preview = QTextEdit()
+            self.review_comment_preview.setReadOnly(True)
+            self.review_comment_preview.setMinimumHeight(140)
+            review_layout.addWidget(self.review_comment_preview, stretch=1)
             self.detail_tabs.addTab(review_tab, "Review")
 
             self.log_tab = QWidget()
@@ -798,6 +854,7 @@ if PYSIDE6_AVAILABLE:
                 self.url_edit.setText(link_text)
             self.update_link_buttons()
             self.update_cover_preview(rows)
+            self.update_review_metadata_preview(rows)
 
         def update_current_data(self, rows: Sequence[cme.MatchRow]) -> None:
             """Prekresli zalozku Aktualni data."""
@@ -974,6 +1031,68 @@ if PYSIDE6_AVAILABLE:
                 self.cover_image.setText("Nacitam")
                 self.load_cover_url(preview_url)
             self.show_cover_options(row, cover_urls)
+
+        def set_review_fields(self, rows: Sequence[cme.MatchRow], written_url: str = "", detail: cme.BookDetailMetadata | None = None, error: str = "") -> None:
+            """Prekresli metadata, ktera se budou zapisovat."""
+            values = dict(review_data_fields(rows, written_url, detail, error))
+            for field, label in self.review_data_labels.items():
+                label.setText(values.get(field, ""))
+
+        def update_review_metadata_preview(self, rows: Sequence[cme.MatchRow]) -> None:
+            """Na pozadi nacte web metadata pro vybranou knihu."""
+            self.review_preview_request_id += 1
+            request_id = self.review_preview_request_id
+            self.review_comment_preview.setHtml("<p>Bez nahledu</p>")
+            if not rows:
+                self.set_review_fields(rows)
+                return
+            if len(rows) > 1:
+                self.set_review_fields(rows)
+                self.review_comment_preview.setHtml(f"<p>Vybrano {len(rows)} knih</p>")
+                return
+            row = rows[0]
+            self.set_review_fields(rows)
+            url = row.chosen_url.strip()
+            if not url:
+                self.review_comment_preview.setHtml("<p>Bez odkazu</p>")
+                return
+            if cme.is_valid_databaze_story_url(url) or (not cme.is_valid_apply_url(url) and not cme.is_valid_legie_story_url(url)):
+                self.review_comment_preview.setHtml(cme.format_link_html(url))
+                return
+            self.review_comment_preview.setHtml("<p>Nacitam metadata...</p>")
+
+            def worker() -> None:
+                try:
+                    if row.source == "legie" or cme.is_valid_legie_story_url(url):
+                        detail = cme.parse_legie_story_detail(cme.fetch_text(url), url)
+                        comment = cme.format_legie_comment(url, detail)
+                        self.bridge.review_ready.emit(request_id, row.book_id, url, None, comment)
+                        return
+                    if cme.is_valid_apply_url(url):
+                        written_url, detail = cme.fetch_databaze_book_detail_metadata(url)
+                        comment = cme.format_enriched_comment(written_url, detail)
+                        self.bridge.review_ready.emit(request_id, row.book_id, written_url, detail, comment)
+                        return
+                    self.bridge.review_ready.emit(request_id, row.book_id, url, None, cme.format_link_html(url))
+                except Exception as exc:
+                    self.bridge.review_ready.emit(request_id, row.book_id, url, None, "CHYBA: " + str(exc))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def finish_review_metadata_preview(self, request_id: int, book_id: int, written_url: str, detail: object, comment_html: str) -> None:
+            """Prevezme metadata pro Review tab z background threadu."""
+            if request_id != self.review_preview_request_id:
+                return
+            rows = self.selected_rows()
+            if len(rows) != 1 or rows[0].book_id != book_id:
+                return
+            if comment_html.startswith("CHYBA: "):
+                self.set_review_fields(rows, written_url, None, comment_html)
+                self.review_comment_preview.setPlainText(comment_html)
+                return
+            metadata = detail if isinstance(detail, cme.BookDetailMetadata) else None
+            self.set_review_fields(rows, written_url, metadata)
+            self.review_comment_preview.setHtml(comment_html)
 
         def finish_cover_preview(self, request_id: int, label: str, cache_key: str, source: str, image_bytes: bytes) -> None:
             """Prevezme nahled obalky z background threadu."""

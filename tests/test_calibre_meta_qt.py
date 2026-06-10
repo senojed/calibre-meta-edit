@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.13")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.13")
+        self.assertEqual(qt.APP_VERSION, "0.2.14")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.14")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.13")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.14")
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -194,6 +194,40 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(fields["Vydavatel"], "Ikar")
         self.assertEqual(fields["Tagy"], "Fantasy, Humor")
         self.assertEqual(fields["Obalka"], "nenacteno")
+
+    def test_review_data_fields_show_planned_web_metadata(self):
+        import calibre_meta_qt as qt
+
+        row = cme.MatchRow(
+            1,
+            "Pohyblive obrazky",
+            "Terry Pratchett",
+            "review",
+            "https://www.databazeknih.cz/knihy/pohyblive-obrazky-461",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+            "databazeknih",
+            "",
+        )
+        detail = cme.BookDetailMetadata(
+            published_year="1996",
+            publisher="Talpress",
+            tags=["Fantasy", "Humor"],
+            rating_percent="87 %",
+            original_title="Moving Pictures",
+            original_publication="1990",
+        )
+
+        fields = dict(qt.review_data_fields([row], "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", detail))
+
+        self.assertEqual(fields["Rok vydani"], "1996")
+        self.assertEqual(fields["Vydavatel"], "Talpress")
+        self.assertEqual(fields["Tagy"], "Fantasy, Humor")
+        self.assertEqual(fields["Hodnoceni"], "87 %")
+        self.assertEqual(fields["Originalni nazev"], "Moving Pictures")
+        self.assertEqual(fields["Originalne vyslo"], "1990")
+        self.assertEqual(fields["Zapisovany odkaz"], "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461")
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")

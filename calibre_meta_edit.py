@@ -2022,6 +2022,50 @@ def run_metadata_command_with_cover(
         return runner(args_with_cover)
 
 
+def fetch_databaze_book_detail_metadata(
+    url: str,
+    fetcher: Callable[[str], str] | None = None,
+) -> tuple[str, BookDetailMetadata]:
+    """Nacte DK detail stejne jako zapis: hlavni detail, Vice info a nejstarsi vydani."""
+    detail_fetcher = fetcher or fetch_text
+    detail_url = book_url_to_overview_url(url)
+    try:
+        detail_html = detail_fetcher(detail_url)
+    except Exception as exc:
+        raise RuntimeError(f"detail-fetch-error: {exc}") from exc
+
+    detail_extra_html = ""
+    book_id = databaze_book_id_from_url(detail_url)
+    if book_id:
+        try:
+            detail_extra_html = detail_fetcher(databaze_more_info_url(book_id))
+        except Exception:
+            detail_extra_html = ""
+
+    detail = parse_book_detail_metadata(detail_html + detail_extra_html)
+    written_url = detail_url
+    editions_url = extract_editions_url(detail_html)
+    if editions_url:
+        try:
+            oldest_edition = parse_oldest_edition_metadata(detail_fetcher(editions_url))
+        except Exception as exc:
+            raise RuntimeError(f"editions-fetch-error: {exc}") from exc
+        if not (oldest_edition.published_year or oldest_edition.publisher):
+            raise RuntimeError("editions-parse-error")
+        detail = BookDetailMetadata(
+            published_year=oldest_edition.published_year or detail.published_year,
+            publisher=oldest_edition.publisher or detail.publisher,
+            tags=detail.tags,
+            rating_percent=detail.rating_percent,
+            original_title=detail.original_title,
+            original_publication=detail.original_publication,
+            about_text=detail.about_text,
+            cover_url=detail.cover_url,
+        )
+        written_url = oldest_edition.url or detail_url
+    return written_url, detail
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,
@@ -2054,42 +2098,10 @@ def apply_match_row(
             return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
 
-    detail_url = book_url_to_overview_url(row.chosen_url)
-    detail_fetcher = fetcher or fetch_text
     try:
-        detail_html = detail_fetcher(detail_url)
-    except Exception as exc:
-        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"detail-fetch-error: {exc}")
-
-    detail_extra_html = ""
-    book_id = databaze_book_id_from_url(detail_url)
-    if book_id:
-        try:
-            detail_extra_html = detail_fetcher(databaze_more_info_url(book_id))
-        except Exception:
-            detail_extra_html = ""
-
-    detail = parse_book_detail_metadata(detail_html + detail_extra_html)
-    written_url = detail_url
-    editions_url = extract_editions_url(detail_html)
-    if editions_url:
-        try:
-            oldest_edition = parse_oldest_edition_metadata(detail_fetcher(editions_url))
-        except Exception as exc:
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"editions-fetch-error: {exc}")
-        if not (oldest_edition.published_year or oldest_edition.publisher):
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, "editions-parse-error")
-        detail = BookDetailMetadata(
-            published_year=oldest_edition.published_year or detail.published_year,
-            publisher=oldest_edition.publisher or detail.publisher,
-            tags=detail.tags,
-            rating_percent=detail.rating_percent,
-            original_title=detail.original_title,
-            original_publication=detail.original_publication,
-            about_text=detail.about_text,
-            cover_url=detail.cover_url,
-        )
-        written_url = oldest_edition.url or detail_url
+        written_url, detail = fetch_databaze_book_detail_metadata(row.chosen_url, fetcher or fetch_text)
+    except RuntimeError as exc:
+        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
 
     new_comment = format_enriched_comment(written_url, detail)
     args = [

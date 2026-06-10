@@ -1747,6 +1747,42 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("Originalni nazev: Moving Pictures", comments_field)
         self.assertIn("Originalne vyslo: 1990", comments_field)
 
+    def test_fetch_databaze_book_detail_metadata_returns_written_url_and_detail(self):
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "2016-01-01", "publisher": [{"name": "Argo"}], "genre": ["Fantasy"]}
+        </script>
+        <a href='/dalsi-vydani/current-2016'>Vydani</a>
+        <div class='ratValue'>90 <em>%</em></div>
+        <h2>O knize</h2><p>Popis.</p>
+        """
+        more_info_html = """
+        <div class='book-details__row'><dt>Originální název</dt><dd>Original Book, 1990</dd></div>
+        """
+        editions_html = """
+        <a class='bigger' href='/prehled-knihy/oldest-1999'>Kniha</a>
+        <p class='new odtopm'>1999<span>,</span><a href='/nakladatelstvi/talpress-82'>Talpress</a></p>
+        """
+
+        def fetcher(url: str) -> str:
+            if url.endswith("/book-detail-more-info/2016"):
+                return more_info_html
+            if url.endswith("/dalsi-vydani/current-2016"):
+                return editions_html
+            return detail_html
+
+        written_url, detail = cme.fetch_databaze_book_detail_metadata(
+            "https://www.databazeknih.cz/knihy/current-2016",
+            fetcher,
+        )
+
+        self.assertEqual(written_url, "https://www.databazeknih.cz/prehled-knihy/oldest-1999")
+        self.assertEqual(detail.published_year, "1999")
+        self.assertEqual(detail.publisher, "Talpress")
+        self.assertEqual(detail.rating_percent, "90 %")
+        self.assertEqual(detail.original_title, "Original Book")
+        self.assertEqual(detail.original_publication, "1990")
+
     def test_parse_book_detail_metadata_extracts_cover_url(self):
         detail = cme.parse_book_detail_metadata(
             """

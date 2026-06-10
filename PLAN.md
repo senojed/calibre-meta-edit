@@ -532,6 +532,12 @@
 - Kandidat s `Forma = audiokniha` se vyhodi pred matchovanim.
 - Pokud `Vice info` nejde nacist, kandidat zustava, aby audit nespadl kvuli siti.
 
+## Update 0.2.14 - Review write preview
+
+- Zalozka `Review` ukazuje metadata, ktera se zapisi z webu: rok, vydavatele, tagy, hodnoceni a originalni udaje.
+- Zalozka `Review` ukazuje HTML nahled komentare po zapisu.
+- DK nahled pouziva stejnou funkci jako realny zapis, vcetne `Vice info` a nejstarsiho vydani.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
