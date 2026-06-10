@@ -544,6 +544,12 @@
 - Zalozka `Review` uz nezobrazuje `Zapisovany odkaz` ani stale pole `Chyba`.
 - V `Review` se obrazek obalky zobrazi jen pri vyberu kandidatni obalky, ne kdyz uz obalka je v Calibre.
 
+## Update 0.2.16 - Compact review link and stable selection
+
+- V `Review` jsou tlacitka `Pouzit odkaz` a `Otevrit odkaz` jako male ikony vedle pole `Odkaz`.
+- V `Review` je prostor pro obrazek obalky skryty, dokud neni potreba vybrat kandidatni obalku.
+- Obnova vyberu po filtru, sortu nebo vyberu obalky hleda radek podle skutecneho ID v tabulce, ne podle stareho indexu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

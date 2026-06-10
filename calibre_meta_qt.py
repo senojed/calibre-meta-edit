@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.15"
+APP_VERSION = "0.2.16"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -673,19 +673,19 @@ if PYSIDE6_AVAILABLE:
                 status_buttons.setStretch(index, 1)
             review_layout.addLayout(status_buttons)
 
-            review_layout.addWidget(QLabel("Odkaz"))
+            link_row = QHBoxLayout()
+            link_row.addWidget(QLabel("Odkaz"))
             self.url_edit = QLineEdit()
             self.url_edit.setClearButtonEnabled(True)
             self.url_edit.textChanged.connect(self.update_link_buttons)
-            review_layout.addWidget(self.url_edit)
-            url_buttons = QHBoxLayout()
-            self.use_link_button = self._add_button(url_buttons, "Pouzit odkaz", self.apply_selected_url, "neutralButton")
-            self.open_link_button = self._add_button(url_buttons, "Otevrit odkaz", self.open_selected_url, "neutralButton")
-            self.use_link_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.open_link_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            url_buttons.setStretch(0, 1)
-            url_buttons.setStretch(1, 1)
-            review_layout.addLayout(url_buttons)
+            link_row.addWidget(self.url_edit, stretch=1)
+            self.use_link_button = self._add_button(link_row, "Pouzit odkaz", self.apply_selected_url, "neutralButton", "apply", show_text=False)
+            self.open_link_button = self._add_button(link_row, "Otevrit odkaz", self.open_selected_url, "neutralButton", "chrome", show_text=False)
+            self.use_link_button.setFixedSize(28, 28)
+            self.open_link_button.setFixedSize(28, 28)
+            self.use_link_button.setIconSize(QSize(18, 18))
+            self.open_link_button.setIconSize(QSize(18, 18))
+            review_layout.addLayout(link_row)
 
             self.cover_status = QLabel("Bez obalky")
             self.cover_status.setObjectName("coverStatus")
@@ -695,6 +695,7 @@ if PYSIDE6_AVAILABLE:
             self.cover_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.cover_image.setFixedSize(150, 220)
             self.cover_image.setScaledContents(False)
+            self.cover_image.setVisible(False)
             self.cover_source = QLabel("")
             self.cover_source.setWordWrap(True)
             self.cover_options_widget = QWidget()
@@ -812,8 +813,10 @@ if PYSIDE6_AVAILABLE:
                 self.on_selection_changed()
                 return
             self.table.clearSelection()
-            for row_index, row in enumerate(self.filtered_rows):
-                if row.book_id in book_ids:
+            for row_index in range(self.table.rowCount()):
+                item = self.table.item(row_index, 0)
+                book_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+                if book_id in book_ids:
                     self.table.selectRow(row_index)
             self.on_selection_changed()
 
