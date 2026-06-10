@@ -217,6 +217,17 @@ def book_url_to_overview_url(url: str) -> str:
     return clean.replace(BASE_URL + "/knihy/", BASE_URL + "/prehled-knihy/", 1)
 
 
+def databaze_book_id_from_url(url: str) -> str:
+    """Vytahne ciselne ID knihy z konce DK URL."""
+    match = re.search(r"-(\d+)(?:/)?$", databaze_absolute_url(url))
+    return match.group(1) if match else ""
+
+
+def databaze_more_info_url(book_id: str) -> str:
+    """Endpoint pro rozbalene DK pole Vice info."""
+    return BASE_URL + "/book-detail-more-info/" + book_id
+
+
 def build_search_url(title: str, authors: Sequence[str]) -> str:
     query = title + " " + " ".join(authors)
     return SEARCH_URL + urllib.parse.quote_plus(query.strip())
@@ -904,7 +915,7 @@ def _original_metadata_from_text(text: str) -> tuple[str, str]:
     """Najde DK pole Originalni nazev z viditelneho textu stranky."""
     normalized = _clean_text(text)
     match = re.search(
-        r"Originální\s+n[áa]zev:\s*(.*?)(?=\s+(?:Autor|Žánr|Zanr|Série|Serie|Rok vydání|Vydáno|Vydano|ISBN|Štítky|Stitky|Hodnocení|Hodnoceni|O knize)\b|$)",
+        r"Originální\s+n[áa]zev:?\s*(.*?)(?=\s+(?:Autor|Překlad|Preklad|Počet|Pocet|Jazyk|Forma|Vazba|Žánr|Zanr|Série|Serie|Rok vydání|Vydáno|Vydano|ISBN|Štítky|Stitky|Hodnocení|Hodnoceni|O knize)\b|$)",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -1974,7 +1985,15 @@ def apply_match_row(
     except Exception as exc:
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, f"detail-fetch-error: {exc}")
 
-    detail = parse_book_detail_metadata(detail_html)
+    detail_extra_html = ""
+    book_id = databaze_book_id_from_url(detail_url)
+    if book_id:
+        try:
+            detail_extra_html = detail_fetcher(databaze_more_info_url(book_id))
+        except Exception:
+            detail_extra_html = ""
+
+    detail = parse_book_detail_metadata(detail_html + detail_extra_html)
     written_url = detail_url
     editions_url = extract_editions_url(detail_html)
     if editions_url:

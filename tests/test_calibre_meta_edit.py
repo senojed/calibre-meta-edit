@@ -1654,7 +1654,13 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "updated")
-        self.assertEqual(fetched_urls, ["https://www.databazeknih.cz/prehled-knihy/new-2"])
+        self.assertEqual(
+            fetched_urls,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/new-2",
+                "https://www.databazeknih.cz/book-detail-more-info/2",
+            ],
+        )
         self.assertEqual(calls[0][0], r"C:\calibredb.exe")
         self.assertIn("--field", calls[0])
         self.assertIn("pubdate:2013-00-00", calls[0])
@@ -1663,6 +1669,42 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("<strong>89 %</strong>", comments_field)
         self.assertIn("Novy popis.", comments_field)
+
+    def test_apply_match_row_reads_databaze_more_info_original_title(self):
+        row = cme.MatchRow(1, "Pohyblive obrazky", "Terry Pratchett", "approve", "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", "", "exact-title-author", "exact-title-author")
+        calls = []
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "1996-01-01", "publisher": [{"name": "Talpress"}]}
+        </script>
+        <span id='moreBookDetails' bookId='461'><a>Vice info...</a></span>
+        <div class='ratValue'>87 <em>%</em></div>
+        <h2>O knize</h2><p>Popis.</p>
+        """
+        more_info_html = """
+        <div class='book-details__row'>
+          <dt>Originální název</dt>
+          <dd>Moving Pictures, 1990</dd>
+        </div>
+        """
+
+        def fetcher(url: str) -> str:
+            if url.endswith("/book-detail-more-info/461"):
+                return more_info_html
+            return detail_html
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(result.status, "updated")
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("Originalni nazev: Moving Pictures", comments_field)
+        self.assertIn("Originalne vyslo: 1990", comments_field)
 
     def test_parse_book_detail_metadata_extracts_cover_url(self):
         detail = cme.parse_book_detail_metadata(
@@ -1888,6 +1930,8 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             fetched_urls.append(url)
             if url == "https://www.databazeknih.cz/prehled-knihy/current-2016":
                 return overview_html
+            if url == "https://www.databazeknih.cz/book-detail-more-info/2016":
+                return ""
             if url == "https://www.databazeknih.cz/dalsi-vydani/current-2016":
                 return editions_html
             raise AssertionError(url)
@@ -1906,6 +1950,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             fetched_urls,
             [
                 "https://www.databazeknih.cz/prehled-knihy/current-2016",
+                "https://www.databazeknih.cz/book-detail-more-info/2016",
                 "https://www.databazeknih.cz/dalsi-vydani/current-2016",
             ],
         )

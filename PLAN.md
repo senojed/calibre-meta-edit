@@ -520,6 +520,12 @@
 - Zalozka `Aktualni data` cte rok vydani, vydavatele, tagy a komentar primo z Calibre DB.
 - Zalozka `Aktualni data` zobrazuje komentar jako HTML nahled a nema pole `Hodnoceni` ani `Vydani`.
 
+## Update 0.2.12 - DK more info original title
+
+- Pri zapisu DK knih se dotahuje endpoint `book-detail-more-info/<id>`, ktery odpovida rozbaleni `Vice info`.
+- `Originalni nazev` a `Originalne vyslo` se berou i z bloku `Originální název / Moving Pictures, 1990`.
+- Pokud endpoint selze, zapis pokracuje bez techto doplnkovych udaju.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
