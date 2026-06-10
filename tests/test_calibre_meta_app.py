@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.2.17")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.17")
+        self.assertEqual(app.APP_VERSION, "0.2.18")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.2.18")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -399,6 +399,24 @@ class AppModelTests(unittest.TestCase):
         updated = app.update_rows_selected_cover(rows, 1, "https://img/2.jpg")
 
         self.assertEqual(updated[0].selected_cover_url, "https://img/2.jpg")
+
+    def test_update_row_review_override_sets_single_field(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "review", "https://x", "", "manual", "manual")
+
+        updated = app.update_row_review_override(row, "Rok vydani", "1999")
+
+        self.assertEqual(updated.review_published_year, "1999")
+
+    def test_update_rows_review_override_changes_selected_row(self):
+        rows = [
+            cme.MatchRow(1, "A", "Autor", "review", "", "", "none", "x"),
+            cme.MatchRow(2, "B", "Autor", "review", "", "", "none", "x"),
+        ]
+
+        updated = app.update_rows_review_override(rows, 2, "Vydavatel", "Talpress")
+
+        self.assertEqual(updated[0].review_publisher, "")
+        self.assertEqual(updated[1].review_publisher, "Talpress")
 
     def test_update_rows_selected_cover_rejects_unknown_cover_url(self):
         rows = [

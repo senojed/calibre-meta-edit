@@ -17,7 +17,7 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import urllib.robotparser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -49,6 +49,12 @@ MATCHES_FIELDS = [
     "cover_urls",
     "selected_cover_url",
     "cover_reason",
+    "review_published_year",
+    "review_publisher",
+    "review_tags",
+    "review_rating_percent",
+    "review_original_title",
+    "review_original_publication",
 ]
 APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error"]
 
@@ -83,6 +89,12 @@ class MatchRow:
     cover_urls: str = ""
     selected_cover_url: str = ""
     cover_reason: str = ""
+    review_published_year: str = ""
+    review_publisher: str = ""
+    review_tags: str = ""
+    review_rating_percent: str = ""
+    review_original_title: str = ""
+    review_original_publication: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,20 +171,17 @@ class CoverOption:
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
     """Prenese stav obalek ze stareho radku do noveho radku."""
-    return MatchRow(
-        target.book_id,
-        target.title,
-        target.authors,
-        target.status,
-        target.chosen_url,
-        target.candidate_urls,
-        target.confidence,
-        target.reason,
-        target.source,
-        target.work_type,
-        source.cover_urls,
-        source.selected_cover_url,
-        source.cover_reason,
+    return replace(
+        target,
+        cover_urls=source.cover_urls,
+        selected_cover_url=source.selected_cover_url,
+        cover_reason=source.cover_reason,
+        review_published_year=source.review_published_year,
+        review_publisher=source.review_publisher,
+        review_tags=source.review_tags,
+        review_rating_percent=source.review_rating_percent,
+        review_original_title=source.review_original_title,
+        review_original_publication=source.review_original_publication,
     )
 
 
@@ -287,6 +296,25 @@ def format_enriched_comment(url: str, detail: BookDetailMetadata) -> str:
         parts.append(f"<p>{html.escape(detail.about_text)}</p>")
     parts.append("</div>")
     return "\n".join(parts)
+
+
+def _review_tags(value: str) -> list[str] | None:
+    tags = [item.strip() for item in value.split(",") if item.strip()]
+    return tags if tags else None
+
+
+def apply_review_overrides(row: MatchRow, detail: BookDetailMetadata) -> BookDetailMetadata:
+    """Prekryje web metadata rucne upravenymi hodnotami z Review tabu."""
+    return BookDetailMetadata(
+        published_year=row.review_published_year.strip() or detail.published_year,
+        publisher=row.review_publisher.strip() or detail.publisher,
+        tags=_review_tags(row.review_tags) or detail.tags,
+        rating_percent=row.review_rating_percent.strip() or detail.rating_percent,
+        original_title=row.review_original_title.strip() or detail.original_title,
+        original_publication=row.review_original_publication.strip() or detail.original_publication,
+        about_text=detail.about_text,
+        cover_url=detail.cover_url,
+    )
 
 
 def add_target_blank_to_databaze_links(comment: str | None) -> str:
@@ -1486,6 +1514,12 @@ def read_matches_csv(path: Path) -> list[MatchRow]:
                     raw.get("cover_urls") or "",
                     raw.get("selected_cover_url") or "",
                     raw.get("cover_reason") or "",
+                    raw.get("review_published_year") or "",
+                    raw.get("review_publisher") or "",
+                    raw.get("review_tags") or "",
+                    raw.get("review_rating_percent") or "",
+                    raw.get("review_original_title") or "",
+                    raw.get("review_original_publication") or "",
                 )
             )
     return rows
@@ -1835,20 +1869,12 @@ def with_cover_fields(
     status: str | None = None,
 ) -> MatchRow:
     """Vrati radek se zmenenym stavem obalek."""
-    return MatchRow(
-        row.book_id,
-        row.title,
-        row.authors,
-        status or row.status,
-        row.chosen_url,
-        row.candidate_urls,
-        row.confidence,
-        row.reason,
-        row.source,
-        row.work_type,
-        cover_urls,
-        selected_cover_url,
-        cover_reason,
+    return replace(
+        row,
+        status=status or row.status,
+        cover_urls=cover_urls,
+        selected_cover_url=selected_cover_url,
+        cover_reason=cover_reason,
     )
 
 
@@ -2102,6 +2128,7 @@ def apply_match_row(
         written_url, detail = fetch_databaze_book_detail_metadata(row.chosen_url, fetcher or fetch_text)
     except RuntimeError as exc:
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+    detail = apply_review_overrides(row, detail)
 
     new_comment = format_enriched_comment(written_url, detail)
     args = [
@@ -2455,20 +2482,10 @@ def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence
         if row.status == "approve" and row.book_id in finished_results:
             result = finished_results[row.book_id]
             updated_rows.append(
-                MatchRow(
-                    row.book_id,
-                    row.title,
-                    row.authors,
-                    "skip",
-                    result.chosen_url or row.chosen_url,
-                    row.candidate_urls,
-                    row.confidence,
-                    row.reason,
-                    row.source,
-                    row.work_type,
-                    row.cover_urls,
-                    row.selected_cover_url,
-                    row.cover_reason,
+                replace(
+                    row,
+                    status="skip",
+                    chosen_url=result.chosen_url or row.chosen_url,
                 )
             )
             continue

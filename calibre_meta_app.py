@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.17"
+APP_VERSION = "0.2.18"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -269,6 +269,29 @@ def update_rows_selected_cover(rows: Sequence[cme.MatchRow], book_id: int, selec
             raise ValueError("Vybrana obalka neni mezi kandidaty.")
         updated.append(replace(row, selected_cover_url=selected_cover_url))
     return updated
+
+
+REVIEW_OVERRIDE_FIELDS = {
+    "Rok vydani": "review_published_year",
+    "Vydavatel": "review_publisher",
+    "Tagy": "review_tags",
+    "Hodnoceni": "review_rating_percent",
+    "Originalni nazev": "review_original_title",
+    "Originalne vyslo": "review_original_publication",
+}
+
+
+def update_row_review_override(row: cme.MatchRow, field: str, value: str) -> cme.MatchRow:
+    """Ulozi rucni hodnotu z Review tabu do jednoho radku."""
+    attr = REVIEW_OVERRIDE_FIELDS.get(field)
+    if attr is None:
+        raise ValueError(f"Neznamy Review field: {field}")
+    return replace(row, **{attr: value.strip()})
+
+
+def update_rows_review_override(rows: Sequence[cme.MatchRow], book_id: int, field: str, value: str) -> list[cme.MatchRow]:
+    """Ulozi rucni hodnotu z Review tabu do vybrane knihy."""
+    return [update_row_review_override(row, field, value) if row.book_id == book_id else row for row in rows]
 
 
 def rows_missing_cover_choice(rows: Sequence[cme.MatchRow], book_ids: set[int]) -> list[cme.MatchRow]:

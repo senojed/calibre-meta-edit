@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.17")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.17")
+        self.assertEqual(qt.APP_VERSION, "0.2.18")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.18")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.17")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.18")
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -230,6 +230,30 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(fields["Hodnoceni"], "87 %")
         self.assertEqual(fields["Originalni nazev"], "Moving Pictures")
         self.assertEqual(fields["Originalne vyslo"], "1990")
+
+    def test_review_data_fields_apply_row_overrides(self):
+        import calibre_meta_qt as qt
+
+        row = cme.MatchRow(
+            1,
+            "Pohyblive obrazky",
+            "Terry Pratchett",
+            "review",
+            "https://www.databazeknih.cz/knihy/pohyblive-obrazky-461",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+            "databazeknih",
+            "",
+            review_published_year="1999",
+            review_publisher="Rucne",
+        )
+        detail = cme.BookDetailMetadata(published_year="1996", publisher="Talpress")
+
+        fields = dict(qt.review_data_fields([row], "", detail))
+
+        self.assertEqual(fields["Rok vydani"], "1999")
+        self.assertEqual(fields["Vydavatel"], "Rucne")
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")

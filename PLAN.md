@@ -555,6 +555,12 @@
 - V horni liste je mezera za `Ulozit CSV`.
 - `Nacist z Calibre` je pred `Najit / overit odkaz`.
 
+## Update 0.2.18 - Editable Review metadata
+
+- Zalozka `Review` ma editovatelny rok vydani, vydavatele, tagy, hodnoceni a originalni udaje.
+- Rucni hodnoty se ukladaji do `matches.csv`.
+- Zapis do Calibre pouzije rucni hodnoty pred webovymi; prazdne pole znamena pouzit webovou hodnotu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

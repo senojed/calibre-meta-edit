@@ -1224,6 +1224,35 @@ class CsvAndFilesystemTests(unittest.TestCase):
         self.assertEqual(rows[0].selected_cover_url, "https://img/2.jpg")
         self.assertEqual(rows[0].cover_reason, "multiple-cover-candidates")
 
+    def test_write_matches_csv_writes_review_override_columns(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            review_published_year="1999",
+            review_publisher="Talpress",
+            review_tags="Fantasy, Humor",
+            review_rating_percent="87 %",
+            review_original_title="Moving Pictures",
+            review_original_publication="1990",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.csv"
+            cme.write_matches_csv(path, [row], overwrite=False)
+            rows = cme.read_matches_csv(path)
+
+        self.assertEqual(rows[0].review_published_year, "1999")
+        self.assertEqual(rows[0].review_publisher, "Talpress")
+        self.assertEqual(rows[0].review_tags, "Fantasy, Humor")
+        self.assertEqual(rows[0].review_rating_percent, "87 %")
+        self.assertEqual(rows[0].review_original_title, "Moving Pictures")
+        self.assertEqual(rows[0].review_original_publication, "1990")
+
     def test_filter_new_books_skips_books_already_in_matches_csv(self):
         books = [
             cme.Book(1, "Stara kniha", ["Autor"], ""),
@@ -1236,6 +1265,25 @@ class CsvAndFilesystemTests(unittest.TestCase):
         new_books = cme.filter_new_books(books, existing_rows)
 
         self.assertEqual([book.id for book in new_books], [2])
+
+    def test_replace_match_rows_preserves_review_overrides(self):
+        old_row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://old",
+            "",
+            "manual",
+            "manual",
+            review_published_year="1999",
+        )
+        refreshed = cme.MatchRow(1, "Kniha", "Autor", "skip", "https://new", "", "exact", "exact")
+
+        merged = cme.replace_match_rows([old_row], [refreshed])
+
+        self.assertEqual(merged[0].chosen_url, "https://new")
+        self.assertEqual(merged[0].review_published_year, "1999")
 
     def test_run_preview_existing_matches_processes_only_new_books(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1710,6 +1758,49 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("<strong>89 %</strong>", comments_field)
         self.assertIn("Novy popis.", comments_field)
+
+    def test_apply_match_row_uses_review_override_metadata(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/new-2",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+            review_published_year="1999",
+            review_publisher="Rucni vydavatel",
+            review_tags="Rucni, Tag",
+            review_rating_percent="77 %",
+            review_original_title="Rucni original",
+            review_original_publication="1988",
+        )
+        calls = []
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "datePublished": "2013-01-01", "publisher": [{"name": "Fantom Print"}], "genre": ["Fantasy"]}
+        </script>
+        <div class='ratValue'>89 <em>%</em></div>
+        <h2>O knize</h2><p>Popis.</p>
+        """
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: detail_html,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertIn("pubdate:1999-00-00", calls[0])
+        self.assertIn("publisher:Rucni vydavatel", calls[0])
+        self.assertIn("tags:Rucni,Tag", calls[0])
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("<strong>77 %</strong>", comments_field)
+        self.assertIn("Originalni nazev: Rucni original", comments_field)
+        self.assertIn("Originalne vyslo: 1988", comments_field)
 
     def test_apply_match_row_reads_databaze_more_info_original_title(self):
         row = cme.MatchRow(1, "Pohyblive obrazky", "Terry Pratchett", "approve", "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", "", "exact-title-author", "exact-title-author")

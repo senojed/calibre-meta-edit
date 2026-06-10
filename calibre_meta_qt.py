@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.17"
+APP_VERSION = "0.2.18"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -28,6 +28,7 @@ STATUS_FILTER_VALUES = ("approve", "review", "skip")
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
+REVIEW_EDITABLE_FIELDS = ("Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
 AUTO_SETTING_DEFAULTS = {
     "startup_preview": True,
     "auto_link_audit": True,
@@ -153,6 +154,7 @@ def review_data_fields(
             ("Zdroj", row.source),
             ("Typ", row.work_type or "kniha"),
         ]
+    detail = cme.apply_review_overrides(row, detail)
     return [
         ("Status", row.status),
         ("Zdroj", row.source),
@@ -408,6 +410,9 @@ if PYSIDE6_AVAILABLE:
             self.bridge.review_ready.connect(self.finish_review_metadata_preview)
             self.cover_preview_request_id = 0
             self.review_preview_request_id = 0
+            self.review_preview_book_id: int | None = None
+            self.review_preview_written_url = ""
+            self.review_preview_detail: cme.BookDetailMetadata | None = None
             self.cover_preview_cache: dict[str, tuple[str, bytes]] = {}
             self.cover_option_buttons: dict[str, QToolButton] = {}
             self.setWindowTitle(app_title())
@@ -711,16 +716,23 @@ if PYSIDE6_AVAILABLE:
             review_layout.addWidget(QLabel("Metadata k zapisu"))
             self.review_data_grid = QGridLayout()
             self.review_data_labels: dict[str, QLabel] = {}
+            self.review_data_edits: dict[str, QLineEdit] = {}
             for row_index, field in enumerate(
                 ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
-                value = QLabel("")
-                value.setWordWrap(True)
+                if field in REVIEW_EDITABLE_FIELDS:
+                    value = QLineEdit()
+                    value.setClearButtonEnabled(True)
+                    value.textEdited.connect(lambda text, field=field: self.review_field_edited(field, text))
+                    self.review_data_edits[field] = value
+                else:
+                    value = QLabel("")
+                    value.setWordWrap(True)
+                    self.review_data_labels[field] = value
                 self.review_data_grid.addWidget(name, row_index, 0)
                 self.review_data_grid.addWidget(value, row_index, 1)
-                self.review_data_labels[field] = value
             review_layout.addLayout(self.review_data_grid)
             review_layout.addWidget(QLabel("Komentar po zapisu"))
             self.review_comment_preview = QTextEdit()
@@ -1039,11 +1051,39 @@ if PYSIDE6_AVAILABLE:
             values = dict(review_data_fields(rows, written_url, detail, error))
             for field, label in self.review_data_labels.items():
                 label.setText(values.get(field, ""))
+            for field, edit in self.review_data_edits.items():
+                edit.blockSignals(True)
+                edit.setText(values.get(field, ""))
+                edit.setEnabled(detail is not None and len(rows) == 1)
+                edit.blockSignals(False)
+
+        def review_field_edited(self, field: str, value: str) -> None:
+            """Ulozi rucne upravenou hodnotu Review pole do CSV radku."""
+            rows = self.selected_rows()
+            if len(rows) != 1:
+                return
+            book_id = rows[0].book_id
+            self.rows = shared.update_rows_review_override(self.rows, book_id, field, value)
+            self.save_csv(show_message=False)
+            updated = self.selected_rows()
+            if len(updated) != 1:
+                return
+            self.render_review_comment_from_current_fields(updated[0])
+
+        def render_review_comment_from_current_fields(self, row: cme.MatchRow) -> None:
+            """Prekresli komentar po rucni zmene Review pole."""
+            if self.review_preview_book_id != row.book_id or self.review_preview_detail is None:
+                return
+            detail = cme.apply_review_overrides(row, self.review_preview_detail)
+            self.review_comment_preview.setHtml(cme.format_enriched_comment(self.review_preview_written_url, detail))
 
         def update_review_metadata_preview(self, rows: Sequence[cme.MatchRow]) -> None:
             """Na pozadi nacte web metadata pro vybranou knihu."""
             self.review_preview_request_id += 1
             request_id = self.review_preview_request_id
+            self.review_preview_book_id = None
+            self.review_preview_written_url = ""
+            self.review_preview_detail = None
             self.review_comment_preview.setHtml("<p>Bez nahledu</p>")
             if not rows:
                 self.set_review_fields(rows)
@@ -1093,8 +1133,15 @@ if PYSIDE6_AVAILABLE:
                 self.review_comment_preview.setPlainText(comment_html)
                 return
             metadata = detail if isinstance(detail, cme.BookDetailMetadata) else None
+            self.review_preview_book_id = book_id
+            self.review_preview_written_url = written_url
+            self.review_preview_detail = metadata
             self.set_review_fields(rows, written_url, metadata)
-            self.review_comment_preview.setHtml(comment_html)
+            if metadata is not None:
+                rendered_detail = cme.apply_review_overrides(rows[0], metadata)
+                self.review_comment_preview.setHtml(cme.format_enriched_comment(written_url, rendered_detail))
+            else:
+                self.review_comment_preview.setHtml(comment_html)
 
         def finish_cover_preview(self, request_id: int, label: str, cache_key: str, source: str, image_bytes: bytes) -> None:
             """Prevezme nahled obalky z background threadu."""
