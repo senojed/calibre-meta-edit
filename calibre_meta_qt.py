@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.10"
+APP_VERSION = "0.2.11"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -113,13 +113,14 @@ def open_link_enabled(rows: Sequence[cme.MatchRow], link_text: str) -> bool:
     return use_link_enabled(rows, link_text) and bool(link_text.strip())
 
 
-def current_data_fields(rows: Sequence[cme.MatchRow]) -> list[tuple[str, str]]:
-    """Vrati data pro zalozku Aktualni data; web metadata zatim nejsou v CSV."""
+def current_data_fields(rows: Sequence[cme.MatchRow], metadata: cme.CurrentBookMetadata | None = None) -> list[tuple[str, str]]:
+    """Vrati data pro zalozku Aktualni data z Calibre."""
     if not rows:
         return [("Vyber", "bez vyberu")]
     if len(rows) > 1:
         return [("Vyber", f"vybrano {len(rows)} knih")]
     row = rows[0]
+    metadata = metadata or cme.CurrentBookMetadata(tags=[])
     return [
         ("ID", str(row.book_id)),
         ("Kniha", row.title),
@@ -128,11 +129,9 @@ def current_data_fields(rows: Sequence[cme.MatchRow]) -> list[tuple[str, str]]:
         ("Zdroj", row.source),
         ("Typ", row.work_type or "kniha"),
         ("Odkaz", row.chosen_url or "nenacteno"),
-        ("Rok vydani", "nenacteno"),
-        ("Hodnoceni", "nenacteno"),
-        ("Vydani", "nenacteno"),
-        ("Vydavatel", "nenacteno"),
-        ("Tagy", "nenacteno"),
+        ("Rok vydani", metadata.published_year or "nenacteno"),
+        ("Vydavatel", metadata.publisher or "nenacteno"),
+        ("Tagy", ", ".join(metadata.tags or []) or "nenacteno"),
         ("Obalka", "nenacteno"),
     ]
 
@@ -602,7 +601,7 @@ if PYSIDE6_AVAILABLE:
             self.current_data_grid = QGridLayout()
             self.current_data_labels: dict[str, QLabel] = {}
             for row_index, field in enumerate(
-                ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Rok vydani", "Hodnoceni", "Vydani", "Vydavatel", "Tagy", "Obalka")
+                ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Rok vydani", "Vydavatel", "Tagy", "Obalka")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
@@ -617,6 +616,11 @@ if PYSIDE6_AVAILABLE:
             self.current_cover_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.current_cover_image.setFixedSize(150, 220)
             current_layout.addWidget(self.current_cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
+            current_layout.addWidget(QLabel("Komentar"))
+            self.current_comment_preview = QTextEdit()
+            self.current_comment_preview.setReadOnly(True)
+            self.current_comment_preview.setMinimumHeight(160)
+            current_layout.addWidget(self.current_comment_preview, stretch=1)
             current_layout.addStretch(1)
             self.detail_tabs.addTab(current_tab, "Aktualni data")
 
@@ -797,9 +801,19 @@ if PYSIDE6_AVAILABLE:
 
         def update_current_data(self, rows: Sequence[cme.MatchRow]) -> None:
             """Prekresli zalozku Aktualni data."""
-            values = dict(current_data_fields(rows))
+            metadata: cme.CurrentBookMetadata | None = None
+            if len(rows) == 1:
+                try:
+                    metadata = cme.get_current_book_metadata(self.library_path, rows[0].book_id)
+                except Exception:
+                    metadata = cme.CurrentBookMetadata(tags=[])
+            values = dict(current_data_fields(rows, metadata))
             for field, label in self.current_data_labels.items():
                 label.setText(values.get(field, ""))
+            if metadata is not None and metadata.comment:
+                self.current_comment_preview.setHtml(metadata.comment)
+            else:
+                self.current_comment_preview.setHtml("<p>Bez komentare</p>")
             self.update_current_cover(rows)
 
         def update_current_cover(self, rows: Sequence[cme.MatchRow]) -> None:

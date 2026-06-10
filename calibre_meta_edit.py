@@ -91,8 +91,18 @@ class BookDetailMetadata:
     publisher: str = ""
     tags: list[str] | None = None
     rating_percent: str = ""
+    original_title: str = ""
+    original_publication: str = ""
     about_text: str = ""
     cover_url: str = ""
+
+
+@dataclass(frozen=True)
+class CurrentBookMetadata:
+    published_year: str = ""
+    publisher: str = ""
+    tags: list[str] | None = None
+    comment: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,6 +265,13 @@ def format_enriched_comment(url: str, detail: BookDetailMetadata) -> str:
     ]
     if detail.rating_percent:
         parts.append(f"<p><strong>{html.escape(detail.rating_percent)}</strong></p>")
+    facts = []
+    if detail.original_title:
+        facts.append(f"Originalni nazev: {detail.original_title}")
+    if detail.original_publication:
+        facts.append(f"Originalne vyslo: {detail.original_publication}")
+    if facts:
+        parts.append("<p>" + "<br />".join(html.escape(item) for item in facts) + "</p>")
     if detail.about_text:
         parts.append(f"<p>{html.escape(detail.about_text)}</p>")
     parts.append("</div>")
@@ -484,6 +501,7 @@ class BookDetailParser(HTMLParser):
         self.user_tags: list[str] = []
         self.cover_url = ""
         self.cover_urls: list[str] = []
+        self.visible_text_parts: list[str] = []
 
         self._json_parts: list[str] = []
         self._inside_json_ld = False
@@ -609,6 +627,8 @@ class BookDetailParser(HTMLParser):
             self._inside_user_tag = False
 
     def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.visible_text_parts.append(data.strip())
         if self._inside_json_ld:
             self._json_parts.append(data)
         if self._rating_depth:
@@ -868,6 +888,31 @@ def parse_oldest_edition_metadata(html_text: str) -> EditionMetadata:
     return min(parser.editions, key=lambda edition: int(edition.published_year))
 
 
+def _split_original_title_and_publication(value: str) -> tuple[str, str]:
+    """Rozdeli text DK originalniho nazvu na nazev a datum/rok."""
+    cleaned = _clean_text(value).strip(" ,")
+    match = re.search(r"\(([^)]*(?:\d{4}|\d{1,2}/\d{4})[^)]*)\)\s*$", cleaned)
+    if match:
+        return cleaned[: match.start()].strip(" ,"), match.group(1).strip()
+    match = re.search(r"\b(\d{1,2}/\d{4}|\d{4})\s*$", cleaned)
+    if match:
+        return cleaned[: match.start()].strip(" ,"), match.group(1).strip()
+    return cleaned, ""
+
+
+def _original_metadata_from_text(text: str) -> tuple[str, str]:
+    """Najde DK pole Originalni nazev z viditelneho textu stranky."""
+    normalized = _clean_text(text)
+    match = re.search(
+        r"Originální\s+n[áa]zev:\s*(.*?)(?=\s+(?:Autor|Žánr|Zanr|Série|Serie|Rok vydání|Vydáno|Vydano|ISBN|Štítky|Stitky|Hodnocení|Hodnoceni|O knize)\b|$)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return "", ""
+    return _split_original_title_and_publication(match.group(1))
+
+
 def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     parser = BookDetailParser()
     parser.feed(html_text)
@@ -880,12 +925,15 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     about_text = parser.about_text or (_clean_text(description) if isinstance(description, str) else "")
     rating = parser.rating_percent or _rating_from_json(book_json.get("aggregateRating"))
     tags = _dedupe_tags(_genre_tags(book_json.get("genre")) + parser.user_tags)
+    original_title, original_publication = _original_metadata_from_text(" ".join(parser.visible_text_parts))
 
     return BookDetailMetadata(
         published_year=published_year,
         publisher=_publisher_name(book_json.get("publisher")),
         tags=tags,
         rating_percent=rating,
+        original_title=original_title,
+        original_publication=original_publication,
         about_text=about_text,
         cover_url=_image_url_from_json(book_json.get("image")) or parser.cover_url,
     )
@@ -1569,6 +1617,57 @@ def get_current_tags(library: str | Path, book_id: int) -> list[str]:
     return [row["name"] for row in rows]
 
 
+def _year_from_calibre_pubdate(value: str | None) -> str:
+    match = re.search(r"\b(1\d{3}|20\d{2})\b", value or "")
+    return match.group(1) if match else ""
+
+
+def get_current_book_metadata(library: str | Path, book_id: int) -> CurrentBookMetadata:
+    """Precte aktualni metadata z Calibre DB pro pravy panel appky."""
+    connection = open_calibre_db_readonly(library)
+    try:
+        row = connection.execute(
+            """
+            select b.pubdate, coalesce(c.text, '') as comment
+            from books b
+            left join comments c on c.book = b.id
+            where b.id = ?
+            """,
+            (book_id,),
+        ).fetchone()
+        publisher_row = connection.execute(
+            """
+            select p.name
+            from publishers p
+            join books_publishers_link bpl on bpl.publisher = p.id
+            where bpl.book = ?
+            order by p.name
+            limit 1
+            """,
+            (book_id,),
+        ).fetchone()
+        tag_rows = connection.execute(
+            """
+            select t.name
+            from tags t
+            join books_tags_link btl on btl.tag = t.id
+            where btl.book = ?
+            order by t.name
+            """,
+            (book_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+    if row is None:
+        return CurrentBookMetadata(tags=[])
+    return CurrentBookMetadata(
+        published_year=_year_from_calibre_pubdate(row["pubdate"]),
+        publisher="" if publisher_row is None else publisher_row["name"] or "",
+        tags=[tag["name"] for tag in tag_rows],
+        comment=row["comment"] or "",
+    )
+
+
 def get_cover_flags(library: str | Path, book_ids: set[int] | None = None) -> dict[int, bool]:
     """Read-only zjisti, ktere knihy uz maji v Calibre obalku."""
     query = "select id, has_cover from books"
@@ -1890,6 +1989,8 @@ def apply_match_row(
             publisher=oldest_edition.publisher or detail.publisher,
             tags=detail.tags,
             rating_percent=detail.rating_percent,
+            original_title=detail.original_title,
+            original_publication=detail.original_publication,
             about_text=detail.about_text,
             cover_url=detail.cover_url,
         )

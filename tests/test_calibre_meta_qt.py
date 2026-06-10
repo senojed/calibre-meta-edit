@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.10")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.10")
+        self.assertEqual(qt.APP_VERSION, "0.2.11")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.11")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.10")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.11")
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -167,7 +167,7 @@ class QtHelperTests(unittest.TestCase):
         self.assertTrue(qt.selection_link_actions_enabled(rows))
         self.assertTrue(qt.open_link_enabled(rows, "https://x"))
 
-    def test_current_data_fields_include_future_metadata_slots(self):
+    def test_current_data_fields_reads_calibre_metadata_slots(self):
         import calibre_meta_qt as qt
 
         row = cme.MatchRow(
@@ -184,14 +184,15 @@ class QtHelperTests(unittest.TestCase):
             cover_urls="https://img/1.jpg|https://img/2.jpg",
         )
 
-        fields = dict(qt.current_data_fields([row]))
+        metadata = cme.CurrentBookMetadata("1987", "Ikar", ["Fantasy", "Humor"], "<p>Komentar</p>")
+        fields = dict(qt.current_data_fields([row], metadata))
 
         self.assertEqual(fields["Kniha"], "Straze! Straze!")
-        self.assertEqual(fields["Rok vydani"], "nenacteno")
-        self.assertEqual(fields["Hodnoceni"], "nenacteno")
-        self.assertEqual(fields["Vydani"], "nenacteno")
-        self.assertEqual(fields["Vydavatel"], "nenacteno")
-        self.assertEqual(fields["Tagy"], "nenacteno")
+        self.assertEqual(fields["Rok vydani"], "1987")
+        self.assertNotIn("Hodnoceni", fields)
+        self.assertNotIn("Vydani", fields)
+        self.assertEqual(fields["Vydavatel"], "Ikar")
+        self.assertEqual(fields["Tagy"], "Fantasy, Humor")
         self.assertEqual(fields["Obalka"], "nenacteno")
 
 

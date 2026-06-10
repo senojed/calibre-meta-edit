@@ -514,6 +514,12 @@
 - Zalozka `Aktualni data` uz neukazuje pocet kandidatnich obalek.
 - Zalozka `Review` pri existujici obalce v Calibre ukaze jen text `Obalka uz je v Calibre`, bez obrazku.
 
+## Update 0.2.11 - Current Calibre data and DK original info
+
+- DK komentar doplnuje `Originalni nazev` a `Originalne vyslo`, kdyz je DK detail poskytne.
+- Zalozka `Aktualni data` cte rok vydani, vydavatele, tagy a komentar primo z Calibre DB.
+- Zalozka `Aktualni data` zobrazuje komentar jako HTML nahled a nema pole `Hodnoceni` ani `Vydani`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

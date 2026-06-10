@@ -115,6 +115,8 @@ class CommentTests(unittest.TestCase):
             publisher="Fantom Print",
             tags=["Literatura svetova", "Romany"],
             rating_percent="89 %",
+            original_title="Twenty Pence with Envelope and Seasonal Greeting",
+            original_publication="12/1987",
             about_text="Popis knihy & dalsi text.",
         )
 
@@ -122,6 +124,8 @@ class CommentTests(unittest.TestCase):
 
         self.assertIn('<a href="https://www.databazeknih.cz/knihy/foo-123" target="_blank">', comment)
         self.assertIn("<p><strong>89 %</strong></p>", comment)
+        self.assertIn("Originalni nazev: Twenty Pence with Envelope and Seasonal Greeting", comment)
+        self.assertIn("Originalne vyslo: 12/1987", comment)
         self.assertIn("<p>Popis knihy &amp; dalsi text.</p>", comment)
         self.assertNotIn("Puvodni", comment)
 
@@ -305,6 +309,19 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.rating_percent, "89 %")
         self.assertEqual(detail.about_text, "Prvni cast. Druha cast.")
         self.assertEqual(detail.tags, ["Literatura svetova", "Romany", "Fantasy", "draci"])
+
+    def test_parse_book_detail_metadata_reads_original_title_and_publication(self):
+        html = """
+        <div>
+          <span>Originální název:</span>
+          <span>Twenty Pence with Envelope and Seasonal Greeting (12/1987)</span>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.original_title, "Twenty Pence with Envelope and Seasonal Greeting")
+        self.assertEqual(detail.original_publication, "12/1987")
 
     def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
         html = """
@@ -1730,6 +1747,38 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             connection.close()
 
             self.assertEqual(cme.get_local_cover_path(library, 1), cover)
+
+    def test_get_current_book_metadata_reads_pubdate_publisher_tags_and_comment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            connection = sqlite3.connect(library / "metadata.db")
+            try:
+                connection.executescript(
+                    """
+                    create table books (id integer primary key, pubdate text);
+                    create table comments (book integer primary key, text text);
+                    create table publishers (id integer primary key, name text);
+                    create table books_publishers_link (book integer, publisher integer);
+                    create table tags (id integer primary key, name text);
+                    create table books_tags_link (book integer, tag integer);
+                    insert into books(id, pubdate) values(1, '1987-00-00 00:00:00+00:00');
+                    insert into comments(book, text) values(1, '<p>Komentar</p>');
+                    insert into publishers(id, name) values(1, 'Ikar');
+                    insert into books_publishers_link(book, publisher) values(1, 1);
+                    insert into tags(id, name) values(1, 'Fantasy'), (2, 'Humor');
+                    insert into books_tags_link(book, tag) values(1, 1), (1, 2);
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            metadata = cme.get_current_book_metadata(library, 1)
+
+        self.assertEqual(metadata.published_year, "1987")
+        self.assertEqual(metadata.publisher, "Ikar")
+        self.assertEqual(metadata.tags, ["Fantasy", "Humor"])
+        self.assertEqual(metadata.comment, "<p>Komentar</p>")
 
     def test_audit_cover_rows_marks_multiple_cover_candidates_review(self):
         rows = [
