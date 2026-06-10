@@ -412,6 +412,57 @@ def parse_search_results(html: str) -> list[Candidate]:
     return parser.candidates
 
 
+class DatabazeMoreInfoParser(HTMLParser):
+    """Parser DK bloku Vice info s dvojicemi dt/dd."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fields: dict[str, str] = {}
+        self._current_label = ""
+        self._parts: list[str] = []
+        self._mode = ""
+        self._depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.lower()
+        if lowered in {"dt", "dd"}:
+            self._mode = lowered
+            self._parts = []
+            self._depth = 1
+        elif self._depth:
+            self._depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._depth:
+            return
+        self._depth -= 1
+        if self._depth:
+            return
+        text = _clean_text(" ".join(self._parts))
+        if self._mode == "dt":
+            self._current_label = text
+        elif self._mode == "dd" and self._current_label:
+            self.fields[self._current_label] = text
+        self._mode = ""
+        self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._depth and data.strip():
+            self._parts.append(data.strip())
+
+
+def parse_databaze_more_info_fields(html: str) -> dict[str, str]:
+    parser = DatabazeMoreInfoParser()
+    parser.feed(html)
+    parser.close()
+    return parser.fields
+
+
+def is_databaze_audiobook_more_info(html: str) -> bool:
+    form = parse_databaze_more_info_fields(html).get("Forma", "")
+    return "audiokniha" in normalize_text(form)
+
+
 def build_legie_search_url(title: str, authors: Sequence[str]) -> str:
     query = title + " " + " ".join(authors)
     return LEGIE_SEARCH_URL + urllib.parse.quote_plus(query.strip())
@@ -1183,6 +1234,30 @@ def match_legie_story(book: Book, candidates: Sequence[Candidate]) -> MatchRow |
     return None
 
 
+def filter_databaze_audiobook_candidates(
+    candidates: Sequence[Candidate],
+    fetcher: Callable[[str], str],
+) -> list[Candidate]:
+    """Vyhodi DK kandidaty, ktere jsou ve Vice info oznacene jako audiokniha."""
+    filtered: list[Candidate] = []
+    for candidate in candidates:
+        if not is_valid_apply_url(candidate.url):
+            filtered.append(candidate)
+            continue
+        book_id = databaze_book_id_from_url(candidate.url)
+        if not book_id:
+            filtered.append(candidate)
+            continue
+        try:
+            more_info_html = fetcher(databaze_more_info_url(book_id))
+        except Exception:
+            filtered.append(candidate)
+            continue
+        if not is_databaze_audiobook_more_info(more_info_html):
+            filtered.append(candidate)
+    return filtered
+
+
 def find_legie_story(
     book: Book,
     fetcher: Callable[[str], str],
@@ -1238,7 +1313,8 @@ def find_databaze_book(
         except Exception as exc:
             last_error = exc
             continue
-        row = match_book(book, parse_search_results(html))
+        candidates = filter_databaze_audiobook_candidates(parse_search_results(html), fetcher)
+        row = match_book(book, candidates)
         if best_row is None or (not best_row.chosen_url and row.chosen_url):
             best_row = row
         if not should_try_legie(row):

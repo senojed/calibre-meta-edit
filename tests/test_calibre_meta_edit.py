@@ -493,6 +493,47 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(match.reason, "multiple-title-matches")
         self.assertEqual(match.candidate_urls, "https://www.databazeknih.cz/knihy/foo-123|https://www.databazeknih.cz/knihy/bar-456")
 
+    def test_find_databaze_book_skips_audiobook_candidate(self):
+        book = cme.Book(99, "Devet princu Amberu", ["Roger Zelazny"], "")
+        search_html = """
+        <a href="https://www.databazeknih.cz/prehled-knihy/devet-princu-amberu-543357">
+          <img title="Devet princu Amberu" />
+          Devet princu Amberu
+        </a>
+        <p>Roger Zelazny</p>
+        <a href="https://www.databazeknih.cz/prehled-knihy/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111">
+          <img title="Devet princu Amberu" />
+          Devet princu Amberu
+        </a>
+        <p>Roger Zelazny</p>
+        """
+        audiobook_more = """
+        <div class='book-details__row'><dt>Forma</dt><dd>audiokniha</dd></div>
+        """
+        book_more = """
+        <div class='book-details__row'><dt>Forma</dt><dd>klasicka kniha</dd></div>
+        """
+
+        def fetcher(url: str) -> str:
+            if "book-detail-more-info/543357" in url:
+                return audiobook_more
+            if "book-detail-more-info/12111" in url:
+                return book_more
+            return search_html
+
+        row = cme.find_databaze_book(
+            book,
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(row.status, "approve")
+        self.assertEqual(
+            row.chosen_url,
+            "https://www.databazeknih.cz/knihy/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111",
+        )
+
     def test_match_book_skips_empty_candidate_title_instead_of_partial_match(self):
         book = cme.Book(31031, "Purpurova mumie", ["Anatolij Petrovic Dneprov"], "")
         candidates = [

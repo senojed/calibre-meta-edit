@@ -526,6 +526,12 @@
 - `Originalni nazev` a `Originalne vyslo` se berou i z bloku `Originální název / Moving Pictures, 1990`.
 - Pokud endpoint selze, zapis pokracuje bez techto doplnkovych udaju.
 
+## Update 0.2.13 - Skip DK audiobooks
+
+- Pri hledani DK odkazu se u kandidatu cte `Vice info`.
+- Kandidat s `Forma = audiokniha` se vyhodi pred matchovanim.
+- Pokud `Vice info` nejde nacist, kandidat zustava, aby audit nespadl kvuli siti.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
