@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.18`
+Aktualni verze: `0.2.19`
 
 Spusteni nove Qt appky:
 
@@ -24,6 +24,7 @@ EXE se zatim nedela.
 V appce:
 
 - pri startu se samo nacte `matches.csv`
+- po startu jsou ve filtru videt jen `approve` a `review`; `skip` je odskrtnuty
 - pri startu automaticky nacte nove knihy bez dotazu, spusti `Audit odkazu` a potom pripravi kandidatni obalky
 - `Preferences` obsahuje knihovnu, vzhled, automaticke akce, `Rebuild CSV` a `Rollback`
 - pravy panel ma zalozky `Aktualni data`, `Review` a `Log`

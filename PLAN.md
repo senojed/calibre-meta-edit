@@ -561,6 +561,11 @@
 - Rucni hodnoty se ukladaji do `matches.csv`.
 - Zapis do Calibre pouzije rucni hodnoty pred webovymi; prazdne pole znamena pouzit webovou hodnotu.
 
+## Update 0.2.19 - Default visible statuses
+
+- Po startu Qt appky je ve status filtru zapnute `approve` a `review`.
+- `skip` je po startu odskrtnuty, aby seznam ukazoval jen knihy k reseni.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

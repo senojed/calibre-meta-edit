@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.18"
+APP_VERSION = "0.2.19"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -25,6 +25,7 @@ TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duv
 REQUIRED_COLUMN_INDEXES = {0, 1, 2}
 MIN_COLUMN_WIDTH = 36
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
+DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
@@ -77,6 +78,13 @@ def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
 def filter_label(value: str) -> str:
     """Zobrazi prazdnou hodnotu filtru lidsky."""
     return value or "bez typu"
+
+
+def default_filter_checked(values: Sequence[str], value: str) -> bool:
+    """Vrati vychozi zaskrtnuti filtru po startu appky."""
+    if tuple(values) == STATUS_FILTER_VALUES:
+        return value in DEFAULT_STATUS_FILTER_VALUES
+    return True
 
 
 def selection_title(rows: Sequence[cme.MatchRow]) -> str:
@@ -523,7 +531,7 @@ if PYSIDE6_AVAILABLE:
             checks: dict[str, QCheckBox] = {}
             for value in values:
                 check = QCheckBox(filter_label(value))
-                check.setChecked(True)
+                check.setChecked(default_filter_checked(values, value))
                 check.stateChanged.connect(self.refresh_table)
                 row.addWidget(check)
                 checks[value] = check

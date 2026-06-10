@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.18")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.18")
+        self.assertEqual(qt.APP_VERSION, "0.2.19")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.19")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,15 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.18")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.19")
+
+    def test_default_filter_checked_hides_skip_after_start(self):
+        import calibre_meta_qt as qt
+
+        self.assertTrue(qt.default_filter_checked(qt.STATUS_FILTER_VALUES, "approve"))
+        self.assertTrue(qt.default_filter_checked(qt.STATUS_FILTER_VALUES, "review"))
+        self.assertFalse(qt.default_filter_checked(qt.STATUS_FILTER_VALUES, "skip"))
+        self.assertTrue(qt.default_filter_checked(qt.SOURCE_FILTER_VALUES, "databazeknih"))
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -281,8 +289,8 @@ class QtImportTests(unittest.TestCase):
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
         window.rows = [
-            cme.MatchRow(1, "Beta", "Autor", "skip", "", "", "none", "x"),
-            cme.MatchRow(2, "Alfa", "Autor", "skip", "", "", "none", "x"),
+            cme.MatchRow(1, "Beta", "Autor", "review", "", "", "none", "x"),
+            cme.MatchRow(2, "Alfa", "Autor", "review", "", "", "none", "x"),
         ]
         window.refresh_table()
         window.table.sortItems(1, Qt.SortOrder.AscendingOrder)
