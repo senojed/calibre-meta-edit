@@ -508,6 +508,12 @@
 - Web metadata se zatim zobrazuji jako `nenacteno`, dokud se neulozi do pracovniho modelu.
 - Tlacitka jsou prejmenovana na `Najit / overit odkaz` a `Nacist z Calibre`.
 
+## Update 0.2.10 - Cover placement in tabs
+
+- Zalozka `Aktualni data` ukazuje jen obalku, ktera uz realne je v Calibre.
+- Zalozka `Aktualni data` uz neukazuje pocet kandidatnich obalek.
+- Zalozka `Review` pri existujici obalce v Calibre ukaze jen text `Obalka uz je v Calibre`, bez obrazku.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

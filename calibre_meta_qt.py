@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.9"
+APP_VERSION = "0.2.10"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -120,13 +120,6 @@ def current_data_fields(rows: Sequence[cme.MatchRow]) -> list[tuple[str, str]]:
     if len(rows) > 1:
         return [("Vyber", f"vybrano {len(rows)} knih")]
     row = rows[0]
-    cover_count = len(shared.cover_urls_from_row(row))
-    if row.selected_cover_url.strip():
-        cover_text = "vybrana kandidatni"
-    elif cover_count:
-        cover_text = f"kandidati: {cover_count}"
-    else:
-        cover_text = "nenacteno"
     return [
         ("ID", str(row.book_id)),
         ("Kniha", row.title),
@@ -140,7 +133,7 @@ def current_data_fields(rows: Sequence[cme.MatchRow]) -> list[tuple[str, str]]:
         ("Vydani", "nenacteno"),
         ("Vydavatel", "nenacteno"),
         ("Tagy", "nenacteno"),
-        ("Obalka", cover_text),
+        ("Obalka", "nenacteno"),
     ]
 
 
@@ -619,6 +612,11 @@ if PYSIDE6_AVAILABLE:
                 self.current_data_grid.addWidget(value, row_index, 1)
                 self.current_data_labels[field] = value
             current_layout.addLayout(self.current_data_grid)
+            self.current_cover_image = QLabel("")
+            self.current_cover_image.setObjectName("coverImage")
+            self.current_cover_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.current_cover_image.setFixedSize(150, 220)
+            current_layout.addWidget(self.current_cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
             current_layout.addStretch(1)
             self.detail_tabs.addTab(current_tab, "Aktualni data")
 
@@ -802,6 +800,31 @@ if PYSIDE6_AVAILABLE:
             values = dict(current_data_fields(rows))
             for field, label in self.current_data_labels.items():
                 label.setText(values.get(field, ""))
+            self.update_current_cover(rows)
+
+        def update_current_cover(self, rows: Sequence[cme.MatchRow]) -> None:
+            """Ukaze obalku, ktera uz realne je v Calibre."""
+            self.current_cover_image.clear()
+            if len(rows) != 1:
+                self.current_cover_image.setText("Bez nahledu")
+                return
+            row = rows[0]
+            try:
+                local_cover = cme.get_local_cover_path(self.library_path, row.book_id)
+            except Exception:
+                self.current_data_labels["Obalka"].setText("nejde nacist")
+                self.current_cover_image.setText("Bez nahledu")
+                return
+            if local_cover is None:
+                self.current_data_labels["Obalka"].setText("neni v Calibre")
+                self.current_cover_image.setText("Bez nahledu")
+                return
+            self.current_data_labels["Obalka"].setText("v Calibre")
+            try:
+                if not self.set_label_pixmap(self.current_cover_image, local_cover.read_bytes()):
+                    self.current_cover_image.setText("Bez nahledu")
+            except OSError:
+                self.current_cover_image.setText("Bez nahledu")
 
         def set_cover_placeholder(self, status: str, source: str = "") -> None:
             """Nastavi textovy stav nahledu obalky."""
@@ -811,21 +834,27 @@ if PYSIDE6_AVAILABLE:
             self.cover_image.setText("Bez nahledu")
             self.clear_cover_options()
 
-        def set_cover_pixmap(self, status: str, image_bytes: bytes, source: str = "") -> None:
-            """Zobrazi obrazek obalky v detailu."""
+        def set_label_pixmap(self, label: QLabel, image_bytes: bytes) -> bool:
+            """Zobrazi obrazek do daneho QLabelu."""
             pixmap = QPixmap()
             if not pixmap.loadFromData(image_bytes):
-                self.set_cover_placeholder("Obalku nejde zobrazit", source)
-                return
+                return False
             scaled = pixmap.scaled(
-                self.cover_image.size(),
+                label.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
+            label.setText("")
+            label.setPixmap(scaled)
+            return True
+
+        def set_cover_pixmap(self, status: str, image_bytes: bytes, source: str = "") -> None:
+            """Zobrazi obrazek obalky v detailu."""
+            if not self.set_label_pixmap(self.cover_image, image_bytes):
+                self.set_cover_placeholder("Obalku nejde zobrazit", source)
+                return
             self.cover_status.setText(status)
             self.cover_source.setText(source)
-            self.cover_image.setText("")
-            self.cover_image.setPixmap(scaled)
 
         def clear_cover_options(self) -> None:
             """Smaze mala tlacitka kandidatnich obalek."""
@@ -912,10 +941,7 @@ if PYSIDE6_AVAILABLE:
                 self.set_cover_placeholder("Obalku nejde nacist", str(exc))
                 return
             if local_cover is not None:
-                try:
-                    self.set_cover_pixmap("Obalka v Calibre", local_cover.read_bytes(), str(local_cover))
-                except OSError as exc:
-                    self.set_cover_placeholder("Obalku nejde nacist", str(exc))
+                self.set_cover_placeholder("Obalka uz je v Calibre")
                 return
             cover_urls = shared.cover_urls_from_row(row)
             if not cover_urls:
