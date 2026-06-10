@@ -566,6 +566,12 @@
 - Po startu Qt appky je ve status filtru zapnute `approve` a `review`.
 - `skip` je po startu odskrtnuty, aby seznam ukazoval jen knihy k reseni.
 
+## Update 0.2.20 - Empty pending view and cover re-audit
+
+- Kdyz vychozi pohled `approve` + `review` nema zadne radky a existuji `skip` radky, appka automaticky zapne i `skip`.
+- `Najit / overit odkaz` po link auditu spusti i audit obalek, pokud je automaticky audit obalek zapnuty.
+- Tlacitko `Obalky` uz nezapisuje obalky do Calibre; jen znovu pripravi kandidatni obalky podle aktualniho odkazu.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

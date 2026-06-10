@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.2.19")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.19")
+        self.assertEqual(qt.APP_VERSION, "0.2.20")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.2.20")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.19")
+        self.assertEqual(text, "Ready | matches.csv nacteno | 0.2.20")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -66,6 +66,22 @@ class QtHelperTests(unittest.TestCase):
         self.assertTrue(qt.default_filter_checked(qt.STATUS_FILTER_VALUES, "review"))
         self.assertFalse(qt.default_filter_checked(qt.STATUS_FILTER_VALUES, "skip"))
         self.assertTrue(qt.default_filter_checked(qt.SOURCE_FILTER_VALUES, "databazeknih"))
+
+    def test_should_enable_skip_filter_only_for_empty_pending_view(self):
+        import calibre_meta_qt as qt
+
+        rows = [cme.MatchRow(1, "Hotovo", "Autor", "skip", "", "", "none", "x")]
+
+        self.assertTrue(
+            qt.should_enable_skip_filter(rows, [], "", "", {"approve", "review"}, None, None)
+        )
+        self.assertFalse(
+            qt.should_enable_skip_filter(rows, rows, "", "", {"approve", "review"}, None, None)
+        )
+        self.assertFalse(
+            qt.should_enable_skip_filter(rows, [], "kat", "", {"approve", "review"}, None, None)
+        )
+        self.assertFalse(qt.should_enable_skip_filter(rows, [], "", "", None, None, None))
 
     def test_normalize_auto_settings_defaults_to_enabled(self):
         import calibre_meta_qt as qt
@@ -299,4 +315,29 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(window.selected_book_ids(), {1})
         self.assertEqual(window.selected_row().title, "Beta")
+        app.processEvents()
+
+    def test_run_covers_uses_cover_audit_without_direct_write(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = [cme.MatchRow(1, "Kniha", "Autor", "review", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual")]
+        calls = []
+
+        with (
+            patch.object(window, "selected_book_ids", return_value={1}),
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background", side_effect=lambda title, action, reload_after: calls.append((title, action, reload_after))),
+            patch.object(qt.shared, "make_cover_audit_action", return_value=lambda: 0) as audit_action,
+            patch.object(qt.shared, "make_cover_action") as write_action,
+        ):
+            window.run_covers()
+
+        audit_action.assert_called_once()
+        write_action.assert_not_called()
+        self.assertEqual(calls[0][0], "Audit obalek")
+        self.assertTrue(calls[0][2])
         app.processEvents()

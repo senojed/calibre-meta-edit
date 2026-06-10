@@ -4,7 +4,7 @@ Tento skript doplni do Calibre metadata z Databaze knih.
 
 ## Desktop appka
 
-Aktualni verze: `0.2.19`
+Aktualni verze: `0.2.20`
 
 Spusteni nove Qt appky:
 
@@ -25,6 +25,7 @@ V appce:
 
 - pri startu se samo nacte `matches.csv`
 - po startu jsou ve filtru videt jen `approve` a `review`; `skip` je odskrtnuty
+- kdyz po nacteni neni nic k reseni, appka sama zapne i `skip`
 - pri startu automaticky nacte nove knihy bez dotazu, spusti `Audit odkazu` a potom pripravi kandidatni obalky
 - `Preferences` obsahuje knihovnu, vzhled, automaticke akce, `Rebuild CSV` a `Rollback`
 - pravy panel ma zalozky `Aktualni data`, `Review` a `Log`
@@ -34,8 +35,10 @@ V appce:
 - `Nacist nove knihy` - doplni do `matches.csv` jen nove knihy, pusti `Audit odkazu` a pripravi kandidatni obalky
 - `Najit / overit odkaz` - kdyz mas vybrane radky, audituje jen je; bez vyberu audituje cele `matches.csv`
 - `Najit / overit odkaz` zkusi nejdriv Databazi knih, potom Legii
+- `Najit / overit odkaz` po oprave odkazu znovu pripravi kandidatni obalky, pokud je v nastaveni zapnuty audit obalek
 - kdyz prvni hledani na Databazi knih neni dost jiste, zkusi jeste dotaz bez diakritiky a interpunkce
 - knihy, ktere uz v Calibre obalku maji, se pri hledani obalek preskoci
+- `Obalky` jen znovu pripravi kandidatni obalky podle aktualniho odkazu; nic nezapisuje do Calibre
 - kdyz u jednoho vybraneho radku upravis pole `Odkaz`, `Audit odkazu` ho pred hledanim rovnou pouzije
 - kdyz Legie nic nenajde pres nazev + autora, zkusi jeste hledat jen podle nazvu a pak kratky zacatek dlouheho nazvu
 - kdyz Legie vyhledavani rovnou otevre detail povidky, appka ho pozna jako vysledek

@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.19"
+APP_VERSION = "0.2.20"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -85,6 +85,25 @@ def default_filter_checked(values: Sequence[str], value: str) -> bool:
     if tuple(values) == STATUS_FILTER_VALUES:
         return value in DEFAULT_STATUS_FILTER_VALUES
     return True
+
+
+def should_enable_skip_filter(
+    rows: Sequence[cme.MatchRow],
+    filtered_rows: Sequence[cme.MatchRow],
+    title: str,
+    author: str,
+    statuses: set[str] | None,
+    sources: set[str] | None,
+    work_types: set[str] | None,
+) -> bool:
+    """Zapne skip jen kdyz vychozi pohled nema nic k reseni."""
+    if filtered_rows or title.strip() or author.strip():
+        return False
+    if statuses != DEFAULT_STATUS_FILTER_VALUES:
+        return False
+    if sources is not None or work_types is not None:
+        return False
+    return any(row.status == "skip" for row in rows)
 
 
 def selection_title(rows: Sequence[cme.MatchRow]) -> str:
@@ -790,14 +809,38 @@ if PYSIDE6_AVAILABLE:
 
         def refresh_table(self) -> None:
             selected_ids = self.selected_book_ids()
+            statuses = self.checked_values(self.status_checks)
+            sources = self.checked_values(self.source_checks)
+            work_types = self.checked_values(self.type_checks)
             self.filtered_rows = filter_rows(
                 self.rows,
                 title=self.title_filter.text(),
                 author=self.author_filter.text(),
-                statuses=self.checked_values(self.status_checks),
-                sources=self.checked_values(self.source_checks),
-                work_types=self.checked_values(self.type_checks),
+                statuses=statuses,
+                sources=sources,
+                work_types=work_types,
             )
+            if should_enable_skip_filter(
+                self.rows,
+                self.filtered_rows,
+                self.title_filter.text(),
+                self.author_filter.text(),
+                statuses,
+                sources,
+                work_types,
+            ):
+                self.status_checks["skip"].blockSignals(True)
+                self.status_checks["skip"].setChecked(True)
+                self.status_checks["skip"].blockSignals(False)
+                self.set_status("Nic k reseni, zobrazuju i skip")
+                self.filtered_rows = filter_rows(
+                    self.rows,
+                    title=self.title_filter.text(),
+                    author=self.author_filter.text(),
+                    statuses=self.checked_values(self.status_checks),
+                    sources=sources,
+                    work_types=work_types,
+                )
             self.table.setSortingEnabled(False)
             self.table.setRowCount(len(self.filtered_rows))
             for row_index, row in enumerate(self.filtered_rows):
@@ -1269,7 +1312,17 @@ if PYSIDE6_AVAILABLE:
             if not self.save_csv(show_message=False):
                 return
             args = shared.make_legie_audit_args(self.library_path, selected if selected else None)
-            action = shared.make_legie_audit_action(args)
+            link_action = shared.make_legie_audit_action(args)
+            if self.auto_settings["auto_cover_audit"]:
+                cover_args = shared.make_cover_args(self.library_path, selected if selected else None)
+                cover_action = shared.make_cover_audit_action(cover_args, matches_path=self.matches_path)
+                action = lambda: shared.run_preview_audit_then_cover_audit(
+                    preview_func=lambda: 0,
+                    link_audit_func=link_action,
+                    cover_audit_func=cover_action,
+                )
+            else:
+                action = link_action
             self.run_background("Najit / overit odkaz", action, reload_after=True)
 
         def run_apply(self) -> None:
@@ -1284,19 +1337,13 @@ if PYSIDE6_AVAILABLE:
 
         def run_covers(self) -> None:
             selected = self.selected_book_ids()
-            try:
-                candidates = cme.cover_candidate_rows(self.rows, self.library_path, selected if selected else None)
-            except Exception as exc:
-                QMessageBox.warning(self, "Obalky", f"Nepodarilo se nacist stav obalek:\n{exc}")
-                return
-            confirmed, allow_force = self.ask_cover_confirmation(candidates, bool(selected))
-            if not confirmed:
-                return
+            self.rows = shared.sync_single_selected_url(self.rows, selected, self.url_edit.text())
+            self.refresh_table()
             if not self.save_csv(show_message=False):
                 return
             args = shared.make_cover_args(self.library_path, selected if selected else None)
-            action = shared.make_cover_action(args=args, allow_force=allow_force)
-            self.run_background("Doplneni obalek", action, reload_after=True)
+            action = shared.make_cover_audit_action(args=args, matches_path=self.matches_path)
+            self.run_background("Audit obalek", action, reload_after=True)
 
         def run_rebuild(self) -> None:
             message = (
