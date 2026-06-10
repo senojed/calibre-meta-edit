@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.14"
+APP_VERSION = "0.2.15"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -128,7 +128,6 @@ def current_data_fields(rows: Sequence[cme.MatchRow], metadata: cme.CurrentBookM
         ("Status", row.status),
         ("Zdroj", row.source),
         ("Typ", row.work_type or "kniha"),
-        ("Odkaz", row.chosen_url or "nenacteno"),
         ("Rok vydani", metadata.published_year or "nenacteno"),
         ("Vydavatel", metadata.publisher or "nenacteno"),
         ("Tagy", ", ".join(metadata.tags or []) or "nenacteno"),
@@ -148,20 +147,16 @@ def review_data_fields(
     if len(rows) > 1:
         return [("Vyber", f"vybrano {len(rows)} knih")]
     row = rows[0]
-    if error:
-        return [("Chyba", error)]
     if detail is None:
         return [
             ("Status", row.status),
             ("Zdroj", row.source),
             ("Typ", row.work_type or "kniha"),
-            ("Zapisovany odkaz", written_url or row.chosen_url or "nenacteno"),
         ]
     return [
         ("Status", row.status),
         ("Zdroj", row.source),
         ("Typ", row.work_type or "kniha"),
-        ("Zapisovany odkaz", written_url or row.chosen_url or "nenacteno"),
         ("Rok vydani", detail.published_year or "nenacteno"),
         ("Vydavatel", detail.publisher or "nenacteno"),
         ("Tagy", ", ".join(detail.tags or []) or "nenacteno"),
@@ -639,7 +634,7 @@ if PYSIDE6_AVAILABLE:
             self.current_data_grid = QGridLayout()
             self.current_data_labels: dict[str, QLabel] = {}
             for row_index, field in enumerate(
-                ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Rok vydani", "Vydavatel", "Tagy", "Obalka")
+                ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Obalka")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
@@ -715,7 +710,7 @@ if PYSIDE6_AVAILABLE:
             self.review_data_grid = QGridLayout()
             self.review_data_labels: dict[str, QLabel] = {}
             for row_index, field in enumerate(
-                ("Status", "Zdroj", "Typ", "Zapisovany odkaz", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo", "Chyba")
+                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
@@ -903,6 +898,7 @@ if PYSIDE6_AVAILABLE:
             self.cover_source.setText(source)
             self.cover_image.clear()
             self.cover_image.setText("Bez nahledu")
+            self.cover_image.setVisible(False)
             self.clear_cover_options()
 
         def set_label_pixmap(self, label: QLabel, image_bytes: bytes) -> bool:
@@ -921,6 +917,7 @@ if PYSIDE6_AVAILABLE:
 
         def set_cover_pixmap(self, status: str, image_bytes: bytes, source: str = "") -> None:
             """Zobrazi obrazek obalky v detailu."""
+            self.cover_image.setVisible(True)
             if not self.set_label_pixmap(self.cover_image, image_bytes):
                 self.set_cover_placeholder("Obalku nejde zobrazit", source)
                 return
@@ -1028,6 +1025,7 @@ if PYSIDE6_AVAILABLE:
                 self.cover_status.setText(status + " - nacitam")
                 self.cover_source.setText(preview_url)
                 self.cover_image.clear()
+                self.cover_image.setVisible(True)
                 self.cover_image.setText("Nacitam")
                 self.load_cover_url(preview_url)
             self.show_cover_options(row, cover_urls)

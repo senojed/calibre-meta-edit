@@ -538,6 +538,12 @@
 - Zalozka `Review` ukazuje HTML nahled komentare po zapisu.
 - DK nahled pouziva stejnou funkci jako realny zapis, vcetne `Vice info` a nejstarsiho vydani.
 
+## Update 0.2.15 - Review panel cleanup
+
+- Zalozka `Aktualni data` uz nezobrazuje samostatne pole `Odkaz`.
+- Zalozka `Review` uz nezobrazuje `Zapisovany odkaz` ani stale pole `Chyba`.
+- V `Review` se obrazek obalky zobrazi jen pri vyberu kandidatni obalky, ne kdyz uz obalka je v Calibre.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.
