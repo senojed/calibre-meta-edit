@@ -1,4 +1,4 @@
-# Desktop appka pro pohodlne schvalovani navrhu z matches.csv bez Excelu.
+# Desktop appka pro pohodlne schvalovani pracovnich metadat bez Excelu.
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.20"
+APP_VERSION = "0.3.0"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -37,8 +37,8 @@ BUTTON_COLOR_MAP = {
     "rollback": {"bg": "#c62828", "fg": "white", "activebackground": "#8e0000", "activeforeground": "white"},
 }
 TOOLBAR_SPACING = {"before_approve": 54, "between_status": 6, "after_skip": 54, "after_update": 18}
-PRIMARY_TOOLBAR_LABELS = ("Nacist CSV", "Nacist nove knihy", "Audit odkazu", "Ulozit CSV")
-BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Update vybrane", "Rebuild CSV", "Rollback")
+PRIMARY_TOOLBAR_LABELS = ("Nacist data", "Nacist nove knihy", "Audit odkazu", "Ulozit data")
+BOTTOM_LIBRARY_BAR_LABELS = ("Zmenit", "Pouzit z Calibre", "Update vybrane", "Rebuild data", "Rollback")
 URL_BAR_BUTTON_LABELS = ("Pouzit odkaz", "Otevrit odkaz")
 CLEAR_BUTTON_LABEL = "X"
 
@@ -99,12 +99,12 @@ def apply_confirmation_message() -> str:
     """Text potvrzeni zapisu do Calibre."""
     return (
         "Appka udela:\n"
-        "1. ulozi matches.csv\n"
+        "1. ulozi pracovni data\n"
         "2. pokusi se zavrit Calibre\n"
         "3. vytvori zalohu metadata.db\n"
         "4. u approve radku stahne prehled a zalozku Vydani z Databaze knih\n"
         "5. zapise komentar, vydano, vydavatele a stitky do Calibre\n"
-        "6. hotove radky zmeni na skip a ulozi matches.csv\n"
+        "6. hotove radky zmeni na skip a ulozi pracovni data\n"
         "7. nacte nove knihy a spusti Audit odkazu"
     )
 
@@ -194,8 +194,8 @@ def make_cover_args(library: str, book_ids: set[int] | None = None) -> SimpleNam
 
 
 def match_row_book_ids(matches_path: Path) -> set[int]:
-    """Precte Calibre ID z matches.csv; kdyz soubor neni, vrati prazdno."""
-    if not matches_path.exists():
+    """Precte Calibre ID z pracovniho uloziste; kdyz soubor neni, vrati prazdno."""
+    if not cme.matches_storage_exists(matches_path):
         return set()
     return {row.book_id for row in cme.read_matches_csv(matches_path)}
 
@@ -516,8 +516,8 @@ def make_cover_audit_action(
 ) -> Callable[[], int]:
     """Pripravi audit kandidatnich obalek bez zapisu do Calibre."""
     def action() -> int:
-        if not matches_path.exists():
-            print("Audit obalek: matches.csv neexistuje.")
+        if not cme.matches_storage_exists(matches_path):
+            print("Audit obalek: pracovni data neexistuji.")
             return 0
         rows = cme.read_matches_csv(matches_path)
         selected_ids = set(getattr(args, "book_ids", None) or [])
@@ -616,15 +616,15 @@ def make_rebuild_action(
     backup_func: Callable[[Path, Path], Path | None] = cme.backup_matches_csv,
     preview_runner: Callable[[SimpleNamespace], int] = cme.run_preview,
 ) -> Callable[[], int]:
-    """Pripravi rebuild matches.csv: zaloha stareho CSV a novy preview od nuly."""
+    """Pripravi rebuild pracovnich dat: zaloha stareho uloziste a novy preview od nuly."""
     args.overwrite = True
 
     def action() -> int:
         backup_path = backup_func(matches_path, backups_dir)
         if backup_path is None:
-            print("Zaloha matches.csv: neni co zalohovat.")
+            print("Zaloha pracovnich dat: neni co zalohovat.")
         else:
-            print(f"Zaloha matches.csv: {backup_path}")
+            print(f"Zaloha pracovnich dat: {backup_path}")
         return preview_runner(args)
 
     return action
@@ -634,7 +634,7 @@ def make_legie_audit_action(
     args: SimpleNamespace,
     audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
 ) -> Callable[[], int]:
-    """Pripravi audit Legie nad matches.csv."""
+    """Pripravi audit odkazu nad pracovnimi daty."""
     return lambda: audit_runner(args)
 
 
@@ -877,7 +877,7 @@ class CalibreMetaApp:
         return result["confirmed"]
 
     def load_csv(self, show_message: bool = True) -> None:
-        if not self.matches_path.exists():
+        if not cme.matches_storage_exists(self.matches_path):
             self.rows = []
             self._refresh_table()
             self._set_status(f"Soubor nenalezen: {self.matches_path}")
@@ -885,7 +885,7 @@ class CalibreMetaApp:
         try:
             self.rows = cme.read_matches_csv(self.matches_path)
         except Exception as exc:
-            messagebox.showerror("Chyba", f"CSV nejde nacist:\n{exc}")
+            messagebox.showerror("Chyba", f"Pracovni data nejde nacist:\n{exc}")
             return
         self._refresh_table()
         self._set_status(status_summary(self.rows))
@@ -896,7 +896,7 @@ class CalibreMetaApp:
         try:
             cme.write_matches_csv(self.matches_path, self.rows, overwrite=True)
         except Exception as exc:
-            messagebox.showerror("Chyba", f"CSV nejde ulozit:\n{exc}")
+            messagebox.showerror("Chyba", f"Pracovni data nejde ulozit:\n{exc}")
             return False
         self._set_status(f"Ulozeno. {status_summary(self.rows)}")
         if show_message:
@@ -1019,16 +1019,16 @@ class CalibreMetaApp:
 
     def run_rebuild(self) -> None:
         message = (
-            "Rebuild prepise matches.csv.\n"
-            "Stary matches.csv ulozim do backups\\matches.\n"
+            "Rebuild prepise pracovni data.\n"
+            "Stara pracovni data ulozim do backups\\matches.\n"
             "Knihy s existujicim odkazem nebudu hledat znovu.\n"
             "Pokracovat?"
         )
-        if not self.ask_yes_no("Rebuild CSV", message, default_yes=False):
+        if not self.ask_yes_no("Rebuild data", message, default_yes=False):
             return
         args = make_script_args(self.library_path(), overwrite=True)
         action = make_rebuild_action(args, self.matches_path)
-        self._run_background("Rebuild CSV", action, reload_after=True)
+        self._run_background("Rebuild data", action, reload_after=True)
 
     def run_legie_audit(self) -> None:
         selected = self._selected_book_ids()

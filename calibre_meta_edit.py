@@ -31,7 +31,8 @@ LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/index.php?search_text="
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
-MATCHES_PATH = Path("matches.csv")
+MATCHES_PATH = Path("matches.db")
+LEGACY_MATCHES_CSV_PATH = Path("matches.csv")
 APPLY_RESULTS_DIR = Path("apply-results")
 LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
 HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
@@ -1484,7 +1485,107 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "no-candidates")
 
 
+def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
+    """Prevede radek z CSV nebo SQLite na MatchRow."""
+    return MatchRow(
+        int(raw["book_id"]),
+        raw["title"],
+        raw["authors"],
+        raw["status"],
+        raw["chosen_url"],
+        raw["candidate_urls"],
+        raw["confidence"],
+        raw["reason"],
+        raw.get("source") or "databazeknih",
+        raw.get("work_type") or "",
+        raw.get("cover_urls") or "",
+        raw.get("selected_cover_url") or "",
+        raw.get("cover_reason") or "",
+        raw.get("review_published_year") or "",
+        raw.get("review_publisher") or "",
+        raw.get("review_tags") or "",
+        raw.get("review_rating_percent") or "",
+        raw.get("review_original_title") or "",
+        raw.get("review_original_publication") or "",
+    )
+
+
+def _legacy_matches_path(path: Path) -> Path:
+    """Vrati stary CSV soubor vedle nove SQLite databaze."""
+    return path.with_name(LEGACY_MATCHES_CSV_PATH.name)
+
+
+def matches_storage_exists(path: Path) -> bool:
+    """Pozna nove SQLite uloziste i stary matches.csv pred migraci."""
+    return path.exists() or (path.suffix.casefold() == ".db" and _legacy_matches_path(path).exists())
+
+
+def _ensure_matches_db_schema(connection: sqlite3.Connection) -> None:
+    """Vytvori tabulku pracovnich radku appky."""
+    columns = ", ".join(f"{field} text not null default ''" for field in MATCHES_FIELDS if field != "book_id")
+    connection.execute(
+        f"""
+        create table if not exists match_rows (
+            book_id integer primary key,
+            sort_order integer not null,
+            {columns}
+        )
+        """
+    )
+    existing_columns = {
+        str(row[1])
+        for row in connection.execute("pragma table_info(match_rows)").fetchall()
+    }
+    if "sort_order" not in existing_columns:
+        connection.execute("alter table match_rows add column sort_order integer not null default 0")
+    for field in MATCHES_FIELDS:
+        if field not in existing_columns:
+            if field == "book_id":
+                continue
+            connection.execute(f"alter table match_rows add column {field} text not null default ''")
+
+
+def _write_matches_db(path: Path, rows: Iterable[MatchRow], overwrite: bool) -> None:
+    """Zapise pracovni radky do SQLite databaze aplikace."""
+    rows_list = list(rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _ensure_matches_db_schema(connection)
+        existing_count = connection.execute("select count(*) from match_rows").fetchone()[0]
+        if existing_count and not overwrite:
+            raise FileExistsError(path)
+        connection.execute("delete from match_rows")
+        placeholders = ", ".join("?" for _field in ["sort_order", *MATCHES_FIELDS])
+        columns = ", ".join(["sort_order", *MATCHES_FIELDS])
+        values = [
+            tuple([index, *[getattr(row, field) for field in MATCHES_FIELDS]])
+            for index, row in enumerate(rows_list)
+        ]
+        connection.executemany(f"insert into match_rows ({columns}) values ({placeholders})", values)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _read_matches_db(path: Path) -> list[MatchRow]:
+    """Precte pracovni radky ze SQLite databaze aplikace."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.row_factory = sqlite3.Row
+        _ensure_matches_db_schema(connection)
+        rows = connection.execute(
+            f"select {', '.join(MATCHES_FIELDS)} from match_rows order by sort_order"
+        ).fetchall()
+    finally:
+        connection.close()
+    return [_match_row_from_dict(dict(row)) for row in rows]
+
+
 def write_matches_csv(path: Path, rows: Iterable[MatchRow], overwrite: bool) -> None:
+    if path.suffix.casefold() == ".db":
+        _write_matches_db(path, rows, overwrite)
+        return
     if path.exists() and not overwrite:
         raise FileExistsError(path)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -1495,33 +1596,18 @@ def write_matches_csv(path: Path, rows: Iterable[MatchRow], overwrite: bool) -> 
 
 
 def read_matches_csv(path: Path) -> list[MatchRow]:
+    if path.suffix.casefold() == ".db":
+        if path.exists():
+            return _read_matches_db(path)
+        legacy_path = _legacy_matches_path(path)
+        if legacy_path.exists():
+            return read_matches_csv(legacy_path)
+        raise FileNotFoundError(path)
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         rows = []
         for raw in reader:
-            rows.append(
-                MatchRow(
-                    int(raw["book_id"]),
-                    raw["title"],
-                    raw["authors"],
-                    raw["status"],
-                    raw["chosen_url"],
-                    raw["candidate_urls"],
-                    raw["confidence"],
-                    raw["reason"],
-                    raw.get("source") or "databazeknih",
-                    raw.get("work_type") or "",
-                    raw.get("cover_urls") or "",
-                    raw.get("selected_cover_url") or "",
-                    raw.get("cover_reason") or "",
-                    raw.get("review_published_year") or "",
-                    raw.get("review_publisher") or "",
-                    raw.get("review_tags") or "",
-                    raw.get("review_rating_percent") or "",
-                    raw.get("review_original_title") or "",
-                    raw.get("review_original_publication") or "",
-                )
-            )
+            rows.append(_match_row_from_dict(raw))
     return rows
 
 
@@ -1555,13 +1641,16 @@ def restore_metadata_backup(
 
 
 def backup_matches_csv(matches_path: Path, backups_dir: Path, timestamp: str | None = None) -> Path | None:
-    """Zkopiruje stary matches.csv pred rebuildem, aby slo vratit rucni upravy."""
-    if not matches_path.exists():
+    """Zkopiruje stare pracovni uloziste pred rebuildem, aby slo vratit rucni upravy."""
+    source = matches_path
+    if not source.exists() and matches_path.suffix.casefold() == ".db":
+        source = _legacy_matches_path(matches_path)
+    if not source.exists():
         return None
     backups_dir.mkdir(parents=True, exist_ok=True)
     stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = backups_dir / f"{matches_path.stem}-{stamp}{matches_path.suffix}"
-    shutil.copy2(matches_path, target)
+    target = backups_dir / f"{source.stem}-{stamp}{source.suffix}"
+    shutil.copy2(source, target)
     return target
 
 
@@ -2404,7 +2493,7 @@ def audit_legie_rows(
 
 def run_preview(args: argparse.Namespace) -> int:
     output = MATCHES_PATH
-    incremental = output.exists() and not args.overwrite
+    incremental = matches_storage_exists(output) and not args.overwrite
     existing_rows = read_matches_csv(output) if incremental else []
     selected_book_ids = set(getattr(args, "book_ids", None) or [])
     refresh_selected = args.book_id is None and bool(selected_book_ids)
@@ -2457,7 +2546,7 @@ def run_legie_audit(args: argparse.Namespace) -> int:
     merged = [replacements.get(row.book_id, row) if row.book_id in selected_ids else row for row in rows]
     backup_path = backup_matches_csv(MATCHES_PATH, MATCHES_PATH.parent / "backups" / "matches")
     if backup_path:
-        print(f"Zaloha matches.csv: {backup_path}")
+        print(f"Zaloha pracovnich dat: {backup_path}")
     write_matches_csv(MATCHES_PATH, merged, overwrite=True)
     changed = sum(1 for old, new in zip(rows, merged) if old != new)
     print(f"Audit odkazu: zmeneno {changed} radku")
@@ -2667,7 +2756,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Doplni do Calibre komentaru odkazy na Databazi knih.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    preview = subparsers.add_parser("preview", help="Vytvori matches.csv bez zapisu do Calibre.")
+    preview = subparsers.add_parser("preview", help="Vytvori pracovni matches.db bez zapisu do Calibre.")
     preview.add_argument("--library", default=DEFAULT_LIBRARY)
     preview.add_argument("--limit", type=int)
     preview.add_argument("--book-id", type=int)
@@ -2675,7 +2764,7 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--overwrite", action="store_true")
     preview.set_defaults(func=run_preview)
 
-    apply_parser = subparsers.add_parser("apply", help="Zapise schvalene odkazy z matches.csv.")
+    apply_parser = subparsers.add_parser("apply", help="Zapise schvalene radky z pracovni databaze.")
     apply_parser.add_argument("--library", default=DEFAULT_LIBRARY)
     apply_parser.add_argument("--limit", type=int)
     apply_parser.add_argument("--book-id", type=int)

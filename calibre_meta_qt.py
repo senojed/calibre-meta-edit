@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.20"
+APP_VERSION = "0.3.0"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -71,7 +71,7 @@ def filter_rows(
 
 def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
     """Slozi kratky text do spodni status listy."""
-    csv_text = "matches.csv nacteno" if csv_loaded else "matches.csv nenacteno"
+    csv_text = "pracovni data nactena" if csv_loaded else "pracovni data nenactena"
     return f"{status} | {csv_text} | {APP_VERSION}"
 
 
@@ -359,7 +359,7 @@ if PYSIDE6_AVAILABLE:
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
-            rebuild = QPushButton("Rebuild CSV")
+            rebuild = QPushButton("Rebuild data")
             rebuild.setObjectName("dangerButton")
             rebuild.clicked.connect(self.run_rebuild)
             rollback = QPushButton("Rollback")
@@ -473,8 +473,8 @@ if PYSIDE6_AVAILABLE:
             toolbar.setSpacing(6)
             self.buttons: list[QToolButton] = []
 
-            self._add_button(toolbar, "Nacist CSV", self.load_csv, "neutralButton", "open", show_text=False)
-            self._add_button(toolbar, "Ulozit CSV", self.save_csv, "neutralButton", "save", show_text=False)
+            self._add_button(toolbar, "Nacist data", self.load_csv, "neutralButton", "open", show_text=False)
+            self._add_button(toolbar, "Ulozit data", self.save_csv, "neutralButton", "save", show_text=False)
             toolbar.addSpacing(10)
             self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
@@ -778,7 +778,7 @@ if PYSIDE6_AVAILABLE:
             return panel
 
         def load_csv(self, show_message: bool = True) -> None:
-            if not self.matches_path.exists():
+            if not cme.matches_storage_exists(self.matches_path):
                 self.rows = []
                 self.csv_loaded = False
                 self.refresh_table()
@@ -787,7 +787,7 @@ if PYSIDE6_AVAILABLE:
             try:
                 self.rows = cme.read_matches_csv(self.matches_path)
             except Exception as exc:
-                QMessageBox.critical(self, "Chyba", f"CSV nejde nacist:\n{exc}")
+                QMessageBox.critical(self, "Chyba", f"Pracovni data nejde nacist:\n{exc}")
                 return
             self.csv_loaded = True
             self.refresh_table()
@@ -799,7 +799,7 @@ if PYSIDE6_AVAILABLE:
             try:
                 cme.write_matches_csv(self.matches_path, self.rows, overwrite=True)
             except Exception as exc:
-                QMessageBox.critical(self, "Chyba", f"CSV nejde ulozit:\n{exc}")
+                QMessageBox.critical(self, "Chyba", f"Pracovni data nejde ulozit:\n{exc}")
                 return False
             self.csv_loaded = True
             self.set_status(f"Ulozeno. {shared.status_summary(self.rows)}")
@@ -1028,7 +1028,7 @@ if PYSIDE6_AVAILABLE:
             self.update_cover_preview(self.selected_rows())
 
         def show_cover_options(self, row: cme.MatchRow, cover_urls: Sequence[str]) -> None:
-            """Zobrazi grid kandidatnich obalek z matches.csv."""
+            """Zobrazi grid kandidatnich obalek z pracovnich dat."""
             self.clear_cover_options()
             selected_url = row.selected_cover_url.strip()
             for index, cover_url in enumerate(cover_urls):
@@ -1060,7 +1060,7 @@ if PYSIDE6_AVAILABLE:
             threading.Thread(target=worker, daemon=True).start()
 
         def update_cover_preview(self, rows: Sequence[cme.MatchRow]) -> None:
-            """Ukaze lokalni obalku, nebo kandidatni obalky z matches.csv."""
+            """Ukaze lokalni obalku, nebo kandidatni obalky z pracovnich dat."""
             self.cover_preview_request_id += 1
             self.clear_cover_options()
             if not rows:
@@ -1347,14 +1347,14 @@ if PYSIDE6_AVAILABLE:
 
         def run_rebuild(self) -> None:
             message = (
-                "Rebuild prepise matches.csv.\n"
-                "Stary matches.csv ulozim do backups\\matches.\n"
+                "Rebuild prepise pracovni data.\n"
+                "Stara pracovni data ulozim do backups\\matches.\n"
                 "Knihy s existujicim odkazem nebudu hledat znovu.\n"
                 "Pokracovat?"
             )
             choice = QMessageBox.question(
                 self,
-                "Rebuild CSV",
+                "Rebuild data",
                 message,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
@@ -1363,7 +1363,7 @@ if PYSIDE6_AVAILABLE:
                 return
             args = shared.make_script_args(self.library_path, overwrite=True)
             action = shared.make_rebuild_action(args, self.matches_path)
-            self.run_background("Rebuild CSV", action, reload_after=True)
+            self.run_background("Rebuild data", action, reload_after=True)
 
         def run_rollback(self) -> None:
             backup_path, _filter = QFileDialog.getOpenFileName(

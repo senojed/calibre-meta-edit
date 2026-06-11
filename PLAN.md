@@ -572,6 +572,14 @@
 - `Najit / overit odkaz` po link auditu spusti i audit obalek, pokud je automaticky audit obalek zapnuty.
 - Tlacitko `Obalky` uz nezapisuje obalky do Calibre; jen znovu pripravi kandidatni obalky podle aktualniho odkazu.
 
+## Update 0.3.0 - SQLite working storage
+
+- Pracovni data appky jsou nově v `matches.db`, ne v `matches.csv`.
+- Calibre `metadata.db` se tim nemeni; `matches.db` je jen interni pracovni databaze aplikace.
+- Stary `matches.csv` zustava jako migracni fallback: kdyz `matches.db` neexistuje, appka ho umi nacist a pri ulozeni vytvori SQLite databazi.
+- `Rebuild data` zalohuje stare pracovni uloziste do `backups\matches\`.
+- Import knih je presunut do rady `0.4.x`; pred nim je potreba samostatny detailni plan.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

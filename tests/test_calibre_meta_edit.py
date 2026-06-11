@@ -1253,6 +1253,79 @@ class CsvAndFilesystemTests(unittest.TestCase):
         self.assertEqual(rows[0].review_original_title, "Moving Pictures")
         self.assertEqual(rows[0].review_original_publication, "1990")
 
+    def test_write_matches_db_roundtrips_rows(self):
+        rows = [
+            cme.MatchRow(2, "Dva", "Autor", "review", "https://x", "", "manual", "manual", review_publisher="Laser"),
+            cme.MatchRow(1, "Jedna", "Autor", "skip", "", "", "none", "no-candidates"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.db"
+            cme.write_matches_csv(path, rows, overwrite=False)
+            loaded = cme.read_matches_csv(path)
+
+        self.assertEqual([row.book_id for row in loaded], [2, 1])
+        self.assertEqual(loaded[0].review_publisher, "Laser")
+
+    def test_write_matches_db_refuses_existing_rows_without_overwrite(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "none", "x")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.db"
+            cme.write_matches_csv(path, [row], overwrite=False)
+
+            with self.assertRaises(FileExistsError):
+                cme.write_matches_csv(path, [row], overwrite=False)
+
+    def test_read_matches_db_falls_back_to_legacy_csv(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "review", "https://x", "", "manual", "manual")
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "matches.db"
+            legacy_path = Path(tmp) / "matches.csv"
+            cme.write_matches_csv(legacy_path, [row], overwrite=False)
+
+            loaded = cme.read_matches_csv(db_path)
+
+        self.assertEqual(loaded[0].book_id, 1)
+        self.assertEqual(loaded[0].chosen_url, "https://x")
+
+    def test_matches_storage_exists_accepts_legacy_csv_next_to_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "matches.db"
+            (Path(tmp) / "matches.csv").write_text("book_id\n", encoding="utf-8")
+
+            self.assertTrue(cme.matches_storage_exists(db_path))
+
+    def test_read_matches_db_adds_missing_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """
+                    create table match_rows (
+                        book_id integer primary key,
+                        sort_order integer not null,
+                        title text not null default '',
+                        authors text not null default '',
+                        status text not null default '',
+                        chosen_url text not null default '',
+                        candidate_urls text not null default '',
+                        confidence text not null default '',
+                        reason text not null default ''
+                    )
+                    """
+                )
+                connection.execute(
+                    "insert into match_rows (book_id, sort_order, title, authors, status, chosen_url, candidate_urls, confidence, reason) values (1, 0, 'Kniha', 'Autor', 'review', '', '', 'none', 'x')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            rows = cme.read_matches_csv(path)
+
+        self.assertEqual(rows[0].book_id, 1)
+        self.assertEqual(rows[0].review_publisher, "")
+
     def test_filter_new_books_skips_books_already_in_matches_csv(self):
         books = [
             cme.Book(1, "Stara kniha", ["Autor"], ""),
