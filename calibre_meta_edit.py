@@ -593,6 +593,7 @@ class BookDetailParser(HTMLParser):
         self.cover_url = ""
         self.cover_urls: list[str] = []
         self.visible_text_parts: list[str] = []
+        self.detail_fields: list[tuple[str, str]] = []
 
         self._json_parts: list[str] = []
         self._inside_json_ld = False
@@ -608,6 +609,11 @@ class BookDetailParser(HTMLParser):
         self._inside_user_tag = False
         self._publication_parts: list[str] = []
         self._publication_depth = 0
+        self._inside_detail_label = False
+        self._inside_detail_value = False
+        self._detail_label_parts: list[str] = []
+        self._detail_value_parts: list[str] = []
+        self._current_detail_label = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
@@ -679,6 +685,14 @@ class BookDetailParser(HTMLParser):
             self._inside_user_tag = True
             self._tag_parts = []
 
+        if lowered_tag == "dt":
+            self._inside_detail_label = True
+            self._detail_label_parts = []
+
+        if lowered_tag == "dd":
+            self._inside_detail_value = True
+            self._detail_value_parts = []
+
     def handle_endtag(self, tag: str) -> None:
         lowered_tag = tag.lower()
 
@@ -717,6 +731,16 @@ class BookDetailParser(HTMLParser):
                 self.user_tags.append(tag_text)
             self._inside_user_tag = False
 
+        if lowered_tag == "dt" and self._inside_detail_label:
+            self._current_detail_label = _clean_text(" ".join(self._detail_label_parts))
+            self._inside_detail_label = False
+
+        if lowered_tag == "dd" and self._inside_detail_value:
+            value = _clean_text(" ".join(self._detail_value_parts))
+            if self._current_detail_label and value:
+                self.detail_fields.append((self._current_detail_label, value))
+            self._inside_detail_value = False
+
     def handle_data(self, data: str) -> None:
         if data.strip():
             self.visible_text_parts.append(data.strip())
@@ -732,6 +756,10 @@ class BookDetailParser(HTMLParser):
             self._about_parts.append(data)
         if self._inside_user_tag:
             self._tag_parts.append(data)
+        if self._inside_detail_label:
+            self._detail_label_parts.append(data)
+        if self._inside_detail_value:
+            self._detail_value_parts.append(data)
 
 
 class EditionListParser(HTMLParser):
@@ -991,6 +1019,79 @@ def _split_original_title_and_publication(value: str) -> tuple[str, str]:
     return cleaned, ""
 
 
+def _detail_label_kind(label: str) -> str:
+    """Rozpozna DK Vice info popisek bez zavislosti na diakritice."""
+    lowered = label.casefold()
+    normalized = normalize_text(label)
+    has_original = "original" in normalized or "origin" in lowered
+    if has_original and ("nazev" in normalized or "zev" in lowered):
+        return "original_title"
+    if has_original and ("vysel" in normalized or "rok" in normalized or "vydani" in normalized or ("vy" in lowered and "el" in lowered)):
+        return "original_publication"
+    if ("puvod" in normalized or "p vod" in normalized) and "vydani" in normalized:
+        return "original_publication"
+    return ""
+
+
+def _original_metadata_from_detail_fields(fields: Sequence[tuple[str, str]]) -> tuple[str, str]:
+    """Vezme originalni udaje z DK Vice info dvojic dt/dd."""
+    original_title = ""
+    original_publication = ""
+    for label, value in fields:
+        kind = _detail_label_kind(label)
+        if kind == "original_title":
+            original_title, inline_publication = _split_original_title_and_publication(value)
+            original_publication = original_publication or inline_publication
+        elif kind == "original_publication":
+            original_publication = _clean_text(value).strip(" ,")
+    return original_title, original_publication
+
+
+DK_MORE_INFO_STOP_LABELS = (
+    "Autor",
+    "PÅ™eklad",
+    "Preklad",
+    "PoÄet",
+    "Pocet",
+    "Jazyk",
+    "Forma",
+    "Vazba",
+    "Å½Ã¡nr",
+    "Zanr",
+    "SÃ©rie",
+    "Serie",
+    "Rok vydÃ¡nÃ­",
+    "VydÃ¡no",
+    "Vydano",
+    "OriginÃ¡lnÃ­ nÃ¡zev",
+    "Originalni nazev",
+    "OriginÃ¡l vyÅ¡el",
+    "Original vysel",
+    "OriginÃ¡lnÃ­ rok vydÃ¡nÃ­",
+    "Originalni rok vydani",
+    "PÅ¯vodnÃ­ vydÃ¡nÃ­",
+    "Puvodni vydani",
+    "ISBN",
+    "Å tÃ­tky",
+    "Stitky",
+    "HodnocenÃ­",
+    "Hodnoceni",
+    "O knize",
+)
+
+
+def _detail_field_value(text: str, labels: Sequence[str]) -> str:
+    """Vytahne hodnotu za jednim DK Vice info popiskem."""
+    labels_pattern = "|".join(re.escape(label) for label in labels)
+    stop_pattern = "|".join(re.escape(label) for label in DK_MORE_INFO_STOP_LABELS)
+    match = re.search(
+        rf"(?:{labels_pattern}):?\s*(.*?)(?=\s+(?:{stop_pattern})\b|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _clean_text(match.group(1)).strip(" ,") if match else ""
+
+
 def _original_metadata_from_text(text: str) -> tuple[str, str]:
     """Najde DK pole Originalni nazev z viditelneho textu stranky."""
     normalized = _clean_text(text)
@@ -1002,6 +1103,87 @@ def _original_metadata_from_text(text: str) -> tuple[str, str]:
     if not match:
         return "", ""
     return _split_original_title_and_publication(match.group(1))
+
+
+def _original_metadata_from_text(text: str) -> tuple[str, str]:
+    """Najde DK originalni nazev a samostatny originalni rok z Vice info."""
+    normalized = _clean_text(text)
+    title_value = _detail_field_value(normalized, ("OriginÃ¡lnÃ­ nÃ¡zev", "Originalni nazev"))
+    if not title_value:
+        match = re.search(
+            r"OriginÃ¡lnÃ­\s+n[Ã¡a]zev:?\s*(.*?)(?=\s+(?:Autor|PÅ™eklad|Preklad|PoÄet|Pocet|Jazyk|Forma|Vazba|Å½Ã¡nr|Zanr|SÃ©rie|Serie|Rok vydÃ¡nÃ­|VydÃ¡no|Vydano|ISBN|Å tÃ­tky|Stitky|HodnocenÃ­|Hodnoceni|O knize)\b|$)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        title_value = match.group(1) if match else ""
+    original_title, original_publication = _split_original_title_and_publication(title_value) if title_value else ("", "")
+    if not original_publication:
+        original_publication = _detail_field_value(
+            normalized,
+            (
+                "OriginÃ¡l vyÅ¡el",
+                "Original vysel",
+                "OriginÃ¡lnÃ­ rok vydÃ¡nÃ­",
+                "Originalni rok vydani",
+                "PÅ¯vodnÃ­ vydÃ¡nÃ­",
+                "Puvodni vydani",
+            ),
+        )
+    return original_title, _clean_text(original_publication).strip(" ,")
+
+
+ASCII_DETAIL_STOP_LABELS = (
+    "autor",
+    "preklad",
+    "pocet",
+    "jazyk",
+    "forma",
+    "vazba",
+    "zanr",
+    "serie",
+    "rok vydani",
+    "vydano",
+    "originalni nazev",
+    "original vysel",
+    "originalni rok vydani",
+    "puvodni vydani",
+    "isbn",
+    "stitky",
+    "hodnoceni",
+    "o knize",
+)
+
+
+def _ascii_detail_field_value(text: str, labels: Sequence[str]) -> str:
+    """Najde hodnotu DK Vice info podle accent-insensitive popisku."""
+    parts = _clean_text(text).split(" ")
+    ascii_text = " ".join(normalize_text(part) for part in parts)
+    stop_pattern = "|".join(re.escape(label) for label in ASCII_DETAIL_STOP_LABELS)
+    for label in labels:
+        match = re.search(
+            rf"{re.escape(label)}:?\s*(.*?)(?=\s+(?:{stop_pattern})\b|$)",
+            ascii_text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        start = len(ascii_text[: match.start(1)].split(" "))
+        end = start + len(match.group(1).split(" "))
+        return _clean_text(" ".join(parts[start:end])).strip(" ,")
+    return ""
+
+
+def _original_metadata_from_text(text: str) -> tuple[str, str]:
+    """Najde DK originalni nazev i samostatny originalni rok bez zavislosti na diakritice."""
+    match = re.search(r"Origin\S*\s+n\S*zev:?\s*(.*)$", _clean_text(text), flags=re.IGNORECASE)
+    title_value = match.group(1) if match else _ascii_detail_field_value(text, ("originalni nazev",))
+    original_title, original_publication = _split_original_title_and_publication(title_value) if title_value else ("", "")
+    if not original_publication:
+        original_publication = _ascii_detail_field_value(
+            text,
+            ("original vysel", "originalni rok vydani", "puvodni vydani"),
+        )
+    return original_title, _clean_text(original_publication).strip(" ,")
 
 
 def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
@@ -1016,7 +1198,9 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     about_text = parser.about_text or (_clean_text(description) if isinstance(description, str) else "")
     rating = parser.rating_percent or _rating_from_json(book_json.get("aggregateRating"))
     tags = _dedupe_tags(_genre_tags(book_json.get("genre")) + parser.user_tags)
-    original_title, original_publication = _original_metadata_from_text(" ".join(parser.visible_text_parts))
+    original_title, original_publication = _original_metadata_from_detail_fields(parser.detail_fields)
+    if not (original_title or original_publication):
+        original_title, original_publication = _original_metadata_from_text(" ".join(parser.visible_text_parts))
 
     return BookDetailMetadata(
         published_year=published_year,

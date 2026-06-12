@@ -580,6 +580,11 @@
 - `Rebuild data` zalohuje stare pracovni uloziste do `backups\matches\`.
 - Import knih je presunut do rady `0.4.x`; pred nim je potreba samostatny detailni plan.
 
+## Update 0.3.1 - DK original year without title
+
+- DK `Vice info` se cte i jako strukturovane dvojice `dt/dd`.
+- Pokud DK ma jen samostatny originalni rok bez originalniho nazvu, komentar zapise aspon `Originalne vyslo`.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -323,6 +323,36 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.original_title, "Twenty Pence with Envelope and Seasonal Greeting")
         self.assertEqual(detail.original_publication, "12/1987")
 
+    def test_parse_book_detail_metadata_reads_original_publication_without_title(self):
+        html = """
+        <div class='book-details__row'>
+          <dt>OriginÃ¡l vyÅ¡el</dt>
+          <dd>1987</dd>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.original_title, "")
+        self.assertEqual(detail.original_publication, "1987")
+
+    def test_parse_book_detail_metadata_reads_original_title_and_separate_publication(self):
+        html = """
+        <div class='book-details__row'>
+          <dt>OriginÃ¡lnÃ­ nÃ¡zev</dt>
+          <dd>Sourcery</dd>
+        </div>
+        <div class='book-details__row'>
+          <dt>OriginÃ¡l vyÅ¡el</dt>
+          <dd>1988</dd>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.original_title, "Sourcery")
+        self.assertEqual(detail.original_publication, "1988")
+
     def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
         html = """
         <script type="application/ld+json">
