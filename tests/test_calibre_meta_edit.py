@@ -1383,6 +1383,17 @@ class CsvAndFilesystemTests(unittest.TestCase):
 
         self.assertEqual([book.id for book in new_books], [2])
 
+    def test_prune_missing_book_rows_removes_rows_not_in_calibre_books(self):
+        rows = [
+            cme.MatchRow(1, "Sirotek", "Autor", "review", "", "", "manual", "manual"),
+            cme.MatchRow(4, "Realna", "Autor", "skip", "", "", "none", "x"),
+        ]
+        books = [cme.Book(4, "Realna", ["Autor"], "")]
+
+        pruned = cme.prune_missing_book_rows(rows, books)
+
+        self.assertEqual([row.book_id for row in pruned], [4])
+
     def test_replace_match_rows_preserves_review_overrides(self):
         old_row = cme.MatchRow(
             1,

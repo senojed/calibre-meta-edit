@@ -17,8 +17,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.3.2")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.3.2")
+        self.assertEqual(qt.APP_VERSION, "0.3.3")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.3.3")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -57,7 +57,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.3.2")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.3.3")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -315,6 +315,20 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(window.selected_book_ids(), {1})
         self.assertEqual(window.selected_row().title, "Beta")
+        app.processEvents()
+
+    def test_refresh_table_selects_first_row_when_nothing_selected(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = [cme.MatchRow(4, "Realna", "Autor", "review", "", "", "none", "x")]
+
+        window.refresh_table()
+
+        self.assertEqual(window.selected_book_ids(), {4})
         app.processEvents()
 
     def test_run_covers_uses_cover_audit_without_direct_write(self):

@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -866,6 +866,9 @@ if PYSIDE6_AVAILABLE:
                     self.table.setItem(row_index, col_index, item)
             self.table.setSortingEnabled(True)
             self.restore_selection(selected_ids)
+            if not self.selected_book_ids() and self.table.rowCount():
+                self.table.selectRow(0)
+                self.on_selection_changed()
 
         def checked_values(self, checks: dict[str, QCheckBox]) -> set[str] | None:
             """Vrati vybrane hodnoty; vse vybrane znamena bez filtru."""

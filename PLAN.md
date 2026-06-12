@@ -590,6 +590,11 @@
 - DK `Vice info` cte i `Originalni vydavatel` a zapise ho do komentare.
 - Qt ma docasne tlacitko `Bez orig. roku`, ktere vybere knihy bez `Originalne vyslo` v aktualnim Calibre komentari.
 
+## Update 0.3.3 - Prune stale rows and select first visible row
+
+- Startup/update odstrani z `matches.db` radky, jejichz `book_id` uz neni v Calibre knihovne.
+- Qt po nacteni automaticky vybere prvni viditelny radek, kdyz nic neni vybrane.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

@@ -1900,6 +1900,12 @@ def filter_new_books(books: Sequence[Book], existing_rows: Sequence[MatchRow]) -
     return [book for book in books if book.id not in existing_book_ids]
 
 
+def prune_missing_book_rows(rows: Sequence[MatchRow], books: Sequence[Book]) -> list[MatchRow]:
+    """Odstrani pracovni radky, ktere uz nejsou v Calibre knihovne."""
+    book_ids = {book.id for book in books}
+    return [row for row in rows if row.book_id in book_ids]
+
+
 def replace_match_rows(existing_rows: Sequence[MatchRow], refreshed_rows: Sequence[MatchRow]) -> list[MatchRow]:
     """Nahradi v CSV jen znovu nactene radky a ostatni necha beze zmeny."""
     replacements = {row.book_id: row for row in refreshed_rows}
@@ -2695,6 +2701,11 @@ def run_preview(args: argparse.Namespace) -> int:
 
     read_limit = None if refresh_selected else args.limit
     books = read_books(args.library, book_id=args.book_id, limit=read_limit)
+    if incremental and books and not refresh_selected and args.book_id is None and args.limit is None:
+        pruned_rows = prune_missing_book_rows(existing_rows, books)
+        if len(pruned_rows) != len(existing_rows):
+            write_matches_csv(output, pruned_rows, overwrite=True)
+            existing_rows = pruned_rows
     if refresh_selected:
         books = select_books(books, book_ids=selected_book_ids)
     books_to_preview = books if refresh_selected or not incremental else filter_new_books(books, existing_rows)
