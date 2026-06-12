@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -29,7 +29,15 @@ DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
 SOURCE_FILTER_VALUES = ("databazeknih", "legie")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
-REVIEW_EDITABLE_FIELDS = ("Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
+REVIEW_EDITABLE_FIELDS = (
+    "Rok vydani",
+    "Vydavatel",
+    "Tagy",
+    "Hodnoceni",
+    "Originalni nazev",
+    "Originalne vyslo",
+    "Originalni vydavatel",
+)
 AUTO_SETTING_DEFAULTS = {
     "startup_preview": True,
     "auto_link_audit": True,

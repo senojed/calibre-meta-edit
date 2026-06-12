@@ -1284,6 +1284,7 @@ class CsvAndFilesystemTests(unittest.TestCase):
             review_rating_percent="87 %",
             review_original_title="Moving Pictures",
             review_original_publication="1990",
+            review_original_publisher="Gollancz",
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "matches.csv"
@@ -1296,10 +1297,22 @@ class CsvAndFilesystemTests(unittest.TestCase):
         self.assertEqual(rows[0].review_rating_percent, "87 %")
         self.assertEqual(rows[0].review_original_title, "Moving Pictures")
         self.assertEqual(rows[0].review_original_publication, "1990")
+        self.assertEqual(rows[0].review_original_publisher, "Gollancz")
 
     def test_write_matches_db_roundtrips_rows(self):
         rows = [
-            cme.MatchRow(2, "Dva", "Autor", "review", "https://x", "", "manual", "manual", review_publisher="Laser"),
+            cme.MatchRow(
+                2,
+                "Dva",
+                "Autor",
+                "review",
+                "https://x",
+                "",
+                "manual",
+                "manual",
+                review_publisher="Laser",
+                review_original_publisher="Gollancz",
+            ),
             cme.MatchRow(1, "Jedna", "Autor", "skip", "", "", "none", "no-candidates"),
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -1309,6 +1322,7 @@ class CsvAndFilesystemTests(unittest.TestCase):
 
         self.assertEqual([row.book_id for row in loaded], [2, 1])
         self.assertEqual(loaded[0].review_publisher, "Laser")
+        self.assertEqual(loaded[0].review_original_publisher, "Gollancz")
 
     def test_write_matches_db_refuses_existing_rows_without_overwrite(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "none", "x")
@@ -1673,12 +1687,12 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertTrue(cme.is_writable_match_row(row))
 
-    def test_is_writable_match_row_accepts_approved_empty_url_for_comment_clear(self):
+    def test_is_writable_match_row_rejects_approved_empty_url(self):
         row = cme.MatchRow(177, "Change Your Diet", "Georgia Ede", "approve", "", "", "manual", "manual")
 
-        self.assertTrue(cme.is_writable_match_row(row))
+        self.assertFalse(cme.is_writable_match_row(row))
 
-    def test_apply_match_row_clears_comment_for_approved_empty_url(self):
+    def test_apply_match_row_skips_approved_empty_url(self):
         row = cme.MatchRow(177, "Change Your Diet", "Georgia Ede", "approve", "", "", "manual", "manual")
         calls = []
 
@@ -1690,9 +1704,10 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             fetcher=lambda url: self.fail("empty URL clear should not fetch detail"),
         )
 
-        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.status, "skipped")
         self.assertEqual(result.chosen_url, "")
-        self.assertIn("comments:", calls[0])
+        self.assertEqual(result.error, "empty-url")
+        self.assertEqual(calls, [])
 
     def test_apply_match_row_writes_databaze_story_link_only(self):
         row = cme.MatchRow(

@@ -56,6 +56,7 @@ MATCHES_FIELDS = [
     "review_rating_percent",
     "review_original_title",
     "review_original_publication",
+    "review_original_publisher",
 ]
 APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error"]
 
@@ -96,6 +97,7 @@ class MatchRow:
     review_rating_percent: str = ""
     review_original_title: str = ""
     review_original_publication: str = ""
+    review_original_publisher: str = ""
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,7 @@ def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
         review_rating_percent=source.review_rating_percent,
         review_original_title=source.review_original_title,
         review_original_publication=source.review_original_publication,
+        review_original_publisher=source.review_original_publisher,
     )
 
 
@@ -316,7 +319,7 @@ def apply_review_overrides(row: MatchRow, detail: BookDetailMetadata) -> BookDet
         rating_percent=row.review_rating_percent.strip() or detail.rating_percent,
         original_title=row.review_original_title.strip() or detail.original_title,
         original_publication=row.review_original_publication.strip() or detail.original_publication,
-        original_publisher=detail.original_publisher,
+        original_publisher=row.review_original_publisher.strip() or detail.original_publisher,
         about_text=detail.about_text,
         cover_url=detail.cover_url,
     )
@@ -1701,6 +1704,7 @@ def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
         raw.get("review_rating_percent") or "",
         raw.get("review_original_title") or "",
         raw.get("review_original_publication") or "",
+        raw.get("review_original_publisher") or "",
     )
 
 
@@ -1945,7 +1949,7 @@ def is_writable_match_row(row: MatchRow) -> bool:
     if row.status != "approve":
         return False
     if not row.chosen_url.strip():
-        return True
+        return False
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return is_valid_legie_story_url(row.chosen_url)
     return is_valid_apply_url(row.chosen_url) or is_valid_databaze_story_url(row.chosen_url) or is_manual_external_url(row)
@@ -2395,7 +2399,7 @@ def apply_match_row(
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
     if not row.chosen_url.strip():
-        return clear_comment_row(row, library, calibredb_path, runner)
+        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "empty-url")
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return apply_legie_story_row(
             row,

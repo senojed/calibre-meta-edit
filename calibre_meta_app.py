@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -278,6 +278,7 @@ REVIEW_OVERRIDE_FIELDS = {
     "Hodnoceni": "review_rating_percent",
     "Originalni nazev": "review_original_title",
     "Originalne vyslo": "review_original_publication",
+    "Originalni vydavatel": "review_original_publisher",
 }
 
 
