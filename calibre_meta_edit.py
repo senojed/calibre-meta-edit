@@ -106,6 +106,7 @@ class BookDetailMetadata:
     rating_percent: str = ""
     original_title: str = ""
     original_publication: str = ""
+    original_publisher: str = ""
     about_text: str = ""
     cover_url: str = ""
 
@@ -291,6 +292,8 @@ def format_enriched_comment(url: str, detail: BookDetailMetadata) -> str:
         facts.append(f"Originalni nazev: {detail.original_title}")
     if detail.original_publication:
         facts.append(f"Originalne vyslo: {detail.original_publication}")
+    if detail.original_publisher:
+        facts.append(f"Originalni vydavatel: {detail.original_publisher}")
     if facts:
         parts.append("<p>" + "<br />".join(html.escape(item) for item in facts) + "</p>")
     if detail.about_text:
@@ -313,6 +316,7 @@ def apply_review_overrides(row: MatchRow, detail: BookDetailMetadata) -> BookDet
         rating_percent=row.review_rating_percent.strip() or detail.rating_percent,
         original_title=row.review_original_title.strip() or detail.original_title,
         original_publication=row.review_original_publication.strip() or detail.original_publication,
+        original_publisher=detail.original_publisher,
         about_text=detail.about_text,
         cover_url=detail.cover_url,
     )
@@ -1026,6 +1030,8 @@ def _detail_label_kind(label: str) -> str:
     has_original = "original" in normalized or "origin" in lowered
     if has_original and ("nazev" in normalized or "zev" in lowered):
         return "original_title"
+    if has_original and ("vydavatel" in normalized or "publisher" in normalized):
+        return "original_publisher"
     if has_original and ("vysel" in normalized or "rok" in normalized or "vydani" in normalized or ("vy" in lowered and "el" in lowered)):
         return "original_publication"
     if ("puvod" in normalized or "p vod" in normalized) and "vydani" in normalized:
@@ -1033,10 +1039,11 @@ def _detail_label_kind(label: str) -> str:
     return ""
 
 
-def _original_metadata_from_detail_fields(fields: Sequence[tuple[str, str]]) -> tuple[str, str]:
+def _original_metadata_from_detail_fields(fields: Sequence[tuple[str, str]]) -> tuple[str, str, str]:
     """Vezme originalni udaje z DK Vice info dvojic dt/dd."""
     original_title = ""
     original_publication = ""
+    original_publisher = ""
     for label, value in fields:
         kind = _detail_label_kind(label)
         if kind == "original_title":
@@ -1044,7 +1051,9 @@ def _original_metadata_from_detail_fields(fields: Sequence[tuple[str, str]]) -> 
             original_publication = original_publication or inline_publication
         elif kind == "original_publication":
             original_publication = _clean_text(value).strip(" ,")
-    return original_title, original_publication
+        elif kind == "original_publisher":
+            original_publisher = _clean_text(value).strip(" ,")
+    return original_title, original_publication, original_publisher
 
 
 DK_MORE_INFO_STOP_LABELS = (
@@ -1198,7 +1207,7 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     about_text = parser.about_text or (_clean_text(description) if isinstance(description, str) else "")
     rating = parser.rating_percent or _rating_from_json(book_json.get("aggregateRating"))
     tags = _dedupe_tags(_genre_tags(book_json.get("genre")) + parser.user_tags)
-    original_title, original_publication = _original_metadata_from_detail_fields(parser.detail_fields)
+    original_title, original_publication, original_publisher = _original_metadata_from_detail_fields(parser.detail_fields)
     if not (original_title or original_publication):
         original_title, original_publication = _original_metadata_from_text(" ".join(parser.visible_text_parts))
 
@@ -1209,6 +1218,7 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
         rating_percent=rating,
         original_title=original_title,
         original_publication=original_publication,
+        original_publisher=original_publisher,
         about_text=about_text,
         cover_url=_image_url_from_json(book_json.get("image")) or parser.cover_url,
     )
@@ -2358,6 +2368,7 @@ def fetch_databaze_book_detail_metadata(
             rating_percent=detail.rating_percent,
             original_title=detail.original_title,
             original_publication=detail.original_publication,
+            original_publisher=detail.original_publisher,
             about_text=detail.about_text,
             cover_url=detail.cover_url,
         )

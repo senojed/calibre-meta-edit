@@ -117,6 +117,7 @@ class CommentTests(unittest.TestCase):
             rating_percent="89 %",
             original_title="Twenty Pence with Envelope and Seasonal Greeting",
             original_publication="12/1987",
+            original_publisher="Gollancz",
             about_text="Popis knihy & dalsi text.",
         )
 
@@ -126,6 +127,7 @@ class CommentTests(unittest.TestCase):
         self.assertIn("<p><strong>89 %</strong></p>", comment)
         self.assertIn("Originalni nazev: Twenty Pence with Envelope and Seasonal Greeting", comment)
         self.assertIn("Originalne vyslo: 12/1987", comment)
+        self.assertIn("Originalni vydavatel: Gollancz", comment)
         self.assertIn("<p>Popis knihy &amp; dalsi text.</p>", comment)
         self.assertNotIn("Puvodni", comment)
 
@@ -352,6 +354,18 @@ class ParserAndMatchingTests(unittest.TestCase):
 
         self.assertEqual(detail.original_title, "Sourcery")
         self.assertEqual(detail.original_publication, "1988")
+
+    def test_parse_book_detail_metadata_reads_original_publisher(self):
+        html = """
+        <div class='book-details__row'>
+          <dt>OriginÃ¡lnÃ­ vydavatel</dt>
+          <dd>Gollancz</dd>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.original_publisher, "Gollancz")
 
     def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
         html = """

@@ -585,6 +585,11 @@
 - DK `Vice info` se cte i jako strukturovane dvojice `dt/dd`.
 - Pokud DK ma jen samostatny originalni rok bez originalniho nazvu, komentar zapise aspon `Originalne vyslo`.
 
+## Update 0.3.2 - DK original publisher and missing original year selector
+
+- DK `Vice info` cte i `Originalni vydavatel` a zapise ho do komentare.
+- Qt ma docasne tlacitko `Bez orig. roku`, ktere vybere knihy bez `Originalne vyslo` v aktualnim Calibre komentari.
+
 ## Assumptions
 
 - Knihovna je `\\192.168.0.101\data\books`.

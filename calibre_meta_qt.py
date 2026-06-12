@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -192,6 +192,7 @@ def review_data_fields(
         ("Hodnoceni", detail.rating_percent or "nenacteno"),
         ("Originalni nazev", detail.original_title or "nenacteno"),
         ("Originalne vyslo", detail.original_publication or "nenacteno"),
+        ("Originalni vydavatel", detail.original_publisher or "nenacteno"),
     ]
 
 
@@ -482,6 +483,7 @@ if PYSIDE6_AVAILABLE:
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
+            self._add_button(toolbar, "Bez orig. roku", self.select_missing_original_publication, "neutralButton", "search", show_text=False)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
@@ -745,7 +747,7 @@ if PYSIDE6_AVAILABLE:
             self.review_data_labels: dict[str, QLabel] = {}
             self.review_data_edits: dict[str, QLineEdit] = {}
             for row_index, field in enumerate(
-                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
+                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo", "Originalni vydavatel")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
@@ -1269,6 +1271,27 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.information(self, "Bez odkazu", "Vybrany radek nema odkaz.")
                 return
             webbrowser.open_new(url)
+
+        def select_missing_original_publication(self) -> None:
+            """Docasne vybere knihy bez Originalne vyslo v aktualnim Calibre komentari."""
+            missing_ids: set[int] = set()
+            for row in self.rows:
+                try:
+                    metadata = cme.get_current_book_metadata(self.library_path, row.book_id)
+                except Exception:
+                    continue
+                if "Originalne vyslo" not in (metadata.comment or ""):
+                    missing_ids.add(row.book_id)
+            self.title_filter.clear()
+            self.author_filter.clear()
+            for checks in (self.status_checks, self.source_checks, self.type_checks):
+                for check in checks.values():
+                    check.blockSignals(True)
+                    check.setChecked(True)
+                    check.blockSignals(False)
+            self.refresh_table()
+            self.restore_selection(missing_ids)
+            self.set_status(f"Bez Originalne vyslo: vybrano {len(missing_ids)}")
 
         def run_preview(self) -> None:
             if not self.save_csv(show_message=False):
