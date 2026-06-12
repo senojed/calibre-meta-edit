@@ -28,6 +28,7 @@ BASE_URL = "https://www.databazeknih.cz"
 SEARCH_URL = BASE_URL + "/vyhledavani/knihy?q="
 LEGIE_BASE_URL = "https://www.legie.info"
 LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/index.php?search_text="
+GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
@@ -219,6 +220,37 @@ def databaze_absolute_url(url: str) -> str:
     if clean.startswith("/"):
         clean = BASE_URL + clean
     return clean.replace("http://www.databazeknih.cz/", "https://www.databazeknih.cz/", 1)
+
+
+def google_books_url(volume_id: str) -> str:
+    """Vytvori stabilni Google Books odkaz z volume ID."""
+    return "https://books.google.com/books?id=" + urllib.parse.quote(volume_id.strip())
+
+
+def google_books_volume_id_from_url(url: str) -> str:
+    """Vytahne Google Books volume ID z odkazu nebo API URL."""
+    parsed = urllib.parse.urlparse(url.strip())
+    query_id = urllib.parse.parse_qs(parsed.query).get("id", [""])[0]
+    if query_id:
+        return query_id
+    match = re.search(r"/volumes/([^/?#]+)", url)
+    return urllib.parse.unquote(match.group(1)) if match else ""
+
+
+def is_valid_google_books_url(url: str) -> bool:
+    """Pozna Google Books odkaz, ze ktereho umime ziskat volume ID."""
+    host = urllib.parse.urlparse(url.strip()).netloc.lower()
+    return host.startswith("books.google.") and bool(google_books_volume_id_from_url(url))
+
+
+def build_google_books_search_url(title: str, authors: Sequence[str]) -> str:
+    """Sestavi Google Books API dotaz pro anglicke knihy."""
+    query_parts = [f"intitle:{title.strip()}"]
+    if authors:
+        query_parts.append(f"inauthor:{authors[0].strip()}")
+    return GOOGLE_BOOKS_API + "?" + urllib.parse.urlencode(
+        {"q": " ".join(query_parts), "printType": "books", "maxResults": "10"}
+    )
 
 
 def overview_to_book_url(url: str) -> str:
@@ -931,6 +963,76 @@ def _image_url_from_json(value: object) -> str:
     return ""
 
 
+def _html_to_plain_text(value: str) -> str:
+    """Prevede kratky HTML popis z API na citelny text."""
+    text = re.sub(r"<\s*br\s*/?\s*>", "\n", value, flags=re.IGNORECASE)
+    text = re.sub(r"</\s*p\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return _clean_text(html.unescape(text))
+
+
+def _google_books_image_url(image_links: object) -> str:
+    """Vybere nejlepsi dostupnou obalku z Google Books."""
+    if not isinstance(image_links, dict):
+        return ""
+    for key in ("extraLarge", "large", "medium", "small", "thumbnail", "smallThumbnail"):
+        value = image_links.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.replace("http://", "https://", 1)
+    return ""
+
+
+def parse_google_books_volume_metadata(json_text: str) -> tuple[str, BookDetailMetadata]:
+    """Prevede Google Books volume JSON na metadata a web odkaz."""
+    raw = json.loads(json_text)
+    volume_id = str(raw.get("id") or "")
+    info = raw.get("volumeInfo") if isinstance(raw, dict) else {}
+    if not isinstance(info, dict):
+        info = {}
+    published = str(info.get("publishedDate") or "")
+    rating = ""
+    if info.get("averageRating"):
+        rating = str(info.get("averageRating")).replace(".", ",") + " / 5"
+        if info.get("ratingsCount"):
+            rating += f" ({info.get('ratingsCount')} hodnoceni)"
+    description = info.get("description") if isinstance(info.get("description"), str) else ""
+    categories = info.get("categories") if isinstance(info.get("categories"), list) else []
+    tags = _dedupe_tags(str(item) for item in categories if str(item).strip())
+    detail = BookDetailMetadata(
+        published_year=_first_reasonable_year(published),
+        publisher=str(info.get("publisher") or ""),
+        tags=tags,
+        rating_percent=rating,
+        about_text=_html_to_plain_text(description),
+        cover_url=_google_books_image_url(info.get("imageLinks")),
+    )
+    return google_books_url(volume_id), detail
+
+
+def parse_google_books_search_results(json_text: str) -> list[Candidate]:
+    """Vytahne kandidaty z Google Books search odpovedi."""
+    raw = json.loads(json_text)
+    items = raw.get("items") if isinstance(raw, dict) else []
+    if not isinstance(items, list):
+        return []
+    candidates: list[Candidate] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        volume_id = str(item.get("id") or "")
+        info = item.get("volumeInfo")
+        if not volume_id or not isinstance(info, dict):
+            continue
+        title = str(info.get("title") or "")
+        subtitle = str(info.get("subtitle") or "")
+        full_title = f"{title}: {subtitle}" if subtitle else title
+        authors = info.get("authors") if isinstance(info.get("authors"), list) else []
+        text = " ".join(str(author) for author in authors)
+        if full_title:
+            candidates.append(Candidate(full_title, text, google_books_url(volume_id)))
+    return candidates
+
+
 def _image_urls_from_json(value: object) -> list[str]:
     urls: list[str] = []
     if isinstance(value, str) and _looks_like_cover_image(value, "json image"):
@@ -1558,6 +1660,8 @@ def source_and_work_type_for_url(url: str) -> tuple[str, str]:
         return "legie", "povidka"
     if is_valid_databaze_story_url(url):
         return "databazeknih", "povidka"
+    if is_valid_google_books_url(url):
+        return "googlebooks", ""
     return "databazeknih", ""
 
 
@@ -1680,6 +1784,101 @@ def match_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
         )
 
     return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "no-candidates")
+
+
+def likely_english_book(book: Book) -> bool:
+    """Hruby filtr: anglicke nazvy/autori jsou bez ceske diakritiky a skoro cele ASCII."""
+    title = book.title.strip()
+    if not title:
+        return False
+    letters = [char for char in title if char.isalpha()]
+    if not letters:
+        return False
+    ascii_letters = [char for char in letters if ord(char) < 128]
+    if len(ascii_letters) / len(letters) <= 0.98:
+        return False
+    words = set(normalize_text(title).split())
+    english_signals = {
+        "and",
+        "the",
+        "this",
+        "that",
+        "there",
+        "your",
+        "you",
+        "mind",
+        "diet",
+        "change",
+        "turn",
+        "coat",
+        "life",
+        "fungi",
+        "worlds",
+        "make",
+        "exercised",
+        "something",
+        "new",
+        "antimemetics",
+        "division",
+        "history",
+        "stories",
+        "book",
+    }
+    return bool(words & english_signals)
+
+
+def match_google_books(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
+    """Vybere Google Books kandidata jen pri shode nazvu a autora."""
+    authors_text = " & ".join(book.authors)
+    if not candidates:
+        return MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "googlebooks-no-candidates", "googlebooks")
+
+    normalized_title = normalize_text(book.title)
+    title_matches = [candidate for candidate in candidates if normalize_text(candidate.title) == normalized_title]
+    author_matches = [
+        candidate
+        for candidate in title_matches
+        if any(_author_matches_text(author, candidate.text) for author in book.authors)
+    ]
+    if len(author_matches) == 1:
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            author_matches[0].url,
+            _candidate_urls(candidates),
+            "googlebooks-title-author",
+            "googlebooks-title-author",
+            "googlebooks",
+            "",
+        )
+    if title_matches:
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            title_matches[0].url,
+            _candidate_urls(candidates),
+            "googlebooks-title-only",
+            "googlebooks-title-only",
+            "googlebooks",
+            "",
+        )
+    return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "googlebooks-no-match", "googlebooks")
+
+
+def find_google_books_book(
+    book: Book,
+    fetcher: Callable[[str], str],
+    sleeper: Callable[[float], None],
+    sleep_seconds: float,
+) -> MatchRow:
+    """Najde anglickou knihu pres Google Books API."""
+    sleeper(sleep_seconds)
+    html = fetcher(build_google_books_search_url(book.title, book.authors))
+    return match_google_books(book, parse_google_books_search_results(html))
 
 
 def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
@@ -2124,7 +2323,7 @@ def cover_candidate_rows(
         for row in selected_rows
         if row.status != "review"
         and row.chosen_url.strip()
-        and (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url))
+        and (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url) or is_valid_google_books_url(row.chosen_url))
     ]
     if not supported_rows:
         return []
@@ -2133,7 +2332,11 @@ def cover_candidate_rows(
         CoverCandidate(
             row.book_id,
             row.title,
-            legie_absolute_url(row.chosen_url) if is_valid_legie_story_url(row.chosen_url) else book_url_to_overview_url(row.chosen_url),
+            legie_absolute_url(row.chosen_url)
+            if is_valid_legie_story_url(row.chosen_url)
+            else row.chosen_url
+            if is_valid_google_books_url(row.chosen_url)
+            else book_url_to_overview_url(row.chosen_url),
         )
         for row in supported_rows
         if not flags.get(row.book_id, False)
@@ -2145,6 +2348,9 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
     fetch = fetcher or fetch_text
     if is_valid_legie_story_url(url):
         return parse_legie_cover_options(fetch(legie_absolute_url(url)))
+    if is_valid_google_books_url(url):
+        _written_url, detail = fetch_google_books_detail_metadata(url, fetch)
+        return [CoverOption(detail.cover_url, "googlebooks", "Google Books")] if detail.cover_url else []
     if is_valid_apply_url(url):
         return parse_databaze_cover_options(fetch(book_url_to_overview_url(url)))
     return []
@@ -2184,7 +2390,7 @@ def audit_cover_rows(
         if flags.get(row.book_id, False):
             updated.append(row)
             continue
-        if not (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url)):
+        if not (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url) or is_valid_google_books_url(row.chosen_url)):
             updated.append(row)
             continue
         try:
@@ -2231,10 +2437,13 @@ def apply_cover_candidate(
     fetch_detail = fetcher or fetch_text
     fetch_cover = binary_fetcher or fetch_binary
     try:
-        detail_html = fetch_detail(candidate.source_url)
         if is_valid_legie_story_url(candidate.source_url):
+            detail_html = fetch_detail(candidate.source_url)
             cover_url = parse_legie_story_detail(detail_html, candidate.source_url).cover_url
+        elif is_valid_google_books_url(candidate.source_url):
+            cover_url = fetch_google_books_detail_metadata(candidate.source_url, fetch_detail)[1].cover_url
         else:
+            detail_html = fetch_detail(candidate.source_url)
             cover_url = parse_book_detail_metadata(detail_html).cover_url
     except Exception as exc:
         return ApplyResult(candidate.book_id, candidate.title, "failed", candidate.source_url, f"detail-fetch-error: {exc}")
@@ -2386,6 +2595,18 @@ def fetch_databaze_book_detail_metadata(
     return written_url, detail
 
 
+def fetch_google_books_detail_metadata(
+    url: str,
+    detail_fetcher: Callable[[str], str] | None = None,
+) -> tuple[str, BookDetailMetadata]:
+    """Stahne detail Google Books podle volume ID z odkazu."""
+    volume_id = google_books_volume_id_from_url(url)
+    if not volume_id:
+        raise RuntimeError("googlebooks-missing-volume-id")
+    fetch = detail_fetcher or fetch_text
+    return parse_google_books_volume_metadata(fetch(GOOGLE_BOOKS_API + "/" + urllib.parse.quote(volume_id)))
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,
@@ -2411,6 +2632,32 @@ def apply_match_row(
             tags_reader,
             cover_fetcher,
         )
+    if row.source == "googlebooks" or is_valid_google_books_url(row.chosen_url):
+        try:
+            written_url, detail = fetch_google_books_detail_metadata(row.chosen_url, fetcher or fetch_text)
+        except RuntimeError as exc:
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+        detail = apply_review_overrides(row, detail)
+        args = [
+            calibredb_path,
+            "set_metadata",
+            str(row.book_id),
+            "--with-library",
+            str(library),
+            "--field",
+            "comments:" + format_enriched_comment(written_url, detail),
+        ]
+        if detail.published_year:
+            args.extend(["--field", "pubdate:" + calibre_pubdate_value(detail.published_year)])
+        if detail.publisher:
+            args.extend(["--field", "publisher:" + detail.publisher])
+        if detail.tags:
+            args.extend(["--field", "tags:" + ",".join(detail.tags)])
+        result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "calibredb failed").strip()
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
+        return ApplyResult(row.book_id, row.title, "updated", written_url, "")
     if is_valid_databaze_story_url(row.chosen_url):
         return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
     if not is_valid_apply_url(row.chosen_url):
@@ -2605,7 +2852,7 @@ def preview_books(
     sleep_seconds: float = 1.0,
 ) -> list[MatchRow]:
     rows: list[MatchRow] = []
-    searchable_books = [book for book in books if not comment_has_databaze_link(book.comment)]
+    searchable_books = [book for book in books if not comment_has_databaze_link(book.comment) and not likely_english_book(book)]
     if searchable_books:
         if not robots_checker():
             raise RuntimeError("robots-blocked")
@@ -2617,11 +2864,14 @@ def preview_books(
             continue
         searched += 1
         try:
-            row = find_databaze_book(book, fetcher, sleeper, sleep_seconds)
+            if likely_english_book(book):
+                row = find_google_books_book(book, fetcher, sleeper, sleep_seconds)
+            else:
+                row = find_databaze_book(book, fetcher, sleeper, sleep_seconds)
         except Exception:
             authors_text = " & ".join(book.authors)
             row = MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "http-error")
-        if should_try_legie(row):
+        if not likely_english_book(book) and should_try_legie(row):
             legie_row = find_legie_story(book, fetcher, sleeper, sleep_seconds)
             if legie_row is not None:
                 row = legie_row
@@ -2637,6 +2887,36 @@ def audit_legie_rows(
 ) -> list[MatchRow]:
     updated: list[MatchRow] = []
     for row in rows:
+        if row.reason == "manual" and row.chosen_url.strip():
+            updated.append(row)
+            continue
+        authors = [part.strip() for part in row.authors.split("&") if part.strip()]
+        book = Book(row.book_id, row.title, authors, "")
+        if likely_english_book(book):
+            try:
+                google_row = find_google_books_book(book, fetcher, sleeper, sleep_seconds)
+            except Exception:
+                google_row = None
+            if google_row is not None and google_row.chosen_url:
+                updated.append(google_row)
+            elif row.source == "databazeknih" and row.chosen_url:
+                updated.append(
+                    MatchRow(
+                        row.book_id,
+                        row.title,
+                        row.authors,
+                        "review",
+                        "",
+                        row.candidate_urls,
+                        "none",
+                        "stale-already-linked",
+                        row.source,
+                        row.work_type,
+                    )
+                )
+            else:
+                updated.append(row)
+            continue
         if row.status == "approve" and not should_try_legie(row):
             updated.append(row)
             continue
@@ -2659,8 +2939,6 @@ def audit_legie_rows(
         if not should_try_legie(row) and row.reason != "already-linked":
             updated.append(row)
             continue
-        authors = [part.strip() for part in row.authors.split("&") if part.strip()]
-        book = Book(row.book_id, row.title, authors, "")
         databaze_row = None
         databaze_failed = False
         try:
@@ -2694,6 +2972,74 @@ def audit_legie_rows(
         else:
             updated.append(row)
     return updated
+
+
+def with_review_detail(row: MatchRow, detail: BookDetailMetadata, reason: str) -> MatchRow:
+    """Ulozi nactena Review metadata do pracovniho radku."""
+    return replace(
+        row,
+        status="review",
+        confidence=reason,
+        reason=reason,
+        review_published_year=detail.published_year,
+        review_publisher=detail.publisher,
+        review_tags=", ".join(detail.tags or []),
+        review_rating_percent=detail.rating_percent,
+        review_original_title=detail.original_title,
+        review_original_publication=detail.original_publication,
+        review_original_publisher=detail.original_publisher,
+    )
+
+
+def audit_missing_original_publication_rows(
+    rows: Sequence[MatchRow],
+    library: str | Path,
+    fetcher: Callable[[str], str] = fetch_text,
+) -> list[MatchRow]:
+    """Da do review jen DK knihy, kde DK zna originalni rok a Calibre komentar ho nema."""
+    updated: list[MatchRow] = []
+    for row in rows:
+        if row.source != "databazeknih" or not is_valid_apply_url(row.chosen_url):
+            updated.append(row)
+            continue
+        try:
+            current_comment = get_current_comment(library, row.book_id)
+        except Exception:
+            updated.append(row)
+            continue
+        if "Originalne vyslo" in current_comment:
+            updated.append(row)
+            continue
+        try:
+            _written_url, detail = fetch_databaze_book_detail_metadata(row.chosen_url, fetcher)
+        except Exception:
+            updated.append(row)
+            continue
+        if detail.original_publication:
+            updated.append(with_review_detail(row, detail, "missing-original-publication"))
+        else:
+            updated.append(row)
+    return updated
+
+
+def run_missing_original_audit(args: argparse.Namespace) -> int:
+    """Spusti chytry audit chybejiciho originalniho roku pro DK knihy."""
+    rows = read_matches_csv(MATCHES_PATH)
+    selected_rows = select_match_rows(
+        rows,
+        book_id=args.book_id,
+        limit=args.limit,
+        book_ids=getattr(args, "book_ids", None),
+    )
+    selected_ids = {row.book_id for row in selected_rows}
+    audited = audit_missing_original_publication_rows(selected_rows, args.library)
+    replacements = {row.book_id: row for row in audited}
+    merged = [replacements.get(row.book_id, row) if row.book_id in selected_ids else row for row in rows]
+    changed = sum(1 for old, new in zip(rows, merged) if old != new)
+    if changed:
+        write_matches_csv(MATCHES_PATH, merged, overwrite=True)
+    print(f"Audit originalniho roku: zmeneno {changed} radku")
+    return 0
 
 
 def run_preview(args: argparse.Namespace) -> int:
@@ -2986,8 +3332,17 @@ def build_parser() -> argparse.ArgumentParser:
     legie_audit.add_argument("--library", default=DEFAULT_LIBRARY)
     legie_audit.add_argument("--limit", type=int)
     legie_audit.add_argument("--book-id", type=int)
+    legie_audit.add_argument("--book-ids", type=int, nargs="*")
     legie_audit.add_argument("--sleep", type=float, default=1.0)
     legie_audit.set_defaults(func=run_legie_audit)
+
+    original_audit = subparsers.add_parser("missing-original-audit", help="Najde DK knihy, kterym chybi Originalne vyslo.")
+    original_audit.add_argument("--library", default=DEFAULT_LIBRARY)
+    original_audit.add_argument("--limit", type=int)
+    original_audit.add_argument("--book-id", type=int)
+    original_audit.add_argument("--book-ids", type=int, nargs="*")
+    original_audit.add_argument("--sleep", type=float, default=1.0)
+    original_audit.set_defaults(func=run_missing_original_audit)
 
     repair_parser = subparsers.add_parser("repair-links", help="Opravi stare Databaze knih odkazy v komentarich.")
     repair_parser.add_argument("--library", default=DEFAULT_LIBRARY)

@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -636,6 +636,14 @@ def make_legie_audit_action(
     audit_runner: Callable[[SimpleNamespace], int] = cme.run_legie_audit,
 ) -> Callable[[], int]:
     """Pripravi audit odkazu nad pracovnimi daty."""
+    return lambda: audit_runner(args)
+
+
+def make_missing_original_audit_action(
+    args: SimpleNamespace,
+    audit_runner: Callable[[SimpleNamespace], int] = cme.run_missing_original_audit,
+) -> Callable[[], int]:
+    """Pripravi chytry audit knih s chybejicim originalnim rokem."""
     return lambda: audit_runner(args)
 
 

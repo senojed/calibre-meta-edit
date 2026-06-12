@@ -62,6 +62,19 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.legie.info/index.php?search_text=A+opice+si+myslely+Orson+Scott+Card",
         )
 
+    def test_google_books_url_helpers_read_volume_id(self):
+        url = "https://books.google.cz/books/about/Turn_Coat.html?id=cf1Tl4WhhHUC&redir_esc=y"
+
+        self.assertEqual(cme.google_books_volume_id_from_url(url), "cf1Tl4WhhHUC")
+        self.assertTrue(cme.is_valid_google_books_url(url))
+        self.assertEqual(cme.google_books_url("cf1Tl4WhhHUC"), "https://books.google.com/books?id=cf1Tl4WhhHUC")
+
+    def test_build_google_books_search_url_uses_title_and_author(self):
+        url = cme.build_google_books_search_url("Turn Coat", ["Jim Butcher"])
+
+        self.assertIn("q=intitle%3ATurn+Coat+inauthor%3AJim+Butcher", url)
+        self.assertIn("printType=books", url)
+
     def test_parse_search_results_reads_databaze_story_candidates(self):
         html = """
         <a href="https://www.databazeknih.cz/povidky/samuela-2229">
@@ -366,6 +379,50 @@ class ParserAndMatchingTests(unittest.TestCase):
         detail = cme.parse_book_detail_metadata(html)
 
         self.assertEqual(detail.original_publisher, "Gollancz")
+
+    def test_parse_google_books_search_results_and_metadata(self):
+        search_json = """
+        {
+          "items": [
+            {
+              "id": "cf1Tl4WhhHUC",
+              "volumeInfo": {
+                "title": "Turn Coat",
+                "authors": ["Jim Butcher"]
+              }
+            }
+          ]
+        }
+        """
+        detail_json = """
+        {
+          "id": "cf1Tl4WhhHUC",
+          "volumeInfo": {
+            "title": "Turn Coat",
+            "authors": ["Jim Butcher"],
+            "publisher": "Penguin",
+            "publishedDate": "2009-04-07",
+            "description": "<p>Wizard Harry Dresden faces a traitor.</p>",
+            "categories": ["Fiction / Fantasy"],
+            "averageRating": 4.5,
+            "ratingsCount": 12,
+            "imageLinks": {"thumbnail": "http://books.google.com/cover.jpg"}
+          }
+        }
+        """
+
+        candidates = cme.parse_google_books_search_results(search_json)
+        written_url, detail = cme.parse_google_books_volume_metadata(detail_json)
+
+        self.assertEqual(candidates[0].title, "Turn Coat")
+        self.assertEqual(candidates[0].url, "https://books.google.com/books?id=cf1Tl4WhhHUC")
+        self.assertEqual(written_url, "https://books.google.com/books?id=cf1Tl4WhhHUC")
+        self.assertEqual(detail.published_year, "2009")
+        self.assertEqual(detail.publisher, "Penguin")
+        self.assertEqual(detail.tags, ["Fiction / Fantasy"])
+        self.assertEqual(detail.rating_percent, "4,5 / 5 (12 hodnoceni)")
+        self.assertEqual(detail.about_text, "Wizard Harry Dresden faces a traitor.")
+        self.assertEqual(detail.cover_url, "https://books.google.com/cover.jpg")
 
     def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
         html = """
@@ -934,6 +991,64 @@ class ParserAndMatchingTests(unittest.TestCase):
         )
 
         self.assertEqual(updated, [row])
+
+    def test_audit_legie_rows_uses_google_books_for_english_book(self):
+        row = cme.MatchRow(
+            182,
+            "Turn Coat",
+            "Jim Butcher",
+            "skip",
+            "https://www.databazeknih.cz/knihy/turn-100-let-mesta-trnovany-teplice-288904",
+            "",
+            "none",
+            "already-linked",
+            "databazeknih",
+            "",
+        )
+        google_json = """
+        {"items":[{"id":"cf1Tl4WhhHUC","volumeInfo":{"title":"Turn Coat","authors":["Jim Butcher"]}}]}
+        """
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: google_json,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "googlebooks")
+        self.assertEqual(updated[0].chosen_url, "https://books.google.com/books?id=cf1Tl4WhhHUC")
+
+    def test_audit_missing_original_publication_reviews_only_when_dk_has_original_year(self):
+        rows = [
+            cme.MatchRow(1, "Pohyblive obrazky", "Terry Pratchett", "skip", "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", "", "none", "already-linked"),
+            cme.MatchRow(2, "Ceska kniha", "Autor", "skip", "https://www.databazeknih.cz/prehled-knihy/ceska-2", "", "none", "already-linked"),
+            cme.MatchRow(3, "Turn Coat", "Jim Butcher", "skip", "https://books.google.com/books?id=cf1Tl4WhhHUC", "", "googlebooks", "googlebooks-title-author", "googlebooks"),
+        ]
+        detail_with_original = """
+        <div class='book-details__row'><dt>OriginÃ¡lnÃ­ nÃ¡zev</dt><dd>Moving Pictures, 1990</dd></div>
+        """
+        detail_without_original = "<p>Bez originalu</p>"
+
+        def fetcher(url: str) -> str:
+            if "pohyblive" in url:
+                return detail_with_original
+            return detail_without_original
+
+        original_get_comment = cme.get_current_comment
+        try:
+            cme.get_current_comment = lambda library, book_id: "<div>Bez originalniho roku</div>"
+            updated = cme.audit_missing_original_publication_rows(rows, "library", fetcher=fetcher)
+        finally:
+            cme.get_current_comment = original_get_comment
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].reason, "missing-original-publication")
+        self.assertEqual(updated[0].review_original_title, "Moving Pictures")
+        self.assertEqual(updated[0].review_original_publication, "1990")
+        self.assertEqual(updated[1], rows[1])
+        self.assertEqual(updated[2], rows[2])
 
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(
@@ -1766,6 +1881,50 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith("pubdate:") for arg in calls[0]))
         self.assertFalse(any(arg.startswith("publisher:") for arg in calls[0]))
         self.assertFalse(any(arg.startswith("tags:") for arg in calls[0]))
+
+    def test_apply_match_row_writes_google_books_metadata(self):
+        row = cme.MatchRow(
+            182,
+            "Turn Coat",
+            "Jim Butcher",
+            "approve",
+            "https://books.google.com/books?id=cf1Tl4WhhHUC",
+            "",
+            "googlebooks-title-author",
+            "googlebooks-title-author",
+            "googlebooks",
+            "",
+        )
+        detail_json = """
+        {
+          "id": "cf1Tl4WhhHUC",
+          "volumeInfo": {
+            "publisher": "Penguin",
+            "publishedDate": "2009",
+            "description": "Harry Dresden novel.",
+            "categories": ["Fantasy"],
+            "averageRating": 4.5
+          }
+        }
+        """
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: detail_json,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://books.google.com/books?id=cf1Tl4WhhHUC")
+        self.assertIn("pubdate:2009-00-00", calls[0])
+        self.assertIn("publisher:Penguin", calls[0])
+        self.assertIn("tags:Fantasy", calls[0])
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("https://books.google.com/books?id=cf1Tl4WhhHUC", comments_field)
+        self.assertIn("Harry Dresden novel.", comments_field)
 
     def test_apply_match_row_writes_legie_story_comment_tags_and_identifier(self):
         row = cme.MatchRow(

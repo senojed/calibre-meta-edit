@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -26,7 +26,7 @@ REQUIRED_COLUMN_INDEXES = {0, 1, 2}
 MIN_COLUMN_WIDTH = 36
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
 DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
-SOURCE_FILTER_VALUES = ("databazeknih", "legie")
+SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
 REVIEW_EDITABLE_FIELDS = (
@@ -495,7 +495,7 @@ if PYSIDE6_AVAILABLE:
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
-            self._add_button(toolbar, "Bez orig. roku", self.select_missing_original_publication, "neutralButton", "search", show_text=False)
+            self._add_button(toolbar, "Najit orig. rok", self.run_missing_original_audit, "neutralButton", "search", show_text=False)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
@@ -1166,7 +1166,11 @@ if PYSIDE6_AVAILABLE:
             if not url:
                 self.review_comment_preview.setHtml("<p>Bez odkazu</p>")
                 return
-            if cme.is_valid_databaze_story_url(url) or (not cme.is_valid_apply_url(url) and not cme.is_valid_legie_story_url(url)):
+            if cme.is_valid_databaze_story_url(url) or (
+                not cme.is_valid_apply_url(url)
+                and not cme.is_valid_legie_story_url(url)
+                and not cme.is_valid_google_books_url(url)
+            ):
                 self.review_comment_preview.setHtml(cme.format_link_html(url))
                 return
             self.review_comment_preview.setHtml("<p>Nacitam metadata...</p>")
@@ -1177,6 +1181,11 @@ if PYSIDE6_AVAILABLE:
                         detail = cme.parse_legie_story_detail(cme.fetch_text(url), url)
                         comment = cme.format_legie_comment(url, detail)
                         self.bridge.review_ready.emit(request_id, row.book_id, url, None, comment)
+                        return
+                    if row.source == "googlebooks" or cme.is_valid_google_books_url(url):
+                        written_url, detail = cme.fetch_google_books_detail_metadata(url)
+                        comment = cme.format_enriched_comment(written_url, detail)
+                        self.bridge.review_ready.emit(request_id, row.book_id, written_url, detail, comment)
                         return
                     if cme.is_valid_apply_url(url):
                         written_url, detail = cme.fetch_databaze_book_detail_metadata(url)
@@ -1287,26 +1296,14 @@ if PYSIDE6_AVAILABLE:
                 return
             webbrowser.open_new(url)
 
-        def select_missing_original_publication(self) -> None:
-            """Docasne vybere knihy bez Originalne vyslo v aktualnim Calibre komentari."""
-            missing_ids: set[int] = set()
-            for row in self.rows:
-                try:
-                    metadata = cme.get_current_book_metadata(self.library_path, row.book_id)
-                except Exception:
-                    continue
-                if "Originalne vyslo" not in (metadata.comment or ""):
-                    missing_ids.add(row.book_id)
-            self.title_filter.clear()
-            self.author_filter.clear()
-            for checks in (self.status_checks, self.source_checks, self.type_checks):
-                for check in checks.values():
-                    check.blockSignals(True)
-                    check.setChecked(True)
-                    check.blockSignals(False)
-            self.refresh_table()
-            self.restore_selection(missing_ids)
-            self.set_status(f"Bez Originalne vyslo: vybrano {len(missing_ids)}")
+        def run_missing_original_audit(self) -> None:
+            """Najde DK knihy, kde web zna originalni rok a komentar ho nema."""
+            selected = self.selected_book_ids()
+            if not self.save_csv(show_message=False):
+                return
+            args = shared.make_legie_audit_args(self.library_path, selected if selected else None)
+            action = shared.make_missing_original_audit_action(args)
+            self.run_background("Najit orig. rok", action, reload_after=True)
 
         def run_preview(self) -> None:
             if not self.save_csv(show_message=False):
