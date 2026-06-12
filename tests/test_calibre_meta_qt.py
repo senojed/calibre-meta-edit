@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ import calibre_meta_edit as cme
 
 
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
+os.environ["CALIBRE_META_EDIT_TEST"] = "1"
 
 
 class QtHelperTests(unittest.TestCase):
@@ -295,6 +297,27 @@ class QtImportTests(unittest.TestCase):
             qt.schedule_qt_startup_preview(callback)
 
         single_shot.assert_called_once_with(250, callback)
+
+    def test_qt_window_does_not_schedule_startup_preview_in_offscreen_tests(self):
+        from PySide6.QtWidgets import QApplication
+        import os
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        old_value = os.environ.get("QT_QPA_PLATFORM")
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        try:
+            with patch.object(qt, "schedule_qt_startup_preview") as schedule:
+                qt.CalibreMetaQtWindow()
+        finally:
+            if old_value is None:
+                os.environ.pop("QT_QPA_PLATFORM", None)
+            else:
+                os.environ["QT_QPA_PLATFORM"] = old_value
+
+        schedule.assert_not_called()
+        app.processEvents()
 
     def test_restore_selection_uses_sorted_table_book_ids(self):
         from PySide6.QtCore import Qt

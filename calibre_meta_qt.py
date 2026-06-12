@@ -452,7 +452,11 @@ if PYSIDE6_AVAILABLE:
             self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
             self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
-            if self.auto_settings["startup_preview"]:
+            if (
+                self.auto_settings["startup_preview"]
+                and os.environ.get("QT_QPA_PLATFORM") != "offscreen"
+                and os.environ.get("CALIBRE_META_EDIT_TEST") != "1"
+            ):
                 schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
