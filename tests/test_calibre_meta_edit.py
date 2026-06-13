@@ -69,11 +69,24 @@ class TextAndUrlTests(unittest.TestCase):
         self.assertTrue(cme.is_valid_google_books_url(url))
         self.assertEqual(cme.google_books_url("cf1Tl4WhhHUC"), "https://books.google.com/books?id=cf1Tl4WhhHUC")
 
+    def test_openlibrary_url_helpers_read_edition_key(self):
+        url = "https://openlibrary.org/books/OL26247313M/Homo_Deus_A_Brief_History_of_Tomorrow"
+
+        self.assertEqual(cme.openlibrary_edition_key_from_url(url), "OL26247313M")
+        self.assertTrue(cme.is_valid_openlibrary_url(url))
+        self.assertEqual(cme.openlibrary_url("OL26247313M"), "https://openlibrary.org/books/OL26247313M")
+
     def test_build_google_books_search_url_uses_title_and_author(self):
         url = cme.build_google_books_search_url("Turn Coat", ["Jim Butcher"])
 
         self.assertIn("q=intitle%3ATurn+Coat+inauthor%3AJim+Butcher", url)
         self.assertIn("printType=books", url)
+
+    def test_build_openlibrary_search_url_uses_title_and_author(self):
+        url = cme.build_openlibrary_search_url("Homo Deus: A Brief History of Tomorrow", ["Yuval Noah Harari"])
+
+        self.assertIn("title=Homo+Deus%3A+A+Brief+History+of+Tomorrow", url)
+        self.assertIn("author=Yuval+Noah+Harari", url)
 
     def test_parse_search_results_reads_databaze_story_candidates(self):
         html = """
@@ -436,6 +449,41 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.rating_percent, "4,5 / 5 (12 hodnoceni)")
         self.assertEqual(detail.about_text, "Wizard Harry Dresden faces a traitor.")
         self.assertEqual(detail.cover_url, "https://books.google.com/cover.jpg")
+
+    def test_parse_openlibrary_search_results_and_metadata(self):
+        search_json = """
+        {
+          "docs": [
+            {
+              "title": "Homo Deus: A Brief History of Tomorrow",
+              "author_name": ["Yuval Noah Harari"],
+              "edition_key": ["OL26247313M"]
+            }
+          ]
+        }
+        """
+        detail_json = """
+        {
+          "key": "/books/OL26247313M",
+          "publish_date": "2015",
+          "publishers": ["Harvill Secker"],
+          "subjects": ["Civilization, modern, 21st century", "Technology and civilization"],
+          "description": {"value": "<p>Future of humanity.</p>"},
+          "covers": [123456]
+        }
+        """
+
+        candidates = cme.parse_openlibrary_search_results(search_json)
+        written_url, detail = cme.parse_openlibrary_edition_metadata(detail_json)
+
+        self.assertEqual(candidates[0].title, "Homo Deus: A Brief History of Tomorrow")
+        self.assertEqual(candidates[0].url, "https://openlibrary.org/books/OL26247313M")
+        self.assertEqual(written_url, "https://openlibrary.org/books/OL26247313M")
+        self.assertEqual(detail.published_year, "2015")
+        self.assertEqual(detail.publisher, "Harvill Secker")
+        self.assertEqual(detail.tags, ["Civilization, modern, 21st century", "Technology and civilization"])
+        self.assertEqual(detail.about_text, "Future of humanity.")
+        self.assertEqual(detail.cover_url, "https://covers.openlibrary.org/b/id/123456-L.jpg")
 
     def test_parse_book_detail_metadata_prefers_visible_publication_year_over_bad_json_ld_year(self):
         html = """
@@ -1032,6 +1080,42 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].status, "review")
         self.assertEqual(updated[0].source, "googlebooks")
         self.assertEqual(updated[0].chosen_url, "https://books.google.com/books?id=cf1Tl4WhhHUC")
+
+    def test_audit_legie_rows_falls_back_to_openlibrary_for_english_book(self):
+        row = cme.MatchRow(
+            11,
+            "Homo Deus: A Brief History of Tomorrow",
+            "Yuval Noah Harari",
+            "skip",
+            "",
+            "",
+            "none",
+            "no-candidates",
+            "databazeknih",
+            "",
+        )
+        google_json = '{"items":[]}'
+        openlibrary_json = """
+        {"docs":[{"title":"Homo Deus: A Brief History of Tomorrow","author_name":["Yuval Noah Harari"],"edition_key":["OL26247313M"]}]}
+        """
+
+        def fetcher(url: str) -> str:
+            if "googleapis.com" in url:
+                return google_json
+            if "openlibrary.org/search.json" in url:
+                return openlibrary_json
+            return ""
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=fetcher,
+            sleeper=lambda seconds: None,
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "openlibrary")
+        self.assertEqual(updated[0].chosen_url, "https://openlibrary.org/books/OL26247313M")
 
     def test_audit_missing_original_publication_reviews_only_when_dk_has_original_year(self):
         rows = [
@@ -1938,6 +2022,47 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("https://books.google.com/books?id=cf1Tl4WhhHUC", comments_field)
         self.assertIn("Harry Dresden novel.", comments_field)
+
+    def test_apply_match_row_writes_openlibrary_metadata(self):
+        row = cme.MatchRow(
+            11,
+            "Homo Deus: A Brief History of Tomorrow",
+            "Yuval Noah Harari",
+            "approve",
+            "https://openlibrary.org/books/OL26247313M/Homo_Deus_A_Brief_History_of_Tomorrow",
+            "",
+            "openlibrary-title-author",
+            "openlibrary-title-author",
+            "openlibrary",
+            "",
+        )
+        detail_json = """
+        {
+          "key": "/books/OL26247313M",
+          "publish_date": "2015",
+          "publishers": ["Harvill Secker"],
+          "subjects": ["Civilization"],
+          "description": "Future of humanity."
+        }
+        """
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: detail_json,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://openlibrary.org/books/OL26247313M")
+        self.assertIn("pubdate:2015-00-00", calls[0])
+        self.assertIn("publisher:Harvill Secker", calls[0])
+        self.assertIn("tags:Civilization", calls[0])
+        comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
+        self.assertIn("https://openlibrary.org/books/OL26247313M", comments_field)
+        self.assertIn("Future of humanity.", comments_field)
 
     def test_apply_match_row_writes_legie_story_comment_tags_and_identifier(self):
         row = cme.MatchRow(

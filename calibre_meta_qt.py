@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.6"
+APP_VERSION = "0.3.7"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -26,7 +26,7 @@ REQUIRED_COLUMN_INDEXES = {0, 1, 2}
 MIN_COLUMN_WIDTH = 36
 STATUS_FILTER_VALUES = ("approve", "review", "skip")
 DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
-SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks")
+SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks", "openlibrary")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
 REVIEW_EDITABLE_FIELDS = (
@@ -1170,6 +1170,7 @@ if PYSIDE6_AVAILABLE:
                 not cme.is_valid_apply_url(url)
                 and not cme.is_valid_legie_story_url(url)
                 and not cme.is_valid_google_books_url(url)
+                and not cme.is_valid_openlibrary_url(url)
             ):
                 self.review_comment_preview.setHtml(cme.format_link_html(url))
                 return
@@ -1184,6 +1185,11 @@ if PYSIDE6_AVAILABLE:
                         return
                     if row.source == "googlebooks" or cme.is_valid_google_books_url(url):
                         written_url, detail = cme.fetch_google_books_detail_metadata(url)
+                        comment = cme.format_enriched_comment(written_url, detail)
+                        self.bridge.review_ready.emit(request_id, row.book_id, written_url, detail, comment)
+                        return
+                    if row.source == "openlibrary" or cme.is_valid_openlibrary_url(url):
+                        written_url, detail = cme.fetch_openlibrary_detail_metadata(url)
                         comment = cme.format_enriched_comment(written_url, detail)
                         self.bridge.review_ready.emit(request_id, row.book_id, written_url, detail, comment)
                         return

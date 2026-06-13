@@ -29,6 +29,8 @@ SEARCH_URL = BASE_URL + "/vyhledavani/knihy?q="
 LEGIE_BASE_URL = "https://www.legie.info"
 LEGIE_SEARCH_URL = LEGIE_BASE_URL + "/index.php?search_text="
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
+OPEN_LIBRARY_BASE = "https://openlibrary.org"
+OPEN_LIBRARY_SEARCH_API = OPEN_LIBRARY_BASE + "/search.json"
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
 USER_AGENT = "calibre-meta-edit/1.0"
@@ -251,6 +253,31 @@ def build_google_books_search_url(title: str, authors: Sequence[str]) -> str:
     return GOOGLE_BOOKS_API + "?" + urllib.parse.urlencode(
         {"q": " ".join(query_parts), "printType": "books", "maxResults": "10"}
     )
+
+
+def openlibrary_edition_key_from_url(url: str) -> str:
+    """Vytahne Open Library edition key typu OL123M."""
+    match = re.search(r"/books/(OL\d+M)\b", urllib.parse.urlparse(url.strip()).path)
+    return match.group(1) if match else ""
+
+
+def openlibrary_url(edition_key: str) -> str:
+    """Vrati webovy Open Library odkaz na edici."""
+    return OPEN_LIBRARY_BASE + "/books/" + urllib.parse.quote(edition_key.strip())
+
+
+def is_valid_openlibrary_url(url: str) -> bool:
+    """Pozna Open Library edition URL."""
+    host = urllib.parse.urlparse(url.strip()).netloc.lower()
+    return host == "openlibrary.org" and bool(openlibrary_edition_key_from_url(url))
+
+
+def build_openlibrary_search_url(title: str, authors: Sequence[str]) -> str:
+    """Sestavi Open Library search API dotaz."""
+    params = {"title": title.strip(), "limit": "10"}
+    if authors:
+        params["author"] = authors[0].strip()
+    return OPEN_LIBRARY_SEARCH_API + "?" + urllib.parse.urlencode(params)
 
 
 def overview_to_book_url(url: str) -> str:
@@ -1033,6 +1060,65 @@ def parse_google_books_search_results(json_text: str) -> list[Candidate]:
     return candidates
 
 
+def _openlibrary_cover_url(covers: object) -> str:
+    """Vrati Open Library cover URL z prvniho cover ID."""
+    if not isinstance(covers, list) or not covers:
+        return ""
+    cover_id = str(covers[0]).strip()
+    return f"https://covers.openlibrary.org/b/id/{urllib.parse.quote(cover_id)}-L.jpg" if cover_id else ""
+
+
+def _openlibrary_description(value: object) -> str:
+    """Open Library description muze byt string nebo dict s value."""
+    if isinstance(value, str):
+        return _html_to_plain_text(value)
+    if isinstance(value, dict) and isinstance(value.get("value"), str):
+        return _html_to_plain_text(value["value"])
+    return ""
+
+
+def parse_openlibrary_edition_metadata(json_text: str) -> tuple[str, BookDetailMetadata]:
+    """Prevede Open Library edition JSON na metadata."""
+    raw = json.loads(json_text)
+    if not isinstance(raw, dict):
+        raw = {}
+    key = str(raw.get("key") or "")
+    edition_key = key.rsplit("/", 1)[-1] if key else ""
+    publishers = raw.get("publishers") if isinstance(raw.get("publishers"), list) else []
+    subjects = raw.get("subjects") if isinstance(raw.get("subjects"), list) else []
+    publish_date = str(raw.get("publish_date") or "")
+    detail = BookDetailMetadata(
+        published_year=_first_reasonable_year(publish_date),
+        publisher=str(publishers[0]) if publishers else "",
+        tags=_dedupe_tags(str(subject) for subject in subjects if str(subject).strip()),
+        about_text=_openlibrary_description(raw.get("description")),
+        cover_url=_openlibrary_cover_url(raw.get("covers")),
+    )
+    return openlibrary_url(edition_key), detail
+
+
+def parse_openlibrary_search_results(json_text: str) -> list[Candidate]:
+    """Vytahne kandidaty z Open Library search API."""
+    raw = json.loads(json_text)
+    docs = raw.get("docs") if isinstance(raw, dict) else []
+    if not isinstance(docs, list):
+        return []
+    candidates: list[Candidate] = []
+    for item in docs:
+        if not isinstance(item, dict):
+            continue
+        edition_key = ""
+        editions = item.get("edition_key")
+        if isinstance(editions, list) and editions:
+            edition_key = str(editions[0])
+        title = str(item.get("title") or "")
+        authors = item.get("author_name") if isinstance(item.get("author_name"), list) else []
+        text = " ".join(str(author) for author in authors)
+        if title and edition_key:
+            candidates.append(Candidate(title, text, openlibrary_url(edition_key)))
+    return candidates
+
+
 def _image_urls_from_json(value: object) -> list[str]:
     urls: list[str] = []
     if isinstance(value, str) and _looks_like_cover_image(value, "json image"):
@@ -1664,6 +1750,8 @@ def source_and_work_type_for_url(url: str) -> tuple[str, str]:
         return "databazeknih", "povidka"
     if is_valid_google_books_url(url):
         return "googlebooks", ""
+    if is_valid_openlibrary_url(url):
+        return "openlibrary", ""
     return "databazeknih", ""
 
 
@@ -1871,6 +1959,47 @@ def match_google_books(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
     return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "googlebooks-no-match", "googlebooks")
 
 
+def match_openlibrary_book(book: Book, candidates: Sequence[Candidate]) -> MatchRow:
+    """Vybere Open Library kandidata pri shode nazvu a autora."""
+    authors_text = " & ".join(book.authors)
+    if not candidates:
+        return MatchRow(book.id, book.title, authors_text, "skip", "", "", "none", "openlibrary-no-candidates", "openlibrary")
+    normalized_title = normalize_text(book.title)
+    title_matches = [candidate for candidate in candidates if normalize_text(candidate.title) == normalized_title]
+    author_matches = [
+        candidate
+        for candidate in title_matches
+        if any(_author_matches_text(author, candidate.text) for author in book.authors)
+    ]
+    if len(author_matches) == 1:
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            author_matches[0].url,
+            _candidate_urls(candidates),
+            "openlibrary-title-author",
+            "openlibrary-title-author",
+            "openlibrary",
+            "",
+        )
+    if title_matches:
+        return MatchRow(
+            book.id,
+            book.title,
+            authors_text,
+            "review",
+            title_matches[0].url,
+            _candidate_urls(candidates),
+            "openlibrary-title-only",
+            "openlibrary-title-only",
+            "openlibrary",
+            "",
+        )
+    return MatchRow(book.id, book.title, authors_text, "skip", "", _candidate_urls(candidates), "none", "openlibrary-no-match", "openlibrary")
+
+
 def find_google_books_book(
     book: Book,
     fetcher: Callable[[str], str],
@@ -1881,6 +2010,41 @@ def find_google_books_book(
     sleeper(sleep_seconds)
     html = fetcher(build_google_books_search_url(book.title, book.authors))
     return match_google_books(book, parse_google_books_search_results(html))
+
+
+def find_openlibrary_book(
+    book: Book,
+    fetcher: Callable[[str], str],
+    sleeper: Callable[[float], None],
+    sleep_seconds: float,
+) -> MatchRow:
+    """Najde anglickou knihu pres Open Library API."""
+    sleeper(sleep_seconds)
+    html = fetcher(build_openlibrary_search_url(book.title, book.authors))
+    return match_openlibrary_book(book, parse_openlibrary_search_results(html))
+
+
+def find_english_book(
+    book: Book,
+    fetcher: Callable[[str], str],
+    sleeper: Callable[[float], None],
+    sleep_seconds: float,
+) -> MatchRow:
+    """Zkusi Google Books, pak Open Library."""
+    google_row: MatchRow | None = None
+    try:
+        google_row = find_google_books_book(book, fetcher, sleeper, sleep_seconds)
+    except Exception:
+        google_row = None
+    if google_row is not None and google_row.chosen_url:
+        return google_row
+    try:
+        openlibrary_row = find_openlibrary_book(book, fetcher, sleeper, sleep_seconds)
+    except Exception:
+        openlibrary_row = None
+    if openlibrary_row is not None and openlibrary_row.chosen_url:
+        return openlibrary_row
+    return google_row or openlibrary_row or MatchRow(book.id, book.title, " & ".join(book.authors), "skip", "", "", "none", "english-no-candidates", "openlibrary")
 
 
 def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
@@ -2325,7 +2489,12 @@ def cover_candidate_rows(
         for row in selected_rows
         if row.status != "review"
         and row.chosen_url.strip()
-        and (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url) or is_valid_google_books_url(row.chosen_url))
+        and (
+            is_valid_apply_url(row.chosen_url)
+            or is_valid_legie_story_url(row.chosen_url)
+            or is_valid_google_books_url(row.chosen_url)
+            or is_valid_openlibrary_url(row.chosen_url)
+        )
     ]
     if not supported_rows:
         return []
@@ -2337,7 +2506,7 @@ def cover_candidate_rows(
             legie_absolute_url(row.chosen_url)
             if is_valid_legie_story_url(row.chosen_url)
             else row.chosen_url
-            if is_valid_google_books_url(row.chosen_url)
+            if is_valid_google_books_url(row.chosen_url) or is_valid_openlibrary_url(row.chosen_url)
             else book_url_to_overview_url(row.chosen_url),
         )
         for row in supported_rows
@@ -2353,6 +2522,9 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
     if is_valid_google_books_url(url):
         _written_url, detail = fetch_google_books_detail_metadata(url, fetch)
         return [CoverOption(detail.cover_url, "googlebooks", "Google Books")] if detail.cover_url else []
+    if is_valid_openlibrary_url(url):
+        _written_url, detail = fetch_openlibrary_detail_metadata(url, fetch)
+        return [CoverOption(detail.cover_url, "openlibrary", "Open Library")] if detail.cover_url else []
     if is_valid_apply_url(url):
         return parse_databaze_cover_options(fetch(book_url_to_overview_url(url)))
     return []
@@ -2392,7 +2564,12 @@ def audit_cover_rows(
         if flags.get(row.book_id, False):
             updated.append(row)
             continue
-        if not (is_valid_apply_url(row.chosen_url) or is_valid_legie_story_url(row.chosen_url) or is_valid_google_books_url(row.chosen_url)):
+        if not (
+            is_valid_apply_url(row.chosen_url)
+            or is_valid_legie_story_url(row.chosen_url)
+            or is_valid_google_books_url(row.chosen_url)
+            or is_valid_openlibrary_url(row.chosen_url)
+        ):
             updated.append(row)
             continue
         try:
@@ -2444,6 +2621,8 @@ def apply_cover_candidate(
             cover_url = parse_legie_story_detail(detail_html, candidate.source_url).cover_url
         elif is_valid_google_books_url(candidate.source_url):
             cover_url = fetch_google_books_detail_metadata(candidate.source_url, fetch_detail)[1].cover_url
+        elif is_valid_openlibrary_url(candidate.source_url):
+            cover_url = fetch_openlibrary_detail_metadata(candidate.source_url, fetch_detail)[1].cover_url
         else:
             detail_html = fetch_detail(candidate.source_url)
             cover_url = parse_book_detail_metadata(detail_html).cover_url
@@ -2609,6 +2788,18 @@ def fetch_google_books_detail_metadata(
     return parse_google_books_volume_metadata(fetch(GOOGLE_BOOKS_API + "/" + urllib.parse.quote(volume_id)))
 
 
+def fetch_openlibrary_detail_metadata(
+    url: str,
+    detail_fetcher: Callable[[str], str] | None = None,
+) -> tuple[str, BookDetailMetadata]:
+    """Stahne detail Open Library edice."""
+    edition_key = openlibrary_edition_key_from_url(url)
+    if not edition_key:
+        raise RuntimeError("openlibrary-missing-edition-key")
+    fetch = detail_fetcher or fetch_text
+    return parse_openlibrary_edition_metadata(fetch(openlibrary_url(edition_key) + ".json"))
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,
@@ -2637,6 +2828,32 @@ def apply_match_row(
     if row.source == "googlebooks" or is_valid_google_books_url(row.chosen_url):
         try:
             written_url, detail = fetch_google_books_detail_metadata(row.chosen_url, fetcher or fetch_text)
+        except RuntimeError as exc:
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+        detail = apply_review_overrides(row, detail)
+        args = [
+            calibredb_path,
+            "set_metadata",
+            str(row.book_id),
+            "--with-library",
+            str(library),
+            "--field",
+            "comments:" + format_enriched_comment(written_url, detail),
+        ]
+        if detail.published_year:
+            args.extend(["--field", "pubdate:" + calibre_pubdate_value(detail.published_year)])
+        if detail.publisher:
+            args.extend(["--field", "publisher:" + detail.publisher])
+        if detail.tags:
+            args.extend(["--field", "tags:" + ",".join(detail.tags)])
+        result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout or "calibredb failed").strip()
+            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
+        return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+    if row.source == "openlibrary" or is_valid_openlibrary_url(row.chosen_url):
+        try:
+            written_url, detail = fetch_openlibrary_detail_metadata(row.chosen_url, fetcher or fetch_text)
         except RuntimeError as exc:
             return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
         detail = apply_review_overrides(row, detail)
@@ -2867,7 +3084,7 @@ def preview_books(
         searched += 1
         try:
             if likely_english_book(book):
-                row = find_google_books_book(book, fetcher, sleeper, sleep_seconds)
+                row = find_english_book(book, fetcher, sleeper, sleep_seconds)
             else:
                 row = find_databaze_book(book, fetcher, sleeper, sleep_seconds)
         except Exception:
@@ -2896,11 +3113,11 @@ def audit_legie_rows(
         book = Book(row.book_id, row.title, authors, "")
         if likely_english_book(book):
             try:
-                google_row = find_google_books_book(book, fetcher, sleeper, sleep_seconds)
+                english_row = find_english_book(book, fetcher, sleeper, sleep_seconds)
             except Exception:
-                google_row = None
-            if google_row is not None and google_row.chosen_url:
-                updated.append(google_row)
+                english_row = None
+            if english_row is not None and english_row.chosen_url:
+                updated.append(english_row)
             elif row.source == "databazeknih" and row.chosen_url:
                 updated.append(
                     MatchRow(
