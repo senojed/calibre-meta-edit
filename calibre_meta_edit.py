@@ -3112,6 +3112,12 @@ def audit_legie_rows(
         authors = [part.strip() for part in row.authors.split("&") if part.strip()]
         book = Book(row.book_id, row.title, authors, "")
         if likely_english_book(book):
+            if is_valid_openlibrary_url(row.chosen_url):
+                updated.append(replace(row, status="review", source="openlibrary", work_type=""))
+                continue
+            if is_valid_google_books_url(row.chosen_url):
+                updated.append(replace(row, status="review", source="googlebooks", work_type=""))
+                continue
             try:
                 english_row = find_english_book(book, fetcher, sleeper, sleep_seconds)
             except Exception:

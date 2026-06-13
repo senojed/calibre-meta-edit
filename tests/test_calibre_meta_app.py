@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.3.7")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.3.7")
+        self.assertEqual(app.APP_VERSION, "0.3.8")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.3.8")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -283,6 +283,19 @@ class AppModelTests(unittest.TestCase):
 
         self.assertEqual(updated.source, "legie")
         self.assertEqual(updated.work_type, "povidka")
+
+    def test_update_row_marks_manual_openlibrary_url_as_openlibrary(self):
+        row = cme.MatchRow(196, "Homo Deus", "Yuval Noah Harari", "review", "", "", "none", "no-candidates")
+
+        updated = app.update_row(
+            row,
+            "review",
+            " https://openlibrary.org/books/OL26247313M/Homo_Deus_A_Brief_History_of_Tomorrow ",
+        )
+
+        self.assertEqual(updated.source, "openlibrary")
+        self.assertEqual(updated.work_type, "")
+        self.assertEqual(updated.reason, "manual")
 
     def test_sync_single_selected_url_applies_empty_edit_field(self):
         rows = [

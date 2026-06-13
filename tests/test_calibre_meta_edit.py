@@ -1053,6 +1053,31 @@ class ParserAndMatchingTests(unittest.TestCase):
 
         self.assertEqual(updated, [row])
 
+    def test_audit_legie_rows_fixes_existing_openlibrary_source(self):
+        row = cme.MatchRow(
+            196,
+            "Homo Deus: A Brief History of Tomorrow",
+            "Yuval Noah Harari",
+            "review",
+            "https://openlibrary.org/books/OL26247313M/Homo_Deus_A_Brief_History_of_Tomorrow",
+            "",
+            "openlibrary-title-author",
+            "openlibrary-title-author",
+            "databazeknih",
+            "",
+        )
+
+        updated = cme.audit_legie_rows(
+            [row],
+            fetcher=lambda url: self.fail("existing Open Library URL should not need search"),
+            sleeper=lambda seconds: self.fail("existing Open Library URL should not sleep"),
+            sleep_seconds=0,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].source, "openlibrary")
+        self.assertEqual(updated[0].chosen_url, row.chosen_url)
+
     def test_audit_legie_rows_uses_google_books_for_english_book(self):
         row = cme.MatchRow(
             182,
