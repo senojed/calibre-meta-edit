@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.9"
+APP_VERSION = "0.3.10"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -495,7 +495,6 @@ if PYSIDE6_AVAILABLE:
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
-            self._add_button(toolbar, "Najit orig. rok", self.run_missing_original_audit, "neutralButton", "search", show_text=False)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
@@ -1301,15 +1300,6 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.information(self, "Bez odkazu", "Vybrany radek nema odkaz.")
                 return
             webbrowser.open_new(url)
-
-        def run_missing_original_audit(self) -> None:
-            """Najde DK knihy, kde web zna originalni rok a komentar ho nema."""
-            selected = self.selected_book_ids()
-            if not self.save_csv(show_message=False):
-                return
-            args = shared.make_legie_audit_args(self.library_path, selected if selected else None)
-            action = shared.make_missing_original_audit_action(args)
-            self.run_background("Najit orig. rok", action, reload_after=True)
 
         def run_preview(self) -> None:
             if not self.save_csv(show_message=False):
