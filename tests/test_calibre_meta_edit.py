@@ -351,6 +351,19 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.original_title, "")
         self.assertEqual(detail.original_publication, "1987")
 
+    def test_parse_book_detail_metadata_reads_first_publication_year_as_original_publication(self):
+        html = """
+        <div class='book-details__row'>
+          <dt>Rok 1. vydání</dt>
+          <dd>1987</dd>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.original_title, "")
+        self.assertEqual(detail.original_publication, "1987")
+
     def test_parse_book_detail_metadata_reads_original_title_and_separate_publication(self):
         html = """
         <div class='book-details__row'>

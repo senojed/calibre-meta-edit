@@ -1141,6 +1141,8 @@ def _detail_label_kind(label: str) -> str:
         return "original_publication"
     if ("puvod" in normalized or "p vod" in normalized) and "vydani" in normalized:
         return "original_publication"
+    if "rok" in normalized and "1" in normalized and "vydani" in normalized:
+        return "original_publication"
     return ""
 
 
