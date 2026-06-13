@@ -384,6 +384,20 @@ def apply_review_overrides(row: MatchRow, detail: BookDetailMetadata) -> BookDet
     )
 
 
+def clear_review_overrides(row: MatchRow) -> MatchRow:
+    """Smaze rucne/pracovne nactene Review hodnoty, kdyz se zmeni zdroj metadat."""
+    return replace(
+        row,
+        review_published_year="",
+        review_publisher="",
+        review_tags="",
+        review_rating_percent="",
+        review_original_title="",
+        review_original_publication="",
+        review_original_publisher="",
+    )
+
+
 def add_target_blank_to_databaze_links(comment: str | None) -> str:
     """Doplni target blank jen k existujicim odkazum na Databazi knih."""
     text = comment or ""
@@ -3113,10 +3127,12 @@ def audit_legie_rows(
         book = Book(row.book_id, row.title, authors, "")
         if likely_english_book(book):
             if is_valid_openlibrary_url(row.chosen_url):
-                updated.append(replace(row, status="review", source="openlibrary", work_type=""))
+                fixed = replace(row, status="review", source="openlibrary", work_type="")
+                updated.append(clear_review_overrides(fixed) if row.source != "openlibrary" else fixed)
                 continue
             if is_valid_google_books_url(row.chosen_url):
-                updated.append(replace(row, status="review", source="googlebooks", work_type=""))
+                fixed = replace(row, status="review", source="googlebooks", work_type="")
+                updated.append(clear_review_overrides(fixed) if row.source != "googlebooks" else fixed)
                 continue
             try:
                 english_row = find_english_book(book, fetcher, sleeper, sleep_seconds)

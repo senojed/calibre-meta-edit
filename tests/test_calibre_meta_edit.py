@@ -1065,6 +1065,11 @@ class ParserAndMatchingTests(unittest.TestCase):
             "openlibrary-title-author",
             "databazeknih",
             "",
+            review_published_year="1925",
+            review_publisher="Mars",
+            review_tags="Literatura světová",
+            review_rating_percent="73 %",
+            review_original_publication="1923",
         )
 
         updated = cme.audit_legie_rows(
@@ -1077,6 +1082,11 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].status, "review")
         self.assertEqual(updated[0].source, "openlibrary")
         self.assertEqual(updated[0].chosen_url, row.chosen_url)
+        self.assertEqual(updated[0].review_published_year, "")
+        self.assertEqual(updated[0].review_publisher, "")
+        self.assertEqual(updated[0].review_tags, "")
+        self.assertEqual(updated[0].review_rating_percent, "")
+        self.assertEqual(updated[0].review_original_publication, "")
 
     def test_audit_legie_rows_uses_google_books_for_english_book(self):
         row = cme.MatchRow(

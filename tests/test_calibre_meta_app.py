@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.3.8")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.3.8")
+        self.assertEqual(app.APP_VERSION, "0.3.9")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.3.9")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -285,7 +285,21 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(updated.work_type, "povidka")
 
     def test_update_row_marks_manual_openlibrary_url_as_openlibrary(self):
-        row = cme.MatchRow(196, "Homo Deus", "Yuval Noah Harari", "review", "", "", "none", "no-candidates")
+        row = cme.MatchRow(
+            196,
+            "Homo Deus",
+            "Yuval Noah Harari",
+            "review",
+            "",
+            "",
+            "none",
+            "no-candidates",
+            review_published_year="1925",
+            review_publisher="Mars",
+            review_tags="Literatura svetova",
+            review_rating_percent="73 %",
+            review_original_publication="1923",
+        )
 
         updated = app.update_row(
             row,
@@ -296,6 +310,11 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(updated.source, "openlibrary")
         self.assertEqual(updated.work_type, "")
         self.assertEqual(updated.reason, "manual")
+        self.assertEqual(updated.review_published_year, "")
+        self.assertEqual(updated.review_publisher, "")
+        self.assertEqual(updated.review_tags, "")
+        self.assertEqual(updated.review_rating_percent, "")
+        self.assertEqual(updated.review_original_publication, "")
 
     def test_sync_single_selected_url_applies_empty_edit_field(self):
         rows = [
