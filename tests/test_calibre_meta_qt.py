@@ -19,8 +19,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.3.11")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.3.11")
+        self.assertEqual(qt.APP_VERSION, "0.3.12")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.3.12")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -59,7 +59,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.3.11")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.3.12")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -352,6 +352,28 @@ class QtImportTests(unittest.TestCase):
         window.refresh_table()
 
         self.assertEqual(window.selected_book_ids(), {4})
+        app.processEvents()
+
+    def test_manual_skip_filter_toggle_is_not_reenabled_automatically(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = [cme.MatchRow(4, "Hotovo", "Autor", "skip", "", "", "none", "x")]
+        window.status_checks["approve"].setChecked(True)
+        window.status_checks["review"].setChecked(True)
+        window.status_checks["skip"].setChecked(False)
+        window.auto_skip_filter_allowed = True
+
+        window.refresh_table()
+        window.disable_auto_skip_filter()
+        window.status_checks["skip"].setChecked(False)
+        window.refresh_table()
+
+        self.assertFalse(window.status_checks["skip"].isChecked())
+        self.assertEqual(window.table.rowCount(), 0)
         app.processEvents()
 
     def test_run_covers_uses_cover_audit_without_direct_write(self):

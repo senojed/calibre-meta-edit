@@ -17,7 +17,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.11"
+APP_VERSION = "0.3.12"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -437,6 +437,7 @@ if PYSIDE6_AVAILABLE:
             self.auto_settings = normalize_auto_settings(settings)
             self.rows: list[cme.MatchRow] = []
             self.filtered_rows: list[cme.MatchRow] = []
+            self.auto_skip_filter_allowed = True
             self.worker_running = False
             self.csv_loaded = False
             self.calibre_running = False
@@ -564,11 +565,16 @@ if PYSIDE6_AVAILABLE:
             for value in values:
                 check = QCheckBox(filter_label(value))
                 check.setChecked(default_filter_checked(values, value))
+                check.pressed.connect(self.disable_auto_skip_filter)
                 check.stateChanged.connect(self.refresh_table)
                 row.addWidget(check)
                 checks[value] = check
             layout.addWidget(frame)
             return checks
+
+        def disable_auto_skip_filter(self) -> None:
+            """Po rucnim kliknuti uzivatele uz neskace skip filtr zpatky sam."""
+            self.auto_skip_filter_allowed = False
 
         def _build_main_area(self) -> QSplitter:
             splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -791,6 +797,7 @@ if PYSIDE6_AVAILABLE:
             return panel
 
         def load_csv(self, show_message: bool = True) -> None:
+            self.auto_skip_filter_allowed = True
             if not cme.matches_storage_exists(self.matches_path):
                 self.rows = []
                 self.csv_loaded = False
@@ -841,7 +848,8 @@ if PYSIDE6_AVAILABLE:
                 statuses,
                 sources,
                 work_types,
-            ):
+            ) and self.auto_skip_filter_allowed:
+                self.auto_skip_filter_allowed = False
                 self.status_checks["skip"].blockSignals(True)
                 self.status_checks["skip"].setChecked(True)
                 self.status_checks["skip"].blockSignals(False)
