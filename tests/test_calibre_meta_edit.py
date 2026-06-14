@@ -1152,36 +1152,6 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(updated[0].source, "openlibrary")
         self.assertEqual(updated[0].chosen_url, "https://openlibrary.org/books/OL26247313M")
 
-    def test_audit_missing_original_publication_reviews_only_when_dk_has_original_year(self):
-        rows = [
-            cme.MatchRow(1, "Pohyblive obrazky", "Terry Pratchett", "skip", "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", "", "none", "already-linked"),
-            cme.MatchRow(2, "Ceska kniha", "Autor", "skip", "https://www.databazeknih.cz/prehled-knihy/ceska-2", "", "none", "already-linked"),
-            cme.MatchRow(3, "Turn Coat", "Jim Butcher", "skip", "https://books.google.com/books?id=cf1Tl4WhhHUC", "", "googlebooks", "googlebooks-title-author", "googlebooks"),
-        ]
-        detail_with_original = """
-        <div class='book-details__row'><dt>OriginÃ¡lnÃ­ nÃ¡zev</dt><dd>Moving Pictures, 1990</dd></div>
-        """
-        detail_without_original = "<p>Bez originalu</p>"
-
-        def fetcher(url: str) -> str:
-            if "pohyblive" in url:
-                return detail_with_original
-            return detail_without_original
-
-        original_get_comment = cme.get_current_comment
-        try:
-            cme.get_current_comment = lambda library, book_id: "<div>Bez originalniho roku</div>"
-            updated = cme.audit_missing_original_publication_rows(rows, "library", fetcher=fetcher)
-        finally:
-            cme.get_current_comment = original_get_comment
-
-        self.assertEqual(updated[0].status, "review")
-        self.assertEqual(updated[0].reason, "missing-original-publication")
-        self.assertEqual(updated[0].review_original_title, "Moving Pictures")
-        self.assertEqual(updated[0].review_original_publication, "1990")
-        self.assertEqual(updated[1], rows[1])
-        self.assertEqual(updated[2], rows[2])
-
     def test_audit_legie_rows_retries_title_only_when_author_query_finds_nothing(self):
         row = cme.MatchRow(
             31031,

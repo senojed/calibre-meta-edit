@@ -3215,74 +3215,6 @@ def audit_legie_rows(
     return updated
 
 
-def with_review_detail(row: MatchRow, detail: BookDetailMetadata, reason: str) -> MatchRow:
-    """Ulozi nactena Review metadata do pracovniho radku."""
-    return replace(
-        row,
-        status="review",
-        confidence=reason,
-        reason=reason,
-        review_published_year=detail.published_year,
-        review_publisher=detail.publisher,
-        review_tags=", ".join(detail.tags or []),
-        review_rating_percent=detail.rating_percent,
-        review_original_title=detail.original_title,
-        review_original_publication=detail.original_publication,
-        review_original_publisher=detail.original_publisher,
-    )
-
-
-def audit_missing_original_publication_rows(
-    rows: Sequence[MatchRow],
-    library: str | Path,
-    fetcher: Callable[[str], str] = fetch_text,
-) -> list[MatchRow]:
-    """Da do review jen DK knihy, kde DK zna originalni rok a Calibre komentar ho nema."""
-    updated: list[MatchRow] = []
-    for row in rows:
-        if row.source != "databazeknih" or not is_valid_apply_url(row.chosen_url):
-            updated.append(row)
-            continue
-        try:
-            current_comment = get_current_comment(library, row.book_id)
-        except Exception:
-            updated.append(row)
-            continue
-        if "Originalne vyslo" in current_comment:
-            updated.append(row)
-            continue
-        try:
-            _written_url, detail = fetch_databaze_book_detail_metadata(row.chosen_url, fetcher)
-        except Exception:
-            updated.append(row)
-            continue
-        if detail.original_publication:
-            updated.append(with_review_detail(row, detail, "missing-original-publication"))
-        else:
-            updated.append(row)
-    return updated
-
-
-def run_missing_original_audit(args: argparse.Namespace) -> int:
-    """Spusti chytry audit chybejiciho originalniho roku pro DK knihy."""
-    rows = read_matches_csv(MATCHES_PATH)
-    selected_rows = select_match_rows(
-        rows,
-        book_id=args.book_id,
-        limit=args.limit,
-        book_ids=getattr(args, "book_ids", None),
-    )
-    selected_ids = {row.book_id for row in selected_rows}
-    audited = audit_missing_original_publication_rows(selected_rows, args.library)
-    replacements = {row.book_id: row for row in audited}
-    merged = [replacements.get(row.book_id, row) if row.book_id in selected_ids else row for row in rows]
-    changed = sum(1 for old, new in zip(rows, merged) if old != new)
-    if changed:
-        write_matches_csv(MATCHES_PATH, merged, overwrite=True)
-    print(f"Audit originalniho roku: zmeneno {changed} radku")
-    return 0
-
-
 def run_preview(args: argparse.Namespace) -> int:
     output = MATCHES_PATH
     incremental = matches_storage_exists(output) and not args.overwrite
@@ -3576,14 +3508,6 @@ def build_parser() -> argparse.ArgumentParser:
     legie_audit.add_argument("--book-ids", type=int, nargs="*")
     legie_audit.add_argument("--sleep", type=float, default=1.0)
     legie_audit.set_defaults(func=run_legie_audit)
-
-    original_audit = subparsers.add_parser("missing-original-audit", help="Najde DK knihy, kterym chybi Originalne vyslo.")
-    original_audit.add_argument("--library", default=DEFAULT_LIBRARY)
-    original_audit.add_argument("--limit", type=int)
-    original_audit.add_argument("--book-id", type=int)
-    original_audit.add_argument("--book-ids", type=int, nargs="*")
-    original_audit.add_argument("--sleep", type=float, default=1.0)
-    original_audit.set_defaults(func=run_missing_original_audit)
 
     repair_parser = subparsers.add_parser("repair-links", help="Opravi stare Databaze knih odkazy v komentarich.")
     repair_parser.add_argument("--library", default=DEFAULT_LIBRARY)
