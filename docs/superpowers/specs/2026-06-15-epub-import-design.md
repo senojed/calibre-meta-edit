@@ -258,16 +258,17 @@ Po kliknuti `Importovat`:
 3. zavrit Calibre pres sdileny mechanismus `shared.quit_calibre(allow_force=...)`
 4. udelat backup `metadata.db`
 5. nacist existujici ID knih v Calibre
-6. spustit `calibredb add <epub>`
-7. zkusit vycist nove `book_id` z vystupu `calibredb add`
-8. pokud vystup ID neda, znovu nacist ID knih a pouzit rozdil pred/po jako fallback
-9. pokud `book_id` nejde jednoznacne urcit, zastavit a ukazat chybu
-10. spustit `calibredb set_metadata`
-11. zapsat metadata, komentar, serii, tagy a obalku
-12. pridat novy radek do `matches.db` jako `skip`
-13. refreshnout hlavni tabulku
-14. vybrat novou knihu
-15. ukazat zalozku `Aktualni data`
+6. znovu overit duplicity proti zavrene knihovne; kdyz se objevi nova silna duplicita, kterou uzivatel nepotvrdil, zastavit a vyzadat nove potvrzeni
+7. spustit `calibredb add <epub>`
+8. zkusit vycist nove `book_id` z vystupu `calibredb add`
+9. pokud vystup ID neda, znovu nacist ID knih a pouzit rozdil pred/po jako fallback
+10. pokud `book_id` nejde jednoznacne urcit, zastavit a ukazat chybu
+11. spustit `calibredb set_metadata`
+12. zapsat metadata, komentar, serii, tagy a obalku
+13. pridat novy radek do `matches.db` jako `skip`
+14. refreshnout hlavni tabulku
+15. vybrat novou knihu
+16. ukazat zalozku `Aktualni data`
 
 Puvodni EPUB:
 
