@@ -216,6 +216,8 @@ Sekce `Duplicity`:
 
 Kontrola duplicit pouzije Calibre `metadata.db` read-only.
 
+Kontrola duplicit ve fazi analyzy je best-effort, protoze Calibre muze bezet a read-only pohled nemusi byt finalni stav. Pred zapisem se Calibre zavre a duplicity se overi znovu proti aktualni knihovne.
+
 Pravidla:
 
 - autor sam o sobe duplicita neni
@@ -284,9 +286,10 @@ Chyby:
 
 Obalka:
 
-- obalka z online zdroje nebo EPUB se pred zapisem ulozi do docasneho souboru
-- cesta k docasnemu souboru se preda `calibredb set_metadata` stejnym stylem jako dnesni zapis obalek
-- po prikazu se docasny soubor smaze s docasnym adresarem
+- zapis obalky znovupouzije nebo rozsiri existujici `run_metadata_command_with_cover`
+- online obalka se stahne uvnitr stejneho temp bloku jako dnesni zapis obalek
+- EPUB embedded obalka se preda jako bytes varianta stejneho mechanismu
+- temp soubor nesmi byt vracen ven z helperu; musi vzniknout, pouzit se v `calibredb set_metadata` a smazat se v jednom `with tempfile.TemporaryDirectory()` bloku
 
 ## Backend Navrh
 
@@ -312,7 +315,7 @@ Hlavni funkce:
 - `score_import_candidates(signals, candidates)`
 - `find_calibre_duplicates(library, preview)`
 - `parse_calibredb_add_book_ids(output)`
-- `prepare_import_cover_file(preview)`
+- `run_metadata_command_with_cover` rozsirene pro importni obalky z URL i bytes
 - `apply_import_preview(preview, library)`
 
 ## Testy
