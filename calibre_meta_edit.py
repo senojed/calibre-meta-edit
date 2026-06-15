@@ -6,6 +6,7 @@ import argparse
 import csv
 import html
 import json
+import posixpath
 import re
 import shutil
 import sqlite3
@@ -17,6 +18,8 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import urllib.robotparser
+import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, replace
 from datetime import datetime
 from html.parser import HTMLParser
@@ -39,6 +42,7 @@ LEGACY_MATCHES_CSV_PATH = Path("matches.csv")
 APPLY_RESULTS_DIR = Path("apply-results")
 LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
 HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+EPUB_TEXT_ITEM_MAX_BYTES = 1_000_000
 MATCHES_FIELDS = [
     "book_id",
     "title",
@@ -182,6 +186,15 @@ class ImportSourceSignal:
 
 
 @dataclass(frozen=True)
+class EpubMetadata:
+    title: str = ""
+    authors: str = ""
+    language: str = ""
+    publisher: str = ""
+    published_year: str = ""
+
+
+@dataclass(frozen=True)
 class ImportCandidate:
     source: str
     title: str
@@ -247,6 +260,113 @@ class CoverOption:
 
 def is_valid_import_preview(preview: ImportPreview) -> bool:
     return bool(preview.title.strip() and preview.authors.strip())
+
+
+def _epub_opf_path(archive: zipfile.ZipFile) -> str:
+    try:
+        container = archive.read("META-INF/container.xml")
+    except KeyError as exc:
+        raise ValueError("epub-missing-container") from exc
+    root = ET.fromstring(container)
+    namespace = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+    rootfile = root.find(".//c:rootfile", namespace)
+    if rootfile is None:
+        raise ValueError("epub-missing-rootfile")
+    full_path = rootfile.attrib.get("full-path", "").strip()
+    if not full_path:
+        raise ValueError("epub-empty-rootfile")
+    return full_path
+
+
+def _opf_text(root: ET.Element, tag: str) -> str:
+    namespace = {"dc": "http://purl.org/dc/elements/1.1/"}
+    value = root.findtext(f".//dc:{tag}", default="", namespaces=namespace)
+    return html.unescape(value or "").strip()
+
+
+def _opf_texts(root: ET.Element, tag: str) -> list[str]:
+    namespace = {"dc": "http://purl.org/dc/elements/1.1/"}
+    values: list[str] = []
+    for element in root.findall(f".//dc:{tag}", namespace):
+        value = html.unescape(element.text or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def extract_year(text: str) -> str:
+    return _first_reasonable_year(text or "")
+
+
+def read_epub_metadata(path: str | Path) -> EpubMetadata:
+    with zipfile.ZipFile(path) as archive:
+        opf_path = _epub_opf_path(archive)
+        root = ET.fromstring(archive.read(opf_path))
+    return EpubMetadata(
+        title=_opf_text(root, "title"),
+        authors=" & ".join(_opf_texts(root, "creator")),
+        language=_opf_text(root, "language"),
+        publisher=_opf_text(root, "publisher"),
+        published_year=extract_year(_opf_text(root, "date")),
+    )
+
+
+class PlainTextHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        clean = " ".join(data.split())
+        if clean:
+            self.parts.append(clean)
+
+    def text(self) -> str:
+        return "\n".join(self.parts)
+
+
+def _epub_spine_item_paths(archive: zipfile.ZipFile, opf_path: str, root: ET.Element) -> list[str]:
+    namespace = {"opf": "http://www.idpf.org/2007/opf"}
+    manifest: dict[str, str] = {}
+    base = urllib.parse.quote(str(Path(opf_path).parent).replace("\\", "/").rstrip("/") + "/")
+    for item in root.findall(".//opf:manifest/opf:item", namespace):
+        item_id = item.attrib.get("id", "")
+        href = item.attrib.get("href", "")
+        media_type = item.attrib.get("media-type", "")
+        if item_id and href and "html" in media_type:
+            joined = urllib.parse.urljoin(base if base != "./" else "", href)
+            clean = urllib.parse.unquote(urllib.parse.urldefrag(joined).url)
+            manifest[item_id] = posixpath.normpath(clean)
+    paths: list[str] = []
+    for itemref in root.findall(".//opf:spine/opf:itemref", namespace):
+        href = manifest.get(itemref.attrib.get("idref", ""))
+        if href and href in archive.namelist():
+            paths.append(href)
+    return paths
+
+
+def _read_epub_text_item(archive: zipfile.ZipFile, item_path: str) -> str:
+    info = archive.getinfo(item_path)
+    with archive.open(info) as item:
+        return item.read(min(info.file_size, EPUB_TEXT_ITEM_MAX_BYTES)).decode("utf-8", errors="replace")
+
+
+def extract_epub_start_text(path: str | Path, limit: int = 5000) -> str:
+    texts: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        opf_path = _epub_opf_path(archive)
+        root = ET.fromstring(archive.read(opf_path))
+        for item_path in _epub_spine_item_paths(archive, opf_path, root):
+            html_text = _read_epub_text_item(archive, item_path)
+            if not html_text:
+                continue
+            parser = PlainTextHTMLParser()
+            parser.feed(html_text)
+            texts.append(parser.text())
+            joined = "\n".join(texts).strip()
+            if len(joined) >= limit:
+                return joined[:limit]
+    return "\n".join(texts).strip()[:limit]
 
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:

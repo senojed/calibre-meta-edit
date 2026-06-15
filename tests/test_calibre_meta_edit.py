@@ -7,10 +7,53 @@ import inspect
 import sqlite3
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import calibre_meta_edit as cme
+
+
+def write_test_epub(
+    path: Path,
+    title: str = "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b",
+    creator: str = "John Irving",
+    creators: list[str] | None = None,
+    language: str = "cs",
+    body: str = "John Irving\nImagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b\nCopyright 1996",
+    opf_path: str = "OEBPS/content.opf",
+    item_href: str = "title.xhtml",
+    item_path: str = "OEBPS/title.xhtml",
+) -> None:
+    container_xml = f"""<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="{opf_path}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"""
+    creator_tags = "\n".join(f"    <dc:creator>{value}</dc:creator>" for value in (creators or [creator]))
+    opf = f"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{title}</dc:title>
+{creator_tags}
+    <dc:language>{language}</dc:language>
+    <dc:publisher>Odeon</dc:publisher>
+    <dc:date>1996</dc:date>
+  </metadata>
+  <manifest>
+    <item id="title" href="{item_href}" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="title"/>
+  </spine>
+</package>"""
+    xhtml = f"""<html xmlns="http://www.w3.org/1999/xhtml"><body><p>{body}</p></body></html>"""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml", container_xml)
+        archive.writestr(opf_path, opf)
+        archive.writestr(item_path, xhtml)
 
 
 class TextAndUrlTests(unittest.TestCase):
@@ -197,6 +240,68 @@ class ImportModelTests(unittest.TestCase):
         self.assertEqual(candidate.work_type, "")
         self.assertEqual(candidate.evidence_text, "")
         self.assertIsNone(candidate.detail)
+
+
+class ImportEpubParsingTests(unittest.TestCase):
+    def test_extract_year_reads_reasonable_publication_year(self):
+        self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
+        self.assertEqual(cme.extract_year("bez roku"), "")
+
+    def test_read_epub_metadata_extracts_basic_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub)
+
+            metadata = cme.read_epub_metadata(epub)
+
+        self.assertEqual(metadata.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(metadata.authors, "John Irving")
+        self.assertEqual(metadata.language, "cs")
+        self.assertEqual(metadata.publisher, "Odeon")
+        self.assertEqual(metadata.published_year, "1996")
+
+    def test_read_epub_metadata_joins_multiple_creators(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, creators=["John One", "Jane Two"])
+
+            metadata = cme.read_epub_metadata(epub)
+
+        self.assertEqual(metadata.authors, "John One & Jane Two")
+
+    def test_extract_epub_start_text_reads_spine_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, body="Tituln\u00ed strana\nSpr\u00e1vn\u00fd n\u00e1zev\nAutor")
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Tituln\u00ed strana", text)
+        self.assertIn("Spr\u00e1vn\u00fd n\u00e1zev", text)
+
+    def test_extract_epub_start_text_resolves_uri_spine_href(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(
+                epub,
+                opf_path="OPS/package/content.opf",
+                item_href="../Text/chapter%201.xhtml#start",
+                item_path="OPS/Text/chapter 1.xhtml",
+                body="Text pres relativni URI",
+            )
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Text pres relativni URI", text)
+
+    def test_extract_epub_start_text_reads_start_of_oversized_spine_item(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, body="Oversized zacatek " + ("A" * 6_000_000))
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Oversized zacatek", text)
 
 
 class ParserAndMatchingTests(unittest.TestCase):
