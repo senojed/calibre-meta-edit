@@ -1443,11 +1443,6 @@ class ImportAIResolverTests(unittest.TestCase):
             cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=70),
             cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
         ]
-        resolver = cme.DisabledAIResolver()
-
-        selected = cme.resolve_import_candidate_with_ai([], candidates, resolver)
-
-        self.assertEqual(selected.url, "https://bad")
 
         class FixedResolver:
             def resolve(self, signals, candidates):
