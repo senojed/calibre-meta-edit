@@ -88,6 +88,8 @@ Volba zdroju podle jazyka/signalu:
 - anglicky kandidat: Google Books a Open Library
 - nejasny jazyk: vsechny zdroje
 
+Jazyk je jasny jen kdyz se shodne vice signalu, napriklad EPUB `language`, text z obsahu a/nebo silny online kandidat. Kdyz EPUB `language` chybi, je podezrely, nebo nesedi s textem a kandidaty, import hleda ve vsech zdrojich.
+
 Uzivatel muze v importnim okne rucne vybrat jiny online kandidat. Po vyberu se prepocitaji metadata, komentar, obalky, serie a duplicity.
 
 Scraping Databaze knih a Legie musi pouzivat stavajici opatrny styl:
@@ -126,12 +128,15 @@ Chovani AI:
 - kdyz Ollama neni dostupna, import pokracuje bez AI a ukaze varovani
 - AI dostane jen kratke signaly a seznam kandidatu, ne celou knihu
 - AI vraci strukturovany navrh: kandidat, confidence, duvod, zda vyzaduje review
+- AI confidence nikdy sama neodemkne zapis; slouzi jen pro doporuceni kandidata a oznaceni review
 - AI nikdy nezapisuje do Calibre
 - uzivatel vzdy potvrzuje finalni import
 
 ## Importni Okno
 
 Okno bude samostatne modalni okno. Rozlozeni ma byt siroke, aby bylo minimum scrollovani.
+
+Pred otevrenim importniho okna appka ulozi aktualni `matches.db`. Kdyz ulozeni selze, import se nespusti. Tim se predejde konfliktu s rozdelanym review v hlavni tabulce.
 
 Navrh rozlozeni:
 
@@ -248,12 +253,12 @@ Po kliknuti `Importovat`:
 
 1. overit nazev a autora
 2. pokud je silna duplicita, vyzadat extra potvrzeni
-3. zavrit Calibre stejnym mechanismem jako dnes
+3. zavrit Calibre pres sdileny mechanismus `shared.quit_calibre(allow_force=...)`
 4. udelat backup `metadata.db`
 5. nacist existujici ID knih v Calibre
 6. spustit `calibredb add <epub>`
-7. znovu nacist ID knih
-8. urcit nove `book_id` jako rozdil pred/po
+7. zkusit vycist nove `book_id` z vystupu `calibredb add`
+8. pokud vystup ID neda, znovu nacist ID knih a pouzit rozdil pred/po jako fallback
 9. pokud `book_id` nejde jednoznacne urcit, zastavit a ukazat chybu
 10. spustit `calibredb set_metadata`
 11. zapsat metadata, komentar, serii, tagy a obalku
@@ -271,9 +276,17 @@ Puvodni EPUB:
 Chyby:
 
 - chyba pred `calibredb add` nezmeni knihovnu
+- chyba po `calibredb add` muze nechat v Calibre novou knihu bez finalnich metadat
 - chyba po `calibredb add` musi ukazat nove `book_id`, pokud je znamo
+- `matches.db` se zapise az po uspesnem nastaveni metadat, aby nevznikl falesny hotovy radek
 - automaticky rollback se v prvni verzi nedela
 - uzivatel muze pouzit existujici backup/rollback mechanismus
+
+Obalka:
+
+- obalka z online zdroje nebo EPUB se pred zapisem ulozi do docasneho souboru
+- cesta k docasnemu souboru se preda `calibredb set_metadata` stejnym stylem jako dnesni zapis obalek
+- po prikazu se docasny soubor smaze s docasnym adresarem
 
 ## Backend Navrh
 
@@ -298,6 +311,8 @@ Hlavni funkce:
 - `build_import_candidates(signals)`
 - `score_import_candidates(signals, candidates)`
 - `find_calibre_duplicates(library, preview)`
+- `parse_calibredb_add_book_ids(output)`
+- `prepare_import_cover_file(preview)`
 - `apply_import_preview(preview, library)`
 
 ## Testy
@@ -315,6 +330,10 @@ Backend testy:
 - duplicita: stejny autor + jiny nazev se ignoruje
 - serie match na existujici Calibre serii
 - import preview bez nazvu/autora je neplatny
+- parsovani ID z vystupu `calibredb add`
+- fallback noveho ID pres rozdil pred/po
+- chyba po `calibredb add` vrati ID nove knihy, pokud je znamo
+- neulozitelne `matches.db` blokuje start importu
 - AI vypnuta
 - Ollama nedostupna nezastavi import
 
