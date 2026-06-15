@@ -43,6 +43,13 @@ APPLY_RESULTS_DIR = Path("apply-results")
 LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
 HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 EPUB_TEXT_ITEM_MAX_BYTES = 1_000_000
+MOJIBAKE_REPLACEMENTS = {
+    "p\u00b2": "p\u0159",
+    "\u256a": "\u011b",
+    "\u2563": "\u016f",
+    "\u00de": "\u0161",
+    "\u010e": "\u011b",
+}
 MATCHES_FIELDS = [
     "book_id",
     "title",
@@ -367,6 +374,107 @@ def extract_epub_start_text(path: str | Path, limit: int = 5000) -> str:
             if len(joined) >= limit:
                 return joined[:limit]
     return "\n".join(texts).strip()[:limit]
+
+
+def repair_filename_text(text: str) -> str:
+    repaired = text.replace("_", " ")
+    for broken, fixed in MOJIBAKE_REPLACEMENTS.items():
+        repaired = repaired.replace(broken, fixed)
+    repaired = re.sub(r"\s+", " ", repaired)
+    return repaired.strip(" -_.")
+
+
+def split_author_title_from_filename(stem: str) -> tuple[str, str]:
+    clean = repair_filename_text(stem)
+    parts = [part.strip() for part in re.split(r"\s+-\s+", clean, maxsplit=1)]
+    if len(parts) != 2:
+        return clean, ""
+    left, right = parts
+    words = left.split()
+    if len(words) == 2:
+        author = f"{words[1]} {words[0]}"
+    else:
+        author = left
+    return right, author
+
+
+def import_signal_from_path(path: str | Path) -> ImportSourceSignal:
+    file_path = Path(path)
+    title, authors = split_author_title_from_filename(file_path.stem)
+    folder_text = repair_filename_text(" ".join(part for part in file_path.parts[:-1] if part))
+    return ImportSourceSignal(
+        source="filename",
+        title=title,
+        authors=authors,
+        text=folder_text,
+        confidence=30,
+    )
+
+
+def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSignal:
+    return ImportSourceSignal(
+        source="epub-metadata",
+        title=metadata.title,
+        authors=metadata.authors,
+        language=metadata.language,
+        publisher=metadata.publisher,
+        published_year=metadata.published_year,
+        confidence=60 if metadata.title and metadata.authors else 30,
+    )
+
+
+def import_signal_from_epub_text(text: str) -> ImportSourceSignal:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return ImportSourceSignal(source="epub-text", text="\n".join(lines[:20]), confidence=20)
+
+
+def has_known_mojibake(text: str) -> bool:
+    return any(broken in text for broken in MOJIBAKE_REPLACEMENTS)
+
+
+def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int]:
+    preview_text = " ".join(part for part in (signal.title, signal.authors) if part.strip())
+    clean_bonus = 100 if preview_text and not has_known_mojibake(preview_text) else 0
+    completeness = int(bool(signal.title.strip())) + int(bool(signal.authors.strip()))
+    return completeness, clean_bonus, signal.confidence
+
+
+def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> ImportPreview:
+    preview_signal = max(signals, key=signal_preview_quality) if signals else ImportSourceSignal(source="")
+    metadata_signal = next((signal for signal in signals if signal.source == "epub-metadata"), None)
+    return ImportPreview(
+        title=preview_signal.title,
+        authors=preview_signal.authors,
+        published_year=metadata_signal.published_year if metadata_signal else "",
+        publisher=metadata_signal.publisher if metadata_signal else "",
+    )
+
+
+def analyze_epub_for_import(
+    path: str | Path,
+    library: str | Path,
+    settings: dict[str, object],
+    online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
+) -> ImportAnalysis:
+    epub_path = Path(path)
+    metadata = read_epub_metadata(epub_path)
+    text = extract_epub_start_text(epub_path, limit=int(settings.get("epub_text_limit", 5000) or 5000))
+    signals = [
+        import_signal_from_epub_metadata(metadata),
+        import_signal_from_epub_text(text),
+        import_signal_from_path(epub_path),
+    ]
+    candidates = online_lookup(signals) if online_lookup else []
+    preview = choose_initial_import_preview(signals)
+    return ImportAnalysis(
+        epub_path=str(epub_path),
+        signals=signals,
+        candidates=candidates,
+        recommended=candidates[0] if candidates else None,
+        duplicates=[],
+        preview=preview,
+        messages=[],
+    )
 
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:

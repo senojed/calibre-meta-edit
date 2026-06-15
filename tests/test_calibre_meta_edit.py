@@ -243,6 +243,45 @@ class ImportModelTests(unittest.TestCase):
 
 
 class ImportEpubParsingTests(unittest.TestCase):
+    def test_filename_signal_cleans_broken_diacritics_and_reversed_author(self):
+        signal = cme.import_signal_from_path(Path("C:/inbox/Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"))
+
+        self.assertEqual(signal.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(signal.authors, "John Irving")
+        self.assertEqual(signal.source, "filename")
+
+    def test_analyze_epub_for_import_combines_epub_and_filename_signals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"
+            write_test_epub(epub)
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(analysis.preview.authors, "John Irving")
+        self.assertGreaterEqual(len(analysis.signals), 2)
+
+    def test_analyze_epub_for_import_prefers_clean_filename_over_broken_epub_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"
+            write_test_epub(epub, title="Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", creator="Irving John\u256a")
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(analysis.preview.authors, "John Irving")
+
+    def test_analyze_epub_for_import_keeps_complete_metadata_over_title_only_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Imaginarni pritelkyne.epub"
+            write_test_epub(epub, title="Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", creator="John Irving\u256a")
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertTrue(cme.is_valid_import_preview(analysis.preview))
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a")
+        self.assertEqual(analysis.preview.authors, "John Irving\u256a")
+
     def test_extract_year_reads_reasonable_publication_year(self):
         self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
         self.assertEqual(cme.extract_year("bez roku"), "")
