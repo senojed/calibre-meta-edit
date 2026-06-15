@@ -671,6 +671,18 @@ class ImportCandidateScoringTests(unittest.TestCase):
         scored = cme.score_import_candidates(signals, candidates)
 
         self.assertLess(scored[0].score, 50)
+
+    def test_score_import_candidates_uses_evidence_text_for_databaze_author(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/good", evidence_text="Kniha Autor"),
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/bad", evidence_text="Kniha Jiny"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreater(scored[0].score, scored[1].score)
 ```
 
 - [ ] **Step 2: Run failing tests**
@@ -707,19 +719,28 @@ def _word_overlap_score(left: str, right: str) -> int:
     return int(60 * len(overlap) / max(len(left_words), len(right_words)))
 
 
+def _title_similarity_score(left: str, right: str) -> int:
+    if normalize_text(left) == normalize_text(right) and left:
+        return 70
+    return min(70, int(_word_overlap_score(left, right) * 70 / 60))
+
+
+def _author_similarity_score(signals_author: str, candidate: ImportCandidate) -> int:
+    if normalize_text(candidate.authors) == normalize_text(signals_author) and signals_author:
+        return 30
+    if candidate.authors:
+        return min(30, int(_word_overlap_score(signals_author, candidate.authors) * 30 / 60))
+    if signals_author and candidate.evidence_text and _author_matches_text(signals_author, candidate.evidence_text):
+        return 30
+    return 0
+
+
 def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: ImportCandidate) -> ImportCandidate:
     title = _best_normalized_title(signals)
     authors = _best_normalized_authors(signals)
-    title_score = 100 if normalize_text(candidate.title) == normalize_text(title) and title else _word_overlap_score(title, candidate.title)
-    if normalize_text(candidate.authors) == normalize_text(authors) and authors:
-        author_score = 80
-    elif candidate.authors:
-        author_score = _word_overlap_score(authors, candidate.authors)
-    elif authors and normalize_text(authors) in normalize_text(candidate.evidence_text):
-        author_score = 40
-    else:
-        author_score = 0
-    score = min(100, title_score + author_score)
+    title_score = _title_similarity_score(title, candidate.title)
+    author_score = _author_similarity_score(authors, candidate)
+    score = title_score + author_score
     reason = f"title={title_score};author={author_score}"
     return replace(candidate, score=score, reason=reason)
 
@@ -816,13 +837,13 @@ class ImportOnlineLookupTests(unittest.TestCase):
         self.assertEqual(candidates[0].title, "Turn Coat")
         self.assertEqual(candidates[0].authors, "Jim Butcher")
 
-    def test_import_candidate_from_databaze_uses_signal_author_fallback(self):
+    def test_import_candidate_from_databaze_keeps_author_empty_and_uses_evidence(self):
         signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
         raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
 
         candidate = cme.import_candidate_from_search_candidate("databazeknih", raw, signals)
 
-        self.assertEqual(candidate.authors, "Autor")
+        self.assertEqual(candidate.authors, "")
         self.assertEqual(candidate.evidence_text, "volny text bez strukturovaneho autora")
 ```
 
@@ -847,17 +868,13 @@ def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
     return Book(0, title, authors)
 
 
-def _fallback_candidate_authors(signals: Sequence[ImportSourceSignal]) -> str:
-    return _best_normalized_authors(signals)
-
-
 def import_candidate_from_search_candidate(
     source: str,
     candidate: Candidate,
     signals: Sequence[ImportSourceSignal],
     work_type: str = "",
 ) -> ImportCandidate:
-    authors = candidate.text.strip() if source in {"googlebooks", "openlibrary"} else _fallback_candidate_authors(signals)
+    authors = candidate.text.strip() if source in {"googlebooks", "openlibrary"} else ""
     return ImportCandidate(
         source=source,
         title=candidate.title,
@@ -901,7 +918,7 @@ Change `analyze_epub_for_import` default:
 ```python
 candidates = online_lookup(signals) if online_lookup else lookup_import_candidates(signals)
 candidates = score_import_candidates(signals, candidates)
-recommended = candidates[0] if candidates and candidates[0].score >= 70 else None
+recommended = candidates[0] if candidates and candidates[0].score >= 80 else None
 preview = import_preview_from_candidate(recommended, choose_initial_import_preview(signals)) if recommended else choose_initial_import_preview(signals)
 ```
 
@@ -1439,6 +1456,13 @@ class ImportAIResolverTests(unittest.TestCase):
         selected = cme.resolve_import_candidate_with_ai([], candidates, FixedResolver())
 
         self.assertEqual(selected.url, "https://good")
+
+    def test_low_score_candidate_is_not_recommended_without_ai_confidence(self):
+        candidates = [cme.ImportCandidate("databazeknih", "Weak", "", "https://weak", score=10)]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, cme.DisabledAIResolver())
+
+        self.assertIsNone(selected)
 ```
 
 - [ ] **Step 2: Implement AI resolver classes**
@@ -1473,13 +1497,17 @@ class OllamaAIResolver:
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
         if not candidates:
             return None
+        compact_candidates = [
+            replace(candidate, evidence_text=candidate.evidence_text[:500])
+            for candidate in candidates[:5]
+        ]
         payload = {
             "model": self.model,
             "stream": False,
             "prompt": json.dumps(
                 {
                     "signals": [signal.__dict__ for signal in signals],
-                    "candidates": [candidate.__dict__ for candidate in candidates[:5]],
+                    "candidates": [candidate.__dict__ for candidate in compact_candidates],
                 },
                 ensure_ascii=False,
             ),
@@ -1511,16 +1539,16 @@ def resolve_import_candidate_with_ai(
     signals: Sequence[ImportSourceSignal],
     candidates: Sequence[ImportCandidate],
     resolver: DisabledAIResolver | OllamaAIResolver,
+    minimum_score: int = 80,
 ) -> ImportCandidate | None:
     if not candidates:
         return None
     choice = resolver.resolve(signals, candidates)
-    if choice is None or choice.confidence < 80:
-        return candidates[0]
-    for candidate in candidates:
-        if candidate.url == choice.url:
-            return replace(candidate, reason=f"{candidate.reason};ai={choice.confidence}:{choice.reason}")
-    return candidates[0]
+    if choice is not None and choice.confidence >= 80:
+        for candidate in candidates:
+            if candidate.url == choice.url:
+                return replace(candidate, reason=f"{candidate.reason};ai={choice.confidence}:{choice.reason}")
+    return candidates[0] if candidates[0].score >= minimum_score else None
 ```
 
 - [ ] **Step 3: Wire AI resolver into import analysis**
