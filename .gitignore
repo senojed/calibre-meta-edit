@@ -10,6 +10,7 @@ apply-results/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.worktrees/
 
 *.db
 *.db-wal
