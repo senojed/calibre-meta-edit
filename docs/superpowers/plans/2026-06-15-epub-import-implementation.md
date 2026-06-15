@@ -145,6 +145,7 @@ class ImportCandidate:
     score: int = 0
     reason: str = ""
     work_type: str = ""
+    evidence_text: str = ""
     detail: BookDetailMetadata | None = None
 
 
@@ -710,7 +711,14 @@ def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: Imp
     title = _best_normalized_title(signals)
     authors = _best_normalized_authors(signals)
     title_score = 100 if normalize_text(candidate.title) == normalize_text(title) and title else _word_overlap_score(title, candidate.title)
-    author_score = 80 if normalize_text(candidate.authors) == normalize_text(authors) and authors else _word_overlap_score(authors, candidate.authors)
+    if normalize_text(candidate.authors) == normalize_text(authors) and authors:
+        author_score = 80
+    elif candidate.authors:
+        author_score = _word_overlap_score(authors, candidate.authors)
+    elif authors and normalize_text(authors) in normalize_text(candidate.evidence_text):
+        author_score = 40
+    else:
+        author_score = 0
     score = min(100, title_score + author_score)
     reason = f"title={title_score};author={author_score}"
     return replace(candidate, score=score, reason=reason)
@@ -807,6 +815,15 @@ class ImportOnlineLookupTests(unittest.TestCase):
         self.assertEqual(candidates[0].source, "googlebooks")
         self.assertEqual(candidates[0].title, "Turn Coat")
         self.assertEqual(candidates[0].authors, "Jim Butcher")
+
+    def test_import_candidate_from_databaze_uses_signal_author_fallback(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
+
+        candidate = cme.import_candidate_from_search_candidate("databazeknih", raw, signals)
+
+        self.assertEqual(candidate.authors, "Autor")
+        self.assertEqual(candidate.evidence_text, "volny text bez strukturovaneho autora")
 ```
 
 - [ ] **Step 2: Run failing tests**
@@ -830,18 +847,24 @@ def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
     return Book(0, title, authors)
 
 
-def _candidate_authors_from_text(text: str) -> str:
-    match = re.search(r"\(([^()]+)\)\s*$", text or "")
-    return match.group(1).strip() if match else ""
+def _fallback_candidate_authors(signals: Sequence[ImportSourceSignal]) -> str:
+    return _best_normalized_authors(signals)
 
 
-def import_candidate_from_search_candidate(source: str, candidate: Candidate, work_type: str = "") -> ImportCandidate:
+def import_candidate_from_search_candidate(
+    source: str,
+    candidate: Candidate,
+    signals: Sequence[ImportSourceSignal],
+    work_type: str = "",
+) -> ImportCandidate:
+    authors = candidate.text.strip() if source in {"googlebooks", "openlibrary"} else _fallback_candidate_authors(signals)
     return ImportCandidate(
         source=source,
         title=candidate.title,
-        authors=_candidate_authors_from_text(candidate.text),
+        authors=authors,
         url=candidate.url,
         work_type=work_type,
+        evidence_text=candidate.text,
     )
 
 
@@ -856,16 +879,16 @@ def lookup_import_candidates(
     for source in import_lookup_sources(signals):
         if source == "databazeknih":
             html_text = fetch(build_search_url(book.title, book.authors))
-            candidates.extend(import_candidate_from_search_candidate("databazeknih", item) for item in parse_search_results(html_text))
+            candidates.extend(import_candidate_from_search_candidate("databazeknih", item, signals) for item in parse_search_results(html_text))
         elif source == "legie":
             html_text = fetch(build_legie_search_url(book.title, book.authors))
-            candidates.extend(import_candidate_from_search_candidate("legie", item, "povidka") for item in parse_legie_search_results(html_text))
+            candidates.extend(import_candidate_from_search_candidate("legie", item, signals, "povidka") for item in parse_legie_search_results(html_text))
         elif source == "googlebooks":
             json_text = fetch(build_google_books_search_url(book.title, book.authors))
-            candidates.extend(import_candidate_from_search_candidate("googlebooks", item) for item in parse_google_books_search_results(json_text))
+            candidates.extend(import_candidate_from_search_candidate("googlebooks", item, signals) for item in parse_google_books_search_results(json_text))
         elif source == "openlibrary":
             json_text = fetch(build_openlibrary_search_url(book.title, book.authors))
-            candidates.extend(import_candidate_from_search_candidate("openlibrary", item) for item in parse_openlibrary_search_results(json_text))
+            candidates.extend(import_candidate_from_search_candidate("openlibrary", item, signals) for item in parse_openlibrary_search_results(json_text))
         if sleep_seconds:
             time.sleep(sleep_seconds)
     return score_import_candidates(signals, candidates)
@@ -1397,6 +1420,25 @@ class ImportAIResolverTests(unittest.TestCase):
         result = resolver.resolve([], [])
 
         self.assertIsNone(result)
+
+    def test_ai_choice_can_promote_matching_candidate(self):
+        candidates = [
+            cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=70),
+            cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
+        ]
+        resolver = cme.DisabledAIResolver()
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, resolver)
+
+        self.assertEqual(selected.url, "https://bad")
+
+        class FixedResolver:
+            def resolve(self, signals, candidates):
+                return cme.AIImportChoice("https://good", 90, "best")
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, FixedResolver())
+
+        self.assertEqual(selected.url, "https://good")
 ```
 
 - [ ] **Step 2: Implement AI resolver classes**
@@ -1463,9 +1505,49 @@ class OllamaAIResolver:
         )
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.read().decode("utf-8", errors="replace")
+
+
+def resolve_import_candidate_with_ai(
+    signals: Sequence[ImportSourceSignal],
+    candidates: Sequence[ImportCandidate],
+    resolver: DisabledAIResolver | OllamaAIResolver,
+) -> ImportCandidate | None:
+    if not candidates:
+        return None
+    choice = resolver.resolve(signals, candidates)
+    if choice is None or choice.confidence < 80:
+        return candidates[0]
+    for candidate in candidates:
+        if candidate.url == choice.url:
+            return replace(candidate, reason=f"{candidate.reason};ai={choice.confidence}:{choice.reason}")
+    return candidates[0]
 ```
 
-- [ ] **Step 3: Add Qt settings tests**
+- [ ] **Step 3: Wire AI resolver into import analysis**
+
+Change `analyze_epub_for_import` signature:
+
+```python
+def analyze_epub_for_import(
+    path: str | Path,
+    library: str | Path,
+    settings: dict[str, object],
+    online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
+    ai_resolver: DisabledAIResolver | OllamaAIResolver | None = None,
+) -> ImportAnalysis:
+```
+
+Inside `analyze_epub_for_import`, after candidates are scored:
+
+```python
+    resolver = ai_resolver or DisabledAIResolver()
+    recommended = resolve_import_candidate_with_ai(signals, candidates, resolver)
+    preview = import_preview_from_candidate(recommended, choose_initial_import_preview(signals)) if recommended else choose_initial_import_preview(signals)
+```
+
+Keep AI non-fatal: `DisabledAIResolver` returns `None`, `OllamaAIResolver` catches errors and returns `None`.
+
+- [ ] **Step 4: Add Qt settings tests**
 
 Add to `tests/test_calibre_meta_qt.py`:
 
@@ -1485,7 +1567,7 @@ Add to `tests/test_calibre_meta_qt.py`:
         self.assertEqual(settings["text_limit"], 2000)
 ```
 
-- [ ] **Step 4: Implement Qt AI settings helpers**
+- [ ] **Step 5: Implement Qt AI settings helpers**
 
 In `calibre_meta_qt.py`, add:
 
@@ -1510,7 +1592,7 @@ def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
     }
 ```
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 6: Run tests**
 
 Run:
 
@@ -1520,7 +1602,7 @@ python -m unittest discover -s tests
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add calibre_meta_edit.py calibre_meta_qt.py tests/test_calibre_meta_edit.py tests/test_calibre_meta_qt.py
@@ -1699,7 +1781,26 @@ git commit -m "Add EPUB import dialog"
 - Modify: `calibre_meta_qt.py`
 - Modify: `tests/test_calibre_meta_qt.py`
 
-- [ ] **Step 1: Add import button test**
+- [ ] **Step 1: Verify current Qt integration points**
+
+Before editing, grep these names in `calibre_meta_qt.py` and confirm signatures still match the plan:
+
+```powershell
+rg -n "class WorkerBridge|finished = Signal|def finish_background|self.buttons|def set_ui_enabled|def restore_selection|def selected_book_ids|class PreferencesDialog|def _build_toolbar" calibre_meta_qt.py
+```
+
+Expected facts:
+
+- `WorkerBridge.finished` accepts `title`, `result`, `text`, `reload_after`
+- `finish_background(self, title, result, text, reload_after)` exists
+- `self.buttons` stores toolbar buttons
+- `set_ui_enabled`, `restore_selection`, and `selected_book_ids` exist
+- `PreferencesDialog` uses a grid layout where extra AI rows do not overlap existing rows
+- `_build_toolbar` is where the import button belongs
+
+If one fact differs, update this task's code to match current names before changing files.
+
+- [ ] **Step 2: Add import button test**
 
 Add:
 
@@ -1718,7 +1819,7 @@ Add:
         app.processEvents()
 ```
 
-- [ ] **Step 2: Add import button**
+- [ ] **Step 3: Add import button**
 
 In `_build_toolbar`, after save button:
 
@@ -1743,7 +1844,7 @@ Add method:
             self.run_import_analysis(Path(path))
 ```
 
-- [ ] **Step 3: Add worker signal**
+- [ ] **Step 4: Add worker signal**
 
 Change `WorkerBridge`:
 
@@ -1775,10 +1876,16 @@ Add methods:
                 try:
                     settings = read_app_settings()
                     ai_settings = normalize_ai_settings(settings)
+                    resolver = (
+                        cme.OllamaAIResolver(str(ai_settings["model"]))
+                        if ai_settings["provider"] == "ollama"
+                        else cme.DisabledAIResolver()
+                    )
                     analysis = cme.analyze_epub_for_import(
                         epub_path,
                         self.library_path,
                         {"epub_text_limit": ai_settings["text_limit"]},
+                        ai_resolver=resolver,
                     )
                     self.bridge.import_ready.emit(analysis)
                 except Exception as exc:
@@ -1795,7 +1902,7 @@ Add methods:
             self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
 ```
 
-- [ ] **Step 4: Add temporary apply stub**
+- [ ] **Step 5: Add temporary apply stub**
 
 Add:
 
@@ -1804,7 +1911,7 @@ Add:
             QMessageBox.information(self, "Import EPUB", "Import zapis bude pridan v dalsim kroku.")
 ```
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 6: Run tests**
 
 Run:
 
@@ -1814,7 +1921,7 @@ python -m unittest discover -s tests -p test_calibre_meta_qt.py
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add calibre_meta_qt.py tests/test_calibre_meta_qt.py
