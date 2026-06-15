@@ -170,10 +170,83 @@ class CoverCandidate:
 
 
 @dataclass(frozen=True)
+class ImportSourceSignal:
+    source: str
+    title: str = ""
+    authors: str = ""
+    language: str = ""
+    publisher: str = ""
+    published_year: str = ""
+    text: str = ""
+    confidence: int = 0
+
+
+@dataclass(frozen=True)
+class ImportCandidate:
+    source: str
+    title: str
+    authors: str
+    url: str
+    score: int = 0
+    reason: str = ""
+    work_type: str = ""
+    evidence_text: str = ""
+    detail: BookDetailMetadata | None = None
+
+
+@dataclass(frozen=True)
+class DuplicateCandidate:
+    book_id: int
+    title: str
+    authors: str
+    series: str = ""
+    score: int = 0
+    reason: str = ""
+    strong: bool = False
+
+
+@dataclass(frozen=True)
+class ImportPreview:
+    title: str = ""
+    authors: str = ""
+    series: str = ""
+    series_index: str = ""
+    published_year: str = ""
+    publisher: str = ""
+    tags: str = ""
+    url: str = ""
+    source: str = ""
+    work_type: str = ""
+    rating_percent: str = ""
+    original_title: str = ""
+    original_publication: str = ""
+    original_publisher: str = ""
+    comment: str = ""
+    selected_cover_url: str = ""
+    cover_bytes: bytes = b""
+    allow_strong_duplicate: bool = False
+
+
+@dataclass(frozen=True)
+class ImportAnalysis:
+    epub_path: str
+    signals: list[ImportSourceSignal]
+    candidates: list[ImportCandidate]
+    recommended: ImportCandidate | None
+    duplicates: list[DuplicateCandidate]
+    preview: ImportPreview
+    messages: list[str]
+
+
+@dataclass(frozen=True)
 class CoverOption:
     url: str
     source: str
     label: str = ""
+
+
+def is_valid_import_preview(preview: ImportPreview) -> bool:
+    return bool(preview.title.strip() and preview.authors.strip())
 
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:

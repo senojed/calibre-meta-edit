@@ -179,6 +179,26 @@ class CommentTests(unittest.TestCase):
         self.assertEqual(cme.extract_first_databaze_link(comment), "https://www.databazeknih.cz/knihy/foo-123")
 
 
+class ImportModelTests(unittest.TestCase):
+    def test_import_preview_requires_title_and_author(self):
+        valid = cme.ImportPreview(title="Kniha", authors="Autor")
+        missing_title = cme.ImportPreview(title="", authors="Autor")
+        missing_author = cme.ImportPreview(title="Kniha", authors="")
+
+        self.assertTrue(cme.is_valid_import_preview(valid))
+        self.assertFalse(cme.is_valid_import_preview(missing_title))
+        self.assertFalse(cme.is_valid_import_preview(missing_author))
+
+    def test_import_candidate_defaults_are_safe(self):
+        candidate = cme.ImportCandidate(source="databazeknih", title="Kniha", authors="Autor", url="https://x")
+
+        self.assertEqual(candidate.score, 0)
+        self.assertEqual(candidate.reason, "")
+        self.assertEqual(candidate.work_type, "")
+        self.assertEqual(candidate.evidence_text, "")
+        self.assertIsNone(candidate.detail)
+
+
 class ParserAndMatchingTests(unittest.TestCase):
     def test_parse_search_results_uses_html_parser_and_converts_urls(self):
         fixture = Path(__file__).parent / "fixtures" / "databazeknih_search.html"
