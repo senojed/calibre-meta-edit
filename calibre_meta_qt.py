@@ -9,6 +9,7 @@ import json
 import os
 import threading
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -308,6 +309,7 @@ if PYSIDE6_AVAILABLE:
         QComboBox,
         QDialog,
         QFileDialog,
+        QFormLayout,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -317,6 +319,7 @@ if PYSIDE6_AVAILABLE:
         QMainWindow,
         QMenu,
         QMessageBox,
+        QListWidget,
         QStyleFactory,
         QPushButton,
         QSizePolicy,
@@ -343,6 +346,96 @@ if PYSIDE6_AVAILABLE:
         finished = Signal(str, int, str, bool)
         cover_ready = Signal(int, str, str, str, bytes)
         review_ready = Signal(int, int, str, object, str)
+
+
+    class ImportDialog(QDialog):
+        """Modalni okno pro kontrolu jednoho EPUB importu pred zapisem."""
+
+        def __init__(self, analysis: cme.ImportAnalysis, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.analysis = analysis
+            self.setWindowTitle("Import EPUB")
+            self.resize(1180, 720)
+            root = QVBoxLayout(self)
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+
+            left = QVBoxLayout()
+            body.addLayout(left, stretch=1)
+            left.addWidget(QLabel("Soubor"))
+            self.file_label = QLabel(analysis.epub_path)
+            self.file_label.setWordWrap(True)
+            left.addWidget(self.file_label)
+
+            left.addWidget(QLabel("Signaly"))
+            self.signals_list = QListWidget()
+            for signal in analysis.signals:
+                self.signals_list.addItem(f"{signal.source}: {signal.title} / {signal.authors}")
+            left.addWidget(self.signals_list, stretch=1)
+
+            left.addWidget(QLabel("Kandidati"))
+            self.candidates_list = QListWidget()
+            for candidate in analysis.candidates:
+                self.candidates_list.addItem(f"{candidate.score} {candidate.source}: {candidate.title} / {candidate.authors}")
+            left.addWidget(self.candidates_list, stretch=1)
+
+            left.addWidget(QLabel("Duplicity"))
+            self.duplicates_list = QListWidget()
+            for duplicate in analysis.duplicates:
+                self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
+            left.addWidget(self.duplicates_list, stretch=1)
+
+            right = QFormLayout()
+            body.addLayout(right, stretch=1)
+            self.title_edit = QLineEdit(analysis.preview.title)
+            self.authors_edit = QLineEdit(analysis.preview.authors)
+            self.series_edit = QLineEdit(analysis.preview.series)
+            self.series_index_edit = QLineEdit(analysis.preview.series_index)
+            self.year_edit = QLineEdit(analysis.preview.published_year)
+            self.publisher_edit = QLineEdit(analysis.preview.publisher)
+            self.tags_edit = QLineEdit(analysis.preview.tags)
+            self.url_edit = QLineEdit(analysis.preview.url)
+            self.comment_edit = QTextEdit(analysis.preview.comment)
+            right.addRow("Nazev", self.title_edit)
+            right.addRow("Autor/autori", self.authors_edit)
+            right.addRow("Serie", self.series_edit)
+            right.addRow("Cislo serie", self.series_index_edit)
+            right.addRow("Rok vydani", self.year_edit)
+            right.addRow("Vydavatel", self.publisher_edit)
+            right.addRow("Tagy", self.tags_edit)
+            right.addRow("Odkaz", self.url_edit)
+            right.addRow("Komentar", self.comment_edit)
+
+            buttons = QHBoxLayout()
+            root.addLayout(buttons)
+            buttons.addStretch(1)
+            self.import_button = QPushButton("Importovat")
+            self.cancel_button = QPushButton("Zrusit")
+            buttons.addWidget(self.import_button)
+            buttons.addWidget(self.cancel_button)
+            self.cancel_button.clicked.connect(self.reject)
+            self.import_button.clicked.connect(self.accept)
+            self.title_edit.textChanged.connect(self.update_import_enabled)
+            self.authors_edit.textChanged.connect(self.update_import_enabled)
+            self.update_import_enabled()
+
+        def update_import_enabled(self) -> None:
+            self.import_button.setEnabled(bool(self.title_edit.text().strip() and self.authors_edit.text().strip()))
+
+        def preview(self) -> cme.ImportPreview:
+            return replace(
+                self.analysis.preview,
+                title=self.title_edit.text(),
+                authors=self.authors_edit.text(),
+                series=self.series_edit.text(),
+                series_index=self.series_index_edit.text(),
+                published_year=self.year_edit.text(),
+                publisher=self.publisher_edit.text(),
+                tags=self.tags_edit.text(),
+                url=self.url_edit.text(),
+                comment=self.comment_edit.toPlainText(),
+            )
+
 
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""

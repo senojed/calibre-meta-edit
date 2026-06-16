@@ -305,6 +305,59 @@ class QtImportTests(unittest.TestCase):
 
         self.assertIsNotNone(qt.CalibreMetaQtWindow)
 
+    def test_import_dialog_validates_title_and_author(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        self.assertFalse(dialog.import_button.isEnabled())
+        dialog.title_edit.setText("Kniha")
+        dialog.authors_edit.setText("Autor")
+        dialog.update_import_enabled()
+
+        self.assertTrue(dialog.import_button.isEnabled())
+        app.processEvents()
+
+    def test_import_dialog_returns_edited_preview(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Stary", authors="Autor", comment="Popis"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        dialog.title_edit.setText("Novy")
+        dialog.publisher_edit.setText("Vydavatel")
+        dialog.comment_edit.setPlainText("Komentar")
+
+        preview = dialog.preview()
+
+        self.assertEqual(preview.title, "Novy")
+        self.assertEqual(preview.authors, "Autor")
+        self.assertEqual(preview.publisher, "Vydavatel")
+        self.assertEqual(preview.comment, "Komentar")
+        app.processEvents()
+
     def test_qt_startup_preview_uses_single_shot_timer(self):
         import calibre_meta_qt as qt
 
