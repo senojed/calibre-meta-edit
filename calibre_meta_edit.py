@@ -504,6 +504,77 @@ def normalize_text(text: str) -> str:
     return normalized_spaces.strip()
 
 
+def _best_normalized_title(signals: Sequence[ImportSourceSignal]) -> str:
+    title_signals = [signal for signal in signals if signal.title.strip()]
+    if not title_signals:
+        return ""
+    return max(title_signals, key=signal_preview_quality).title
+
+
+def _best_normalized_authors(signals: Sequence[ImportSourceSignal]) -> str:
+    author_signals = [signal for signal in signals if signal.authors.strip()]
+    if not author_signals:
+        return ""
+    return max(author_signals, key=signal_preview_quality).authors
+
+
+def _word_overlap_score(left: str, right: str) -> int:
+    left_words = set(normalize_text(left).split())
+    right_words = set(normalize_text(right).split())
+    if not left_words or not right_words:
+        return 0
+    overlap = left_words & right_words
+    if len(overlap) == 1 and max(len(left_words), len(right_words)) > 1:
+        return 10
+    return int(60 * len(overlap) / max(len(left_words), len(right_words)))
+
+
+def _title_similarity_score(left: str, right: str) -> int:
+    if normalize_text(left) == normalize_text(right) and left:
+        return 70
+    return min(70, int(_word_overlap_score(left, right) * 70 / 60))
+
+
+def _author_similarity_score(signals_author: str, candidate: ImportCandidate) -> int:
+    if candidate.source in {"databazeknih", "legie"}:
+        if signals_author and candidate.evidence_text and _author_matches_text(signals_author, candidate.evidence_text):
+            return 30
+        return 0
+    if normalize_text(candidate.authors) == normalize_text(signals_author) and signals_author:
+        return 30
+    if candidate.authors:
+        return min(30, int(_word_overlap_score(signals_author, candidate.authors) * 30 / 60))
+    return 0
+
+
+def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: ImportCandidate) -> ImportCandidate:
+    title = _best_normalized_title(signals)
+    authors = _best_normalized_authors(signals)
+    title_score = _title_similarity_score(title, candidate.title)
+    author_score = _author_similarity_score(authors, candidate)
+    score = title_score + author_score
+    reason = f"title={title_score};author={author_score}"
+    return replace(candidate, score=score, reason=reason)
+
+
+def score_import_candidates(signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> list[ImportCandidate]:
+    scored = [score_import_candidate(signals, candidate) for candidate in candidates]
+    return sorted(scored, key=lambda candidate: candidate.score, reverse=True)
+
+
+def import_lookup_sources(signals: Sequence[ImportSourceSignal]) -> list[str]:
+    languages = [signal.language.lower().strip() for signal in signals if signal.language.strip()]
+    language_set = set(languages)
+    text = normalize_text(" ".join([signal.title + " " + signal.authors + " " + signal.text for signal in signals]))
+    if len(languages) >= 2 and language_set == {"cs"}:
+        return ["databazeknih", "legie"]
+    if len(languages) >= 2 and language_set == {"en"}:
+        return ["googlebooks", "openlibrary"]
+    if "prelozil" in text or "vydalo" in text:
+        return ["databazeknih", "legie"]
+    return ["databazeknih", "legie", "googlebooks", "openlibrary"]
+
+
 def metadata_db_path(library: str | Path) -> Path:
     return Path(library) / "metadata.db"
 

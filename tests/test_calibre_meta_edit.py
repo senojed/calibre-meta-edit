@@ -242,6 +242,87 @@ class ImportModelTests(unittest.TestCase):
         self.assertIsNone(candidate.detail)
 
 
+class ImportCandidateScoringTests(unittest.TestCase):
+    def test_score_import_candidates_prefers_title_and_author_match(self):
+        signals = [
+            cme.ImportSourceSignal("epub-metadata", "Str\u00e1\u017ee! Str\u00e1\u017ee!", "Terry Pratchett", language="cs"),
+            cme.ImportSourceSignal("filename", "Str\u00e1\u017ee str\u00e1\u017ee", "Terry Pratchett"),
+        ]
+        candidates = [
+            cme.ImportCandidate(
+                "databazeknih",
+                "Str\u00e1\u017ee! Str\u00e1\u017ee!",
+                "Terry Pratchett",
+                "https://dk/good",
+                evidence_text="Str\u00e1\u017ee! Str\u00e1\u017ee! Terry Pratchett",
+            ),
+            cme.ImportCandidate("databazeknih", "Str\u00e1\u017ee stromy", "Jin\u00fd Autor", "https://dk/bad"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_score_import_candidates_requires_databaze_author_evidence_text(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/no-author", evidence_text="Kniha Jiny")
+
+        scored = cme.score_import_candidates(signals, [candidate])
+
+        self.assertEqual(scored[0].reason, "title=70;author=0")
+        self.assertEqual(scored[0].score, 70)
+
+    def test_score_import_candidates_prefers_clean_filename_signal_over_broken_epub_metadata(self):
+        signals = [
+            cme.ImportSourceSignal("epub-metadata", "Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", "Irving John\u256a", language="cs", confidence=60),
+            cme.ImportSourceSignal("filename", "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b", "John Irving", confidence=30),
+        ]
+        candidates = [
+            cme.ImportCandidate(
+                "databazeknih",
+                "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b",
+                "",
+                "https://dk/good",
+                evidence_text="Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b John Irving",
+            ),
+            cme.ImportCandidate("databazeknih", "Imagin\u00e1rn\u00ed planeta", "", "https://dk/bad", evidence_text="Imagin\u00e1rn\u00ed planeta Jiny"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreaterEqual(scored[0].score, 90)
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_score_import_candidates_gives_one_word_title_match_low_score(self):
+        signals = [cme.ImportSourceSignal("filename", "Purpurov\u00e1 mumie", "Anatolij Dn\u011bprov")]
+        candidates = [cme.ImportCandidate("databazeknih", "Purpurov\u00e1 planeta", "Jin\u00fd Autor", "https://dk/bad")]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertLess(scored[0].score, 50)
+
+    def test_score_import_candidates_uses_evidence_text_for_databaze_author(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/good", evidence_text="Kniha Autor"),
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/bad", evidence_text="Kniha Jiny"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_import_source_names_for_czech_english_and_unknown(self):
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="cs")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="en")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="cs"), cme.ImportSourceSignal("text", language="cs")]), ["databazeknih", "legie"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="en"), cme.ImportSourceSignal("text", language="en")]), ["googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+
+
 class ImportEpubParsingTests(unittest.TestCase):
     def test_filename_signal_cleans_broken_diacritics_and_reversed_author(self):
         signal = cme.import_signal_from_path(Path("C:/inbox/Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"))
