@@ -276,6 +276,240 @@ class ImportDuplicateTests(unittest.TestCase):
         self.assertEqual(duplicates[0].book_id, 2)
 
 
+class ImportApplyTests(unittest.TestCase):
+    def test_parse_calibredb_add_book_ids_reads_single_id(self):
+        self.assertEqual(cme.parse_calibredb_add_book_ids("Added book ids: 123"), [123])
+
+    def test_parse_calibredb_add_book_ids_reads_multiple_ids(self):
+        self.assertEqual(cme.parse_calibredb_add_book_ids("Added book ids: 10, 11"), [10, 11])
+
+    def test_apply_import_preview_adds_book_sets_metadata_and_writes_match_row(self):
+        calls = []
+        rows_written = []
+        preview = cme.ImportPreview(
+            title="Kniha",
+            authors="Autor",
+            url="https://example.test/book",
+            source="openlibrary",
+            comment="Komentar",
+        )
+
+        def runner(args):
+            calls.append(args)
+            if args[1] == "add":
+                return cme.CommandResult(0, "Added book ids: 42", "")
+            return cme.CommandResult(0, "ok", "")
+
+        result = cme.apply_import_preview(
+            preview,
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backups/metadata-test.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.book_id, 42)
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(rows_written[0].book_id, 42)
+        self.assertEqual(rows_written[0].status, "skip")
+        self.assertTrue(any(call[1] == "add" for call in calls))
+        self.assertTrue(any(call[1] == "set_metadata" for call in calls))
+
+    def test_apply_import_preview_rejects_invalid_preview_before_side_effects(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            quit_func=lambda allow_force: calls.append(["quit"]) or 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "missing-title-or-author")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_stops_when_quit_calibre_fails(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: calls.append(["backup"]) or Path("backup.db"),
+            quit_func=lambda allow_force: 1,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "quit-calibre-failed")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_blocks_strong_duplicate_before_quit(self):
+        calls = []
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [duplicate],
+            quit_func=lambda allow_force: calls.append(["quit"]) or 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "strong-duplicate")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_blocks_strong_duplicate_after_backup(self):
+        calls = []
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+        duplicate_calls = []
+
+        def duplicate_reader(library, preview):
+            duplicate_calls.append(1)
+            return [] if len(duplicate_calls) == 1 else [duplicate]
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=duplicate_reader,
+            backup_func=lambda library, backups_dir: Path("backups/metadata-test.db"),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "strong-duplicate-after-close")
+        self.assertEqual(result.backup_path, "backups\\metadata-test.db")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_reports_add_failure(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(1, "", "add failed"),
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "add failed")
+        self.assertTrue(any(call[1] == "add" for call in calls))
+        self.assertFalse(any(len(call) > 1 and call[1] == "set_metadata" for call in calls))
+
+    def test_apply_import_preview_uses_existing_ids_diff_when_add_output_has_no_id(self):
+        calls = []
+        id_reads = []
+
+        def existing_ids_reader(library):
+            id_reads.append(1)
+            return {1} if len(id_reads) == 1 else {1, 42}
+
+        def runner(args):
+            calls.append(args)
+            if args[1] == "add":
+                return cme.CommandResult(0, "ok", "")
+            return cme.CommandResult(0, "metadata ok", "")
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=existing_ids_reader,
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: None,
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.book_id, 42)
+
+    def test_apply_import_preview_reports_metadata_failure_without_writing_rows(self):
+        rows_written = []
+
+        def runner(args):
+            if args[1] == "add":
+                return cme.CommandResult(0, "Added book ids: 42", "")
+            return cme.CommandResult(1, "", "metadata failed")
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.book_id, 42)
+        self.assertEqual(result.error, "metadata failed")
+        self.assertEqual(rows_written, [])
+
+    def test_apply_import_preview_appends_match_row_to_existing_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.db"
+            matches_path.write_text("", encoding="utf-8")
+            old_row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "manual", "manual")
+            rows_written = []
+
+            def runner(args):
+                if args[1] == "add":
+                    return cme.CommandResult(0, "Added book ids: 42", "")
+                return cme.CommandResult(0, "ok", "")
+
+            result = cme.apply_import_preview(
+                cme.ImportPreview(title="Nova", authors="Autor"),
+                epub_path=Path("book.epub"),
+                library="B:\\",
+                calibredb_path="calibredb",
+                runner=runner,
+                existing_ids_reader=lambda library: {1},
+                duplicate_reader=lambda library, preview: [],
+                backup_func=lambda library, backups_dir: Path("backup.db"),
+                rows_reader=lambda path: [old_row],
+                rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+                quit_func=lambda allow_force: 0,
+                matches_path=matches_path,
+            )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual([row.book_id for row in rows_written], [1, 42])
+
+
 class ImportCandidateScoringTests(unittest.TestCase):
     def test_score_import_candidates_prefers_title_and_author_match(self):
         signals = [

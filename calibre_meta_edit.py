@@ -259,6 +259,14 @@ class ImportAnalysis:
 
 
 @dataclass(frozen=True)
+class ImportApplyResult:
+    book_id: int
+    status: str
+    error: str = ""
+    backup_path: str = ""
+
+
+@dataclass(frozen=True)
 class CoverOption:
     url: str
     source: str
@@ -597,6 +605,125 @@ def find_import_duplicates(preview: ImportPreview, books: Sequence[Book]) -> lis
             )
         )
     return sorted(duplicates, key=lambda item: item.score, reverse=True)
+
+
+def parse_calibredb_add_book_ids(output: str) -> list[int]:
+    match = re.search(r"Added book ids?:\s*([0-9,\s]+)", output or "", re.IGNORECASE)
+    if not match:
+        return []
+    return [int(value) for value in re.findall(r"\d+", match.group(1))]
+
+
+def read_calibre_book_ids(library: str | Path) -> set[int]:
+    with open_calibre_db_readonly(library) as connection:
+        return {int(row["id"]) for row in connection.execute("select id from books").fetchall()}
+
+
+def _import_set_metadata_args(calibredb_path: str, library: str | Path, book_id: int, preview: ImportPreview) -> list[str]:
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(book_id),
+        "--with-library",
+        str(library),
+        "--field",
+        "title:" + preview.title,
+        "--field",
+        "authors:" + preview.authors,
+    ]
+    if preview.comment:
+        args.extend(["--field", "comments:" + preview.comment])
+    if preview.published_year:
+        args.extend(["--field", "pubdate:" + calibre_pubdate_value(preview.published_year)])
+    if preview.publisher:
+        args.extend(["--field", "publisher:" + preview.publisher])
+    if preview.tags:
+        args.extend(["--field", "tags:" + preview.tags])
+    if preview.series:
+        args.extend(["--field", "series:" + preview.series])
+    if preview.series_index:
+        args.extend(["--field", "series_index:" + preview.series_index])
+    return args
+
+
+def import_preview_to_match_row(book_id: int, preview: ImportPreview) -> MatchRow:
+    return MatchRow(
+        book_id,
+        preview.title,
+        preview.authors,
+        "skip",
+        preview.url,
+        "",
+        "imported",
+        "imported",
+        preview.source or source_and_work_type_for_url(preview.url)[0],
+        preview.work_type,
+        "",
+        preview.selected_cover_url,
+        "",
+        preview.published_year,
+        preview.publisher,
+        preview.tags,
+        preview.rating_percent,
+        preview.original_title,
+        preview.original_publication,
+        preview.original_publisher,
+    )
+
+
+def apply_import_preview(
+    preview: ImportPreview,
+    epub_path: str | Path,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+    existing_ids_reader: Callable[[str | Path], set[int]] = read_calibre_book_ids,
+    duplicate_reader: Callable[[str | Path, ImportPreview], list[DuplicateCandidate]] | None = None,
+    backup_func: Callable[[str | Path, Path], Path] | None = None,
+    rows_reader: Callable[[Path], list[MatchRow]] | None = None,
+    rows_writer: Callable[[Path, Iterable[MatchRow], bool], None] | None = None,
+    quit_func: Callable[[bool], int] | None = None,
+    allow_force: bool = True,
+    matches_path: Path = MATCHES_PATH,
+) -> ImportApplyResult:
+    command_runner = runner or run_command
+    read_duplicates = duplicate_reader or find_calibre_import_duplicates
+    create_backup_func = backup_func or create_backup
+    read_rows = rows_reader or read_matches_csv
+    write_rows = rows_writer or write_matches_csv
+    if not is_valid_import_preview(preview):
+        return ImportApplyResult(0, "failed", "missing-title-or-author")
+    if any(item.strong for item in read_duplicates(library, preview)) and not preview.allow_strong_duplicate:
+        return ImportApplyResult(0, "failed", "strong-duplicate")
+    quit_runner = quit_func or (lambda force: 0)
+    quit_result = quit_runner(allow_force)
+    if quit_result != 0:
+        return ImportApplyResult(0, "failed", "quit-calibre-failed")
+    backup_path = create_backup_func(library, Path("backups"))
+    before_ids = existing_ids_reader(library)
+    fresh_duplicates = read_duplicates(library, preview)
+    if any(item.strong for item in fresh_duplicates) and not preview.allow_strong_duplicate:
+        return ImportApplyResult(0, "failed", "strong-duplicate-after-close", str(backup_path))
+    add_result = command_runner([calibredb_path, "add", str(epub_path), "--with-library", str(library)])
+    if add_result.returncode != 0:
+        return ImportApplyResult(0, "failed", (add_result.stderr or add_result.stdout).strip(), str(backup_path))
+    new_ids = parse_calibredb_add_book_ids(add_result.stdout + "\n" + add_result.stderr)
+    if len(new_ids) != 1:
+        new_ids = sorted(existing_ids_reader(library) - before_ids)
+    if len(new_ids) != 1:
+        return ImportApplyResult(0, "failed", "new-book-id-not-unique", str(backup_path))
+    book_id = new_ids[0]
+    metadata_result = run_metadata_command_with_cover(
+        _import_set_metadata_args(calibredb_path, library, book_id, preview),
+        preview.selected_cover_url,
+        command_runner,
+        cover_bytes=preview.cover_bytes,
+    )
+    if metadata_result.returncode != 0:
+        return ImportApplyResult(book_id, "failed", (metadata_result.stderr or metadata_result.stdout).strip(), str(backup_path))
+    rows = read_rows(matches_path) if matches_storage_exists(matches_path) else []
+    write_rows(matches_path, [*rows, import_preview_to_match_row(book_id, preview)], True)
+    return ImportApplyResult(book_id, "updated", "", str(backup_path))
 
 
 def _title_similarity_score(left: str, right: str) -> int:
