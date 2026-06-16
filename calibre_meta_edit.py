@@ -553,6 +553,52 @@ def _word_overlap_score(left: str, right: str) -> int:
     return int(60 * len(overlap) / max(len(left_words), len(right_words)))
 
 
+def _authors_text(authors: Sequence[str] | str) -> str:
+    if isinstance(authors, str):
+        return authors
+    return " & ".join(authors)
+
+
+def duplicate_score(preview: ImportPreview, book: Book) -> tuple[int, str]:
+    book_authors = _authors_text(book.authors)
+    title_score = (
+        100
+        if normalize_text(preview.title) == normalize_text(book.title)
+        else _word_overlap_score(preview.title, book.title)
+    )
+    author_score = (
+        100
+        if normalize_text(preview.authors) == normalize_text(book_authors)
+        else _word_overlap_score(preview.authors, book_authors)
+    )
+    if author_score >= 80 and title_score >= 80:
+        return 100, "title-author"
+    if author_score >= 50 and title_score >= 50:
+        return 70, "similar-title-author"
+    if title_score >= 80 and author_score < 50:
+        return 55, "same-title-different-author"
+    return 0, ""
+
+
+def find_import_duplicates(preview: ImportPreview, books: Sequence[Book]) -> list[DuplicateCandidate]:
+    duplicates: list[DuplicateCandidate] = []
+    for book in books:
+        score, reason = duplicate_score(preview, book)
+        if score <= 0:
+            continue
+        duplicates.append(
+            DuplicateCandidate(
+                book_id=book.id,
+                title=book.title,
+                authors=_authors_text(book.authors),
+                score=score,
+                reason=reason,
+                strong=score >= 90,
+            )
+        )
+    return sorted(duplicates, key=lambda item: item.score, reverse=True)
+
+
 def _title_similarity_score(left: str, right: str) -> int:
     if normalize_text(left) == normalize_text(right) and left:
         return 70
@@ -2836,6 +2882,14 @@ def read_books(library: str | Path, book_id: int | None = None, limit: int | Non
         authors = [author.strip() for author in (row["authors"] or "").split(" & ") if author.strip()]
         books.append(Book(int(row["id"]), row["title"], authors, row["comment"] or ""))
     return books
+
+
+def find_calibre_import_duplicates(
+    library: str | Path,
+    preview: ImportPreview,
+    books_reader: Callable[[str | Path], list[Book]] = read_books,
+) -> list[DuplicateCandidate]:
+    return find_import_duplicates(preview, books_reader(library))
 
 
 def get_current_comment(library: str | Path, book_id: int) -> str:

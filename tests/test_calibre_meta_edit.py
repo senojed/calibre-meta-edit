@@ -243,6 +243,39 @@ class ImportModelTests(unittest.TestCase):
         self.assertIsNone(candidate.detail)
 
 
+class ImportDuplicateTests(unittest.TestCase):
+    def test_find_import_duplicates_strong_match_title_and_author(self):
+        books = [
+            cme.Book(1, "Str\u00e1\u017ee! Str\u00e1\u017ee!", ["Terry Pratchett"]),
+            cme.Book(2, "Mort", ["Terry Pratchett"]),
+        ]
+        preview = cme.ImportPreview(title="Str\u00e1\u017ee str\u00e1\u017ee", authors="Terry Pratchett")
+
+        duplicates = cme.find_import_duplicates(preview, books)
+
+        self.assertEqual([item.book_id for item in duplicates], [1])
+        self.assertTrue(duplicates[0].strong)
+
+    def test_find_import_duplicates_ignores_same_author_different_title(self):
+        books = [cme.Book(2, "Mort", ["Terry Pratchett"])]
+        preview = cme.ImportPreview(title="Str\u00e1\u017ee str\u00e1\u017ee", authors="Terry Pratchett")
+
+        duplicates = cme.find_import_duplicates(preview, books)
+
+        self.assertEqual(duplicates, [])
+
+    def test_find_calibre_import_duplicates_uses_books_reader(self):
+        preview = cme.ImportPreview(title="Mort", authors="Terry Pratchett")
+
+        duplicates = cme.find_calibre_import_duplicates(
+            "B:\\",
+            preview,
+            books_reader=lambda library: [cme.Book(2, "Mort", ["Terry Pratchett"])],
+        )
+
+        self.assertEqual(duplicates[0].book_id, 2)
+
+
 class ImportCandidateScoringTests(unittest.TestCase):
     def test_score_import_candidates_prefers_title_and_author_match(self):
         signals = [
