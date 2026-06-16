@@ -450,6 +450,19 @@ def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> Impo
     )
 
 
+def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: ImportPreview) -> ImportPreview:
+    if candidate is None:
+        return fallback
+    return replace(
+        fallback,
+        title=candidate.title or fallback.title,
+        authors=candidate.authors or fallback.authors,
+        url=candidate.url,
+        source=candidate.source,
+        work_type=candidate.work_type,
+    )
+
+
 def analyze_epub_for_import(
     path: str | Path,
     library: str | Path,
@@ -464,13 +477,18 @@ def analyze_epub_for_import(
         import_signal_from_epub_text(text),
         import_signal_from_path(epub_path),
     ]
-    candidates = online_lookup(signals) if online_lookup else []
-    preview = choose_initial_import_preview(signals)
+    try:
+        candidates = score_import_candidates(signals, online_lookup(signals)) if online_lookup else lookup_import_candidates(signals)
+    except Exception:
+        candidates = []
+    recommended = candidates[0] if candidates and candidates[0].score >= 80 else None
+    fallback_preview = choose_initial_import_preview(signals)
+    preview = import_preview_from_candidate(recommended, fallback_preview)
     return ImportAnalysis(
         epub_path=str(epub_path),
         signals=signals,
         candidates=candidates,
-        recommended=candidates[0] if candidates else None,
+        recommended=recommended,
         duplicates=[],
         preview=preview,
         messages=[],
@@ -516,6 +534,12 @@ def _best_normalized_authors(signals: Sequence[ImportSourceSignal]) -> str:
     if not author_signals:
         return ""
     return max(author_signals, key=signal_preview_quality).authors
+
+
+def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
+    title = _best_normalized_title(signals)
+    authors = [part.strip() for part in _best_normalized_authors(signals).split("&") if part.strip()]
+    return Book(0, title, authors)
 
 
 def _word_overlap_score(left: str, right: str) -> int:
@@ -573,6 +597,74 @@ def import_lookup_sources(signals: Sequence[ImportSourceSignal]) -> list[str]:
     if "prelozil" in text or "vydalo" in text:
         return ["databazeknih", "legie"]
     return ["databazeknih", "legie", "googlebooks", "openlibrary"]
+
+
+def import_candidate_from_search_candidate(
+    source: str,
+    candidate: Candidate,
+    signals: Sequence[ImportSourceSignal],
+    work_type: str = "",
+) -> ImportCandidate:
+    authors = candidate.text.strip() if source in {"googlebooks", "openlibrary"} else ""
+    return ImportCandidate(
+        source=source,
+        title=candidate.title,
+        authors=authors,
+        url=candidate.url,
+        work_type=work_type,
+        evidence_text=candidate.text,
+    )
+
+
+def _lookup_import_source(
+    source: str,
+    book: Book,
+    signals: Sequence[ImportSourceSignal],
+    fetch: Callable[[str], str],
+) -> list[ImportCandidate]:
+    if source == "databazeknih":
+        html_text = fetch(build_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("databazeknih", item, signals)
+            for item in parse_search_results(html_text)
+        ]
+    if source == "legie":
+        html_text = fetch(build_legie_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("legie", item, signals, "povidka")
+            for item in parse_legie_search_results(html_text)
+        ]
+    if source == "googlebooks":
+        json_text = fetch(build_google_books_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("googlebooks", item, signals)
+            for item in parse_google_books_search_results(json_text)
+        ]
+    if source == "openlibrary":
+        json_text = fetch(build_openlibrary_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("openlibrary", item, signals)
+            for item in parse_openlibrary_search_results(json_text)
+        ]
+    return []
+
+
+def lookup_import_candidates(
+    signals: Sequence[ImportSourceSignal],
+    fetcher: Callable[[str], str] | None = None,
+    sleep_seconds: float = 0.0,
+) -> list[ImportCandidate]:
+    fetch = fetcher or fetch_text
+    book = _signal_book(signals)
+    candidates: list[ImportCandidate] = []
+    for source in import_lookup_sources(signals):
+        try:
+            candidates.extend(_lookup_import_source(source, book, signals, fetch))
+        except Exception:
+            pass
+        if sleep_seconds:
+            time.sleep(sleep_seconds)
+    return score_import_candidates(signals, candidates)
 
 
 def metadata_db_path(library: str | Path) -> Path:

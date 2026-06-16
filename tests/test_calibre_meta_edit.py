@@ -4,6 +4,7 @@ import contextlib
 import csv
 import io
 import inspect
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -323,6 +324,110 @@ class ImportCandidateScoringTests(unittest.TestCase):
         self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
 
 
+class ImportOnlineLookupTests(unittest.TestCase):
+    def test_lookup_import_candidates_uses_existing_parsers(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        google_json = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "abc",
+                        "volumeInfo": {
+                            "title": "Turn Coat",
+                            "authors": ["Jim Butcher"],
+                        },
+                    }
+                ]
+            }
+        )
+        open_json = json.dumps({"docs": []})
+
+        def fetcher(url):
+            if "googleapis" in url:
+                return google_json
+            if "openlibrary" in url:
+                return open_json
+            return ""
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertEqual(candidates[0].source, "googlebooks")
+        self.assertEqual(candidates[0].title, "Turn Coat")
+        self.assertEqual(candidates[0].authors, "Jim Butcher")
+
+    def test_import_candidate_from_databaze_keeps_author_empty_and_uses_evidence(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
+
+        candidate = cme.import_candidate_from_search_candidate("databazeknih", raw, signals)
+
+        self.assertEqual(candidate.authors, "")
+        self.assertEqual(candidate.evidence_text, "volny text bez strukturovaneho autora")
+
+    def test_lookup_import_candidates_single_english_language_calls_all_sources(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        calls = []
+
+        def fetcher(url):
+            calls.append(url)
+            if "googleapis" in url:
+                return json.dumps({"items": []})
+            if "openlibrary" in url:
+                return json.dumps({"docs": []})
+            return ""
+
+        cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertTrue(any("databazeknih.cz" in url for url in calls))
+        self.assertTrue(any("legie.info" in url for url in calls))
+        self.assertTrue(any("googleapis" in url for url in calls))
+        self.assertTrue(any("openlibrary" in url for url in calls))
+
+    def test_lookup_import_candidates_continues_after_source_error(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        google_json = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "abc",
+                        "volumeInfo": {"title": "Turn Coat", "authors": ["Jim Butcher"]},
+                    }
+                ]
+            }
+        )
+
+        def fetcher(url):
+            if "databazeknih.cz" in url:
+                raise OSError("down")
+            if "googleapis" in url:
+                return google_json
+            if "openlibrary" in url:
+                return json.dumps({"docs": []})
+            return ""
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].source, "googlebooks")
+
+    def test_analyze_epub_for_import_keeps_fallback_preview_when_lookup_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: (_ for _ in ()).throw(OSError("down")),
+            )
+
+        self.assertIsNone(analysis.recommended)
+        self.assertEqual(analysis.candidates, [])
+        self.assertEqual(analysis.preview.title, "Turn Coat")
+        self.assertEqual(analysis.preview.authors, "Jim Butcher")
+
+
 class ImportEpubParsingTests(unittest.TestCase):
     def test_filename_signal_cleans_broken_diacritics_and_reversed_author(self):
         signal = cme.import_signal_from_path(Path("C:/inbox/Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"))
@@ -362,6 +467,45 @@ class ImportEpubParsingTests(unittest.TestCase):
         self.assertTrue(cme.is_valid_import_preview(analysis.preview))
         self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a")
         self.assertEqual(analysis.preview.authors, "John Irving\u256a")
+
+    def test_analyze_epub_for_import_ignores_weak_online_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+            candidates = [cme.ImportCandidate("openlibrary", "Storm Front", "Jim Butcher", "https://weak")]
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: candidates,
+            )
+
+        self.assertIsNone(analysis.recommended)
+        self.assertEqual(analysis.preview.title, "Turn Coat")
+        self.assertEqual(analysis.preview.authors, "Jim Butcher")
+        self.assertEqual(analysis.preview.url, "")
+
+    def test_analyze_epub_for_import_reorders_candidates_before_recommendation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+            candidates = [
+                cme.ImportCandidate("openlibrary", "Storm Front", "Jim Butcher", "https://bad"),
+                cme.ImportCandidate("googlebooks", "Turn Coat", "Jim Butcher", "https://good"),
+            ]
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: candidates,
+            )
+
+        self.assertIsNotNone(analysis.recommended)
+        self.assertEqual(analysis.recommended.url, "https://good")
+        self.assertEqual(analysis.candidates[0].url, "https://good")
+        self.assertEqual(analysis.preview.source, "googlebooks")
 
     def test_extract_year_reads_reasonable_publication_year(self):
         self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
