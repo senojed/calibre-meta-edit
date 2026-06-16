@@ -29,6 +29,7 @@ DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
 SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks", "openlibrary")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
+AI_PROVIDER_VALUES = ("off", "ollama")
 REVIEW_EDITABLE_FIELDS = (
     "Rok vydani",
     "Vydavatel",
@@ -43,6 +44,7 @@ AUTO_SETTING_DEFAULTS = {
     "auto_link_audit": True,
     "auto_cover_audit": True,
 }
+AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000}
 
 
 def app_title() -> str:
@@ -225,6 +227,22 @@ def normalize_auto_settings(raw: Any) -> dict[str, bool]:
         key: raw.get(key) if isinstance(raw.get(key), bool) else default
         for key, default in AUTO_SETTING_DEFAULTS.items()
     }
+
+
+def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
+    """Vrati platne nastaveni volitelne AI vrstvy pro import."""
+    ai_raw = raw.get("ai") if isinstance(raw, dict) else {}
+    if not isinstance(ai_raw, dict):
+        ai_raw = {}
+    provider = str(ai_raw.get("provider", AI_SETTING_DEFAULTS["provider"])).strip().casefold()
+    if provider not in AI_PROVIDER_VALUES:
+        provider = str(AI_SETTING_DEFAULTS["provider"])
+    model = str(ai_raw.get("model", AI_SETTING_DEFAULTS["model"])).strip() or str(AI_SETTING_DEFAULTS["model"])
+    try:
+        text_limit = int(ai_raw.get("text_limit", AI_SETTING_DEFAULTS["text_limit"]))
+    except (TypeError, ValueError):
+        text_limit = int(AI_SETTING_DEFAULTS["text_limit"])
+    return {"provider": provider, "model": model, "text_limit": max(500, min(text_limit, 50000))}
 
 
 def auto_workflow_title(auto_settings: dict[str, bool]) -> str:

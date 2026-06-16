@@ -774,6 +774,56 @@ class ImportEpubParsingTests(unittest.TestCase):
         self.assertEqual(analysis.candidates[0].url, "https://good")
         self.assertEqual(analysis.preview.source, "googlebooks")
 
+    def test_disabled_ai_resolver_returns_none(self):
+        resolver = cme.DisabledAIResolver()
+
+        choice = resolver.resolve([], [])
+
+        self.assertIsNone(choice)
+
+    def test_ollama_ai_resolver_returns_none_when_unavailable(self):
+        def failing_requester(_url, _payload, _headers):
+            raise OSError("offline")
+
+        resolver = cme.OllamaAIResolver(requester=failing_requester)
+
+        choice = resolver.resolve([], [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good")])
+
+        self.assertIsNone(choice)
+
+    def test_ai_choice_can_promote_matching_candidate(self):
+        class FixedResolver:
+            def resolve(self, _signals, _candidates):
+                return cme.AIImportChoice("https://good", 90, "match")
+
+        candidates = [
+            cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=70),
+            cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, FixedResolver())
+
+        self.assertEqual(selected.url, "https://good")
+        self.assertIn("ai=90", selected.reason)
+
+    def test_ai_resolver_failure_falls_back_to_scored_candidate(self):
+        class FailingResolver:
+            def resolve(self, _signals, _candidates):
+                raise OSError("offline")
+
+        candidates = [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=80)]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, FailingResolver())
+
+        self.assertEqual(selected.url, "https://good")
+
+    def test_low_score_candidate_is_not_recommended_without_ai_confidence(self):
+        candidates = [cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=10)]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, cme.DisabledAIResolver())
+
+        self.assertIsNone(selected)
+
     def test_extract_year_reads_reasonable_publication_year(self):
         self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
         self.assertEqual(cme.extract_year("bez roku"), "")

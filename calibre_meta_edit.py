@@ -215,6 +215,13 @@ class ImportCandidate:
 
 
 @dataclass(frozen=True)
+class AIImportChoice:
+    url: str
+    confidence: int = 0
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class DuplicateCandidate:
     book_id: int
     title: str
@@ -471,11 +478,100 @@ def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: I
     )
 
 
+class DisabledAIResolver:
+    """Vypnuta AI vrstva: nikdy nevybira kandidata."""
+
+    def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
+        return None
+
+
+class OllamaAIResolver:
+    """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi."""
+
+    def __init__(
+        self,
+        model: str = "llama3",
+        requester: Callable[[str, bytes, dict[str, str]], str] | None = None,
+    ) -> None:
+        self.model = model.strip() or "llama3"
+        self.requester = requester or self._request
+
+    def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
+        compact_candidates = [
+            {
+                "source": candidate.source,
+                "title": candidate.title,
+                "authors": candidate.authors,
+                "url": candidate.url,
+                "score": candidate.score,
+                "reason": candidate.reason,
+                "work_type": candidate.work_type,
+                "evidence_text": candidate.evidence_text[:500],
+            }
+            for candidate in candidates[:5]
+        ]
+        prompt = {
+            "task": "Choose the correct book candidate. Return JSON only: {\"url\":\"...\",\"confidence\":0-100,\"reason\":\"...\"}.",
+            "signals": [signal.__dict__ for signal in signals],
+            "candidates": compact_candidates,
+        }
+        try:
+            raw = self.requester(
+                "http://127.0.0.1:11434/api/generate",
+                json.dumps({"model": self.model, "prompt": json.dumps(prompt, ensure_ascii=False), "stream": False}).encode("utf-8"),
+                {"Content-Type": "application/json"},
+            )
+            data = json.loads(raw)
+            answer = json.loads(str(data.get("response", "{}")))
+            return AIImportChoice(
+                url=str(answer.get("url", "")),
+                confidence=int(answer.get("confidence", 0) or 0),
+                reason=str(answer.get("reason", "")),
+            )
+        except Exception:
+            return None
+
+
+def resolve_import_candidate_with_ai(
+    signals: Sequence[ImportSourceSignal],
+    candidates: Sequence[ImportCandidate],
+    resolver: object | None = None,
+    minimum_score: int = 80,
+) -> ImportCandidate | None:
+    if not candidates:
+        return None
+    ai_resolver = resolver or DisabledAIResolver()
+    try:
+        choice = ai_resolver.resolve(signals, candidates) if hasattr(ai_resolver, "resolve") else None
+    except Exception:
+        choice = None
+    try:
+        confidence = int(getattr(choice, "confidence", 0) or 0)
+    except (TypeError, ValueError):
+        confidence = 0
+    confidence = max(0, min(confidence, 100))
+    if choice and confidence >= 80:
+        for candidate in candidates:
+            if candidate.url == getattr(choice, "url", ""):
+                reason = f"{candidate.reason};ai={confidence}"
+                choice_reason = str(getattr(choice, "reason", ""))
+                if choice_reason:
+                    reason = f"{reason}:{choice_reason}"
+                return replace(candidate, reason=reason)
+    return candidates[0] if candidates[0].score >= minimum_score else None
+
+
 def analyze_epub_for_import(
     path: str | Path,
     library: str | Path,
     settings: dict[str, object],
     online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
+    ai_resolver: object | None = None,
 ) -> ImportAnalysis:
     epub_path = Path(path)
     metadata = read_epub_metadata(epub_path)
@@ -489,7 +585,7 @@ def analyze_epub_for_import(
         candidates = score_import_candidates(signals, online_lookup(signals)) if online_lookup else lookup_import_candidates(signals)
     except Exception:
         candidates = []
-    recommended = candidates[0] if candidates and candidates[0].score >= 80 else None
+    recommended = resolve_import_candidate_with_ai(signals, candidates, ai_resolver)
     fallback_preview = choose_initial_import_preview(signals)
     preview = import_preview_from_candidate(recommended, fallback_preview)
     return ImportAnalysis(

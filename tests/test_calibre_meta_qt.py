@@ -114,6 +114,22 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(settings["auto_link_audit"], True)
         self.assertEqual(settings["auto_cover_audit"], False)
 
+    def test_normalize_ai_settings_defaults_to_off(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_ai_settings({})
+
+        self.assertEqual(settings, {"provider": "off", "model": "llama3", "text_limit": 5000})
+
+    def test_normalize_ai_settings_reads_saved_values(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_ai_settings({"ai": {"provider": "ollama", "model": "mistral", "text_limit": 2000}})
+
+        self.assertEqual(settings["provider"], "ollama")
+        self.assertEqual(settings["model"], "mistral")
+        self.assertEqual(settings["text_limit"], 2000)
+
     def test_auto_workflow_title_reflects_enabled_steps(self):
         import calibre_meta_qt as qt
 
