@@ -3162,5 +3162,57 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class ImportCoverCommandTests(unittest.TestCase):
+    def test_run_metadata_command_with_cover_accepts_cover_bytes(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            cover_field = next(arg for arg in args if arg.startswith("cover:"))
+            self.assertTrue(Path(cover_field.removeprefix("cover:")).exists())
+            return cme.CommandResult(0, "ok", "")
+
+        result = cme.run_metadata_command_with_cover(
+            ["calibredb", "set_metadata", "1"],
+            "",
+            runner,
+            cover_bytes=b"image-bytes",
+            cover_suffix=".jpg",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(any(arg.startswith("cover:") for arg in calls[0]))
+
+    def test_run_metadata_command_with_cover_prefers_cover_bytes_over_url_fetcher(self):
+        calls = []
+        fetch_calls = []
+
+        def runner(args):
+            calls.append(args)
+            cover_field = next(arg for arg in args if arg.startswith("cover:"))
+            cover_path = Path(cover_field.removeprefix("cover:"))
+            self.assertEqual(cover_path.read_bytes(), b"local-image-bytes")
+            return cme.CommandResult(0, "ok", "")
+
+        def cover_fetcher(url):
+            fetch_calls.append(url)
+            return b"remote-image-bytes"
+
+        result = cme.run_metadata_command_with_cover(
+            ["calibredb", "set_metadata", "1"],
+            "https://example.test/cover.png",
+            runner,
+            cover_fetcher=cover_fetcher,
+            cover_bytes=b"local-image-bytes",
+            cover_suffix=".exe",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(fetch_calls, [])
+        self.assertTrue(any(arg.startswith("cover:") for arg in calls[0]))
+        cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
+        self.assertTrue(cover_field.endswith("cover.jpg"))
+
+
 if __name__ == "__main__":
     unittest.main()

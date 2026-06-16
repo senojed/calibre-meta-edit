@@ -3245,20 +3245,27 @@ def run_metadata_command_with_cover(
     selected_cover_url: str,
     runner: Callable[[Sequence[str]], CommandResult],
     cover_fetcher: Callable[[str], bytes] = fetch_binary,
+    cover_bytes: bytes = b"",
+    cover_suffix: str = ".jpg",
 ) -> CommandResult:
     """Spusti calibredb a volitelne prida vybranou obalku z docasneho souboru."""
     cover_url = selected_cover_url.strip()
-    if not cover_url:
+    bytes_to_write = cover_bytes
+    allowed_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+    suffix = cover_suffix.lower() if cover_suffix.lower() in allowed_suffixes else ".jpg"
+    if cover_url and not bytes_to_write:
+        try:
+            bytes_to_write = cover_fetcher(cover_url)
+        except Exception as exc:
+            return CommandResult(1, "", f"cover-fetch-error: {exc}")
+        suffix = _cover_suffix(cover_url)
+    if not cover_url and not bytes_to_write:
         return runner(args)
-    try:
-        cover_bytes = cover_fetcher(cover_url)
-    except Exception as exc:
-        return CommandResult(1, "", f"cover-fetch-error: {exc}")
-    if not cover_bytes:
+    if not bytes_to_write:
         return CommandResult(1, "", "cover-empty")
     with tempfile.TemporaryDirectory() as tmp:
-        cover_path = Path(tmp) / ("cover" + _cover_suffix(cover_url))
-        cover_path.write_bytes(cover_bytes)
+        cover_path = Path(tmp) / ("cover" + suffix)
+        cover_path.write_bytes(bytes_to_write)
         args_with_cover = list(args) + ["--field", "cover:" + str(cover_path)]
         return runner(args_with_cover)
 
