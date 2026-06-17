@@ -281,6 +281,30 @@ def save_app_settings(library: str, theme: str, settings_path: Path | None = Non
     )
 
 
+def run_import_analysis(
+    epub_path: str | Path,
+    library: str | Path,
+    settings: dict[str, object] | None = None,
+    analyze: Callable[..., cme.ImportAnalysis] = cme.analyze_epub_for_import,
+    find_duplicates: Callable[..., list[cme.DuplicateCandidate]] = cme.find_calibre_import_duplicates,
+    ai_resolver: object | None = None,
+) -> cme.ImportAnalysis:
+    """Spusti EPUB analyzu a doplni Calibre duplicity.
+
+    Backend wiring layer: drzi analyze + find_duplicates pohromade,
+    aby Qt vrstva videla jedno volani. Pri selhani hledani duplicit
+    vrati analyzu bez duplicit, aby UI mohlo dat na vyber alespon
+    preview a kandidaty.
+    """
+    settings = settings or {}
+    analysis = analyze(epub_path, library, settings, ai_resolver=ai_resolver)
+    try:
+        duplicates = find_duplicates(library, analysis.preview)
+    except Exception:
+        duplicates = []
+    return replace(analysis, duplicates=duplicates)
+
+
 def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
     """Vybere jen platne nastaveni sloupcu podle aktualni tabulky."""
     if not isinstance(raw, dict):
@@ -346,6 +370,7 @@ if PYSIDE6_AVAILABLE:
         finished = Signal(str, int, str, bool)
         cover_ready = Signal(int, str, str, str, bytes)
         review_ready = Signal(int, int, str, object, str)
+        import_ready = Signal(object, str)
 
 
     class ImportDialog(QDialog):
@@ -556,6 +581,7 @@ if PYSIDE6_AVAILABLE:
             self.bridge.finished.connect(self.finish_background)
             self.bridge.cover_ready.connect(self.finish_cover_preview)
             self.bridge.review_ready.connect(self.finish_review_metadata_preview)
+            self.bridge.import_ready.connect(self.finish_import_analysis)
             self.cover_preview_request_id = 0
             self.review_preview_request_id = 0
             self.review_preview_book_id: int | None = None
@@ -604,6 +630,9 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
+            self.import_button = self._add_button(
+                toolbar, "Import EPUB", self.start_epub_import, "neutralButton", "epub", show_text=False
+            )
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
@@ -1494,6 +1523,103 @@ if PYSIDE6_AVAILABLE:
             args = shared.make_cover_args(self.library_path, selected if selected else None)
             action = shared.make_cover_audit_action(args=args, matches_path=self.matches_path)
             self.run_background("Audit obalek", action, reload_after=True)
+
+        def start_epub_import(
+            self,
+            path: str | None = None,
+            *,
+            analyze: Callable[[str], cme.ImportAnalysis] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+        ) -> None:
+            """Spusti analyzu EPUB importu a po dokonceni otevre ImportDialog.
+
+            `analyze` a `runner` jsou injektovatelne pro testy.
+            Bez nich appka pouzije realnou backend analyzu (vcetne AI nastaveni)
+            na samostatnem vlakne pres `WorkerBridge.import_ready`.
+            Pred otevrenim dialogu na vyber souboru ulozi pracovni data.
+            """
+            interactive = path is None
+            if interactive:
+                if not self.save_csv(show_message=False):
+                    return
+                path = self._choose_epub_file()
+            epub_path = path
+            if not epub_path:
+                return
+            if self.worker_running:
+                QMessageBox.information(self, "Bezi akce", "Pockej, az skonci aktualni akce.")
+                return
+            if analyze is None:
+                analyze = self._build_import_analyze_callable()
+            if runner is None:
+                runner = lambda target: threading.Thread(target=target, daemon=True).start()
+            self.worker_running = True
+            self.set_ui_enabled(False)
+            self.detail_tabs.setCurrentWidget(self.log_tab)
+            self.write_output(f"Import EPUB: analyza {epub_path}...")
+            self.set_status("Import EPUB: analyza")
+
+            def worker() -> None:
+                try:
+                    analysis = analyze(epub_path)
+                    self.bridge.import_ready.emit(analysis, "")
+                except Exception as exc:
+                    self.bridge.import_ready.emit(None, str(exc))
+
+            runner(worker)
+
+        def _build_import_analyze_callable(self) -> Callable[[str], cme.ImportAnalysis]:
+            """Slozi default analyze funkci podle aktualnich AI nastaveni."""
+            library = self.library_path
+            ai_settings = normalize_ai_settings(read_app_settings())
+            provider = str(ai_settings.get("provider", "off"))
+            if provider == "ollama":
+                resolver: object = cme.OllamaAIResolver(str(ai_settings.get("model", "llama3")))
+            else:
+                resolver = cme.DisabledAIResolver()
+            settings = {"epub_text_limit": ai_settings.get("text_limit", 5000)}
+            return lambda epub: run_import_analysis(epub, library, settings, ai_resolver=resolver)
+
+        def _choose_epub_file(self) -> str:
+            path, _filter = QFileDialog.getOpenFileName(
+                self,
+                "Vyber EPUB k importu",
+                "",
+                "EPUB soubory (*.epub);;Vsechny soubory (*.*)",
+            )
+            return path
+
+        def finish_import_analysis(self, analysis: object, error: str) -> None:
+            """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""
+            self.worker_running = False
+            self.set_ui_enabled(True)
+            if analysis is None or error:
+                message = error or "Analyzu se nepodarilo dokoncit."
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            self.write_output("Import EPUB: nahled pripraven")
+            self.set_status("Import EPUB: nahled pripraven")
+            dialog = ImportDialog(analysis, parent=self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
+
+        def run_import_apply(self, preview: cme.ImportPreview, epub_path: Path) -> None:
+            """Docasna no-write zaverecna akce importu pro Task 11.
+
+            Task 12 nahradi telem realnym apply workerem; tady appka jen
+            ukaze, ze data z dialogu prosla, a nic nezapisuje do Calibre.
+            """
+            message = (
+                f"Soubor: {epub_path}\n"
+                f"Nazev: {preview.title}\n"
+                f"Autor/autori: {preview.authors}\n\n"
+                "Zapis do Calibre zatim neni implementovany (Task 12)."
+            )
+            self.write_output(f"Import EPUB: nahled potvrzen\n{message}")
+            self.set_status("Import EPUB: nahled potvrzen")
+            QMessageBox.information(self, "Import EPUB", message)
 
         def run_rebuild(self) -> None:
             message = (

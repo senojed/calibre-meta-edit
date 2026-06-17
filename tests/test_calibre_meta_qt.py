@@ -469,3 +469,366 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(calls[0][0], "Audit obalek")
         self.assertTrue(calls[0][2])
         app.processEvents()
+
+
+class RunImportAnalysisTests(unittest.TestCase):
+    def _make_analysis(self, preview=None):
+        return cme.ImportAnalysis(
+            epub_path="b.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=preview or cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+
+    def test_run_import_analysis_passes_library_and_collects_duplicates(self):
+        import calibre_meta_qt as qt
+
+        analysis = self._make_analysis()
+        duplicate = cme.DuplicateCandidate(
+            book_id=42, title="Kniha", authors="Autor", score=100, reason="title-author"
+        )
+        seen = {}
+
+        def fake_analyze(path, library, settings, ai_resolver=None):
+            seen["analyze"] = (path, library, settings, ai_resolver)
+            return analysis
+
+        def fake_find_duplicates(library, preview):
+            seen["dups"] = (library, preview)
+            return [duplicate]
+
+        result = qt.run_import_analysis(
+            "b.epub",
+            library="L:\\",
+            settings={"epub_text_limit": 1000},
+            analyze=fake_analyze,
+            find_duplicates=fake_find_duplicates,
+        )
+
+        self.assertEqual(seen["analyze"][0], "b.epub")
+        self.assertEqual(seen["analyze"][1], "L:\\")
+        self.assertEqual(seen["analyze"][2], {"epub_text_limit": 1000})
+        self.assertEqual(seen["dups"][0], "L:\\")
+        self.assertEqual(seen["dups"][1].title, "Kniha")
+        self.assertEqual([d.book_id for d in result.duplicates], [42])
+        self.assertEqual(result.preview.title, "Kniha")
+
+    def test_run_import_analysis_swallows_duplicate_error(self):
+        import calibre_meta_qt as qt
+
+        analysis = self._make_analysis()
+
+        def boom(library, preview):
+            raise RuntimeError("calibre offline")
+
+        result = qt.run_import_analysis(
+            "b.epub",
+            library="L:\\",
+            settings={},
+            analyze=lambda *a, **k: analysis,
+            find_duplicates=boom,
+        )
+
+        self.assertEqual(result.duplicates, [])
+        self.assertEqual(result.preview.title, "Kniha")
+
+
+@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
+class QtImportWiringTests(unittest.TestCase):
+    def _make_analysis(self):
+        return cme.ImportAnalysis(
+            epub_path="b.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+
+    def test_toolbar_has_import_epub_button(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertTrue(hasattr(window, "import_button"))
+        self.assertEqual(window.import_button.toolTip(), "Import EPUB")
+        app.processEvents()
+
+    def test_start_epub_import_skips_when_no_path_selected(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analyze_calls = []
+
+        def fake_runner(target):
+            analyze_calls.append("runner")
+            target()
+
+        with (
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(qt.QFileDialog, "getOpenFileName", return_value=("", "")),
+        ):
+            window.start_epub_import(analyze=lambda p: analyze_calls.append("analyze"), runner=fake_runner)
+
+        self.assertEqual(analyze_calls, [])
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_start_epub_import_opens_dialog_with_analysis_on_success(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        captured = {}
+
+        class FakeDialog:
+            def __init__(self, passed_analysis, parent=None):
+                captured["analysis"] = passed_analysis
+                captured["parent"] = parent
+
+            def exec(self):
+                captured["exec"] = True
+                return 0
+
+        def fake_runner(target):
+            target()
+
+        with patch.object(qt, "ImportDialog", FakeDialog):
+            window.start_epub_import(
+                "book.epub",
+                analyze=lambda path: analysis,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        self.assertIs(captured.get("analysis"), analysis)
+        self.assertIs(captured.get("parent"), window)
+        self.assertTrue(captured.get("exec"))
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_start_epub_import_shows_warning_on_analysis_failure(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        def boom(path):
+            raise RuntimeError("rozbity epub")
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "ImportDialog") as dialog_class,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.start_epub_import("book.epub", analyze=boom, runner=fake_runner)
+            app.processEvents()
+
+        dialog_class.assert_not_called()
+        warning.assert_called_once()
+        self.assertIn("rozbity epub", warning.call_args.args[2])
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_default_import_analyze_uses_ollama_resolver_and_text_limit(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        captured = {}
+
+        def fake_run_import_analysis(epub, library, settings, ai_resolver=None):
+            captured["epub"] = epub
+            captured["library"] = library
+            captured["settings"] = settings
+            captured["resolver"] = ai_resolver
+            return analysis
+
+        def fake_runner(target):
+            target()
+
+        ai_payload = {"ai": {"provider": "ollama", "model": "llama-test", "text_limit": 2222}}
+        with (
+            patch.object(qt, "run_import_analysis", side_effect=fake_run_import_analysis),
+            patch.object(qt, "read_app_settings", return_value=ai_payload),
+            patch.object(qt, "ImportDialog"),
+        ):
+            window.start_epub_import("kniha.epub", runner=fake_runner)
+            app.processEvents()
+
+        self.assertEqual(captured["epub"], "kniha.epub")
+        self.assertEqual(captured["settings"], {"epub_text_limit": 2222})
+        self.assertIsInstance(captured["resolver"], cme.OllamaAIResolver)
+        self.assertEqual(captured["resolver"].model, "llama-test")
+        app.processEvents()
+
+    def test_default_import_analyze_uses_disabled_resolver_when_ai_off(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        captured = {}
+
+        def fake_run_import_analysis(epub, library, settings, ai_resolver=None):
+            captured["resolver"] = ai_resolver
+            captured["settings"] = settings
+            return analysis
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "run_import_analysis", side_effect=fake_run_import_analysis),
+            patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "off"}}),
+            patch.object(qt, "ImportDialog"),
+        ):
+            window.start_epub_import("kniha.epub", runner=fake_runner)
+            app.processEvents()
+
+        self.assertIsInstance(captured["resolver"], cme.DisabledAIResolver)
+        self.assertEqual(captured["settings"], {"epub_text_limit": 5000})
+        app.processEvents()
+
+    def test_interactive_import_saves_csv_before_choosing_file(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        order = []
+
+        def fake_save_csv(show_message=False):
+            order.append("save_csv")
+            return True
+
+        def fake_open(*args, **kwargs):
+            order.append("open_file")
+            return ("", "")
+
+        with (
+            patch.object(window, "save_csv", side_effect=fake_save_csv),
+            patch.object(qt.QFileDialog, "getOpenFileName", side_effect=fake_open),
+        ):
+            window.start_epub_import()
+
+        self.assertEqual(order, ["save_csv", "open_file"])
+        app.processEvents()
+
+    def test_interactive_import_aborts_when_save_csv_fails(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(window, "save_csv", return_value=False) as save_csv,
+            patch.object(qt.QFileDialog, "getOpenFileName") as open_file,
+        ):
+            window.start_epub_import()
+
+        save_csv.assert_called_once()
+        open_file.assert_not_called()
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_accepted_import_dialog_calls_no_write_apply_stub(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        edited_preview = cme.ImportPreview(title="Upraveno", authors="Editor")
+
+        class FakeDialog:
+            def __init__(self, _analysis, parent=None):
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def preview(self):
+                return edited_preview
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(window, "run_import_apply") as apply_stub,
+        ):
+            window.start_epub_import(
+                "kniha.epub",
+                analyze=lambda path: analysis,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        apply_stub.assert_called_once()
+        called_preview, called_path = apply_stub.call_args.args
+        self.assertIs(called_preview, edited_preview)
+        self.assertEqual(Path(str(called_path)), Path("b.epub"))
+        app.processEvents()
+
+    def test_rejected_import_dialog_does_not_call_apply_stub(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+
+        class FakeDialog:
+            def __init__(self, _analysis, parent=None):
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Rejected
+
+            def preview(self):
+                raise AssertionError("preview should not be read on rejection")
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(window, "run_import_apply") as apply_stub,
+        ):
+            window.start_epub_import(
+                "kniha.epub",
+                analyze=lambda path: analysis,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        apply_stub.assert_not_called()
+        app.processEvents()
