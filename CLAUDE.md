@@ -39,11 +39,12 @@ Note: `python -m unittest discover` without `-s tests` may not discover tests in
 * Task 9: Add optional Ollama import resolver
 * Task 10: Qt Import Dialog Skeleton
 * Task 11: Qt Import Button And Analysis Worker
-* Latest clean Task 11 commit: `09c579b Add EPUB import button and analysis worker`
+* Task 12: Qt Apply Worker And Import Commit
+* Latest clean Task 12 commit: `1ad29fe Add Qt apply worker and import commit`
 
 ## Next task
 
-Task 12: Qt Apply Worker And Import Commit.
+Task 13: Preferences UI.
 
 ## Reporting format
 
