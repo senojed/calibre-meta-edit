@@ -502,6 +502,19 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(self.startup_preview_check, 2, 1, 1, 3)
             form.addWidget(self.auto_link_audit_check, 3, 1, 1, 3)
             form.addWidget(self.auto_cover_audit_check, 4, 1, 1, 3)
+
+            ai_settings = normalize_ai_settings(read_app_settings())
+            form.addWidget(QLabel("AI provider importu"), 5, 0)
+            self.ai_provider_combo = QComboBox()
+            self.ai_provider_combo.addItems(AI_PROVIDER_VALUES)
+            self.ai_provider_combo.setCurrentText(str(ai_settings["provider"]))
+            form.addWidget(self.ai_provider_combo, 5, 1, 1, 3)
+            form.addWidget(QLabel("Ollama model"), 6, 0)
+            self.ai_model_edit = QLineEdit(str(ai_settings["model"]))
+            form.addWidget(self.ai_model_edit, 6, 1, 1, 3)
+            form.addWidget(QLabel("EPUB text limit"), 7, 0)
+            self.ai_text_limit_edit = QLineEdit(str(ai_settings["text_limit"]))
+            form.addWidget(self.ai_text_limit_edit, 7, 1, 1, 3)
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -546,6 +559,12 @@ if PYSIDE6_AVAILABLE:
             settings["startup_preview"] = self.startup_preview_check.isChecked()
             settings["auto_link_audit"] = self.auto_link_audit_check.isChecked()
             settings["auto_cover_audit"] = self.auto_cover_audit_check.isChecked()
+            ai_raw = {
+                "provider": self.ai_provider_combo.currentText(),
+                "model": self.ai_model_edit.text(),
+                "text_limit": self.ai_text_limit_edit.text(),
+            }
+            settings["ai"] = normalize_ai_settings({"ai": ai_raw})
             shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
             self.parent_window.library_path = library
             self.parent_window.theme = normalize_theme(self.theme_combo.currentText())

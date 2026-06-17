@@ -471,6 +471,129 @@ class QtImportTests(unittest.TestCase):
         app.processEvents()
 
 
+@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
+class PreferencesDialogAITests(unittest.TestCase):
+    def _open_dialog(self, qt, window):
+        return qt.PreferencesDialog(window)
+
+    def _patch_settings_path(self, qt, tmp_path):
+        return patch.multiple(
+            qt.shared,
+            SETTINGS_PATH=tmp_path,
+        )
+
+    def test_preferences_dialog_exposes_ai_import_widgets(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+
+                self.assertTrue(hasattr(dialog, "ai_provider_combo"))
+                self.assertTrue(hasattr(dialog, "ai_model_edit"))
+                self.assertTrue(hasattr(dialog, "ai_text_limit_edit"))
+                self.assertEqual(
+                    [dialog.ai_provider_combo.itemText(i) for i in range(dialog.ai_provider_combo.count())],
+                    list(qt.AI_PROVIDER_VALUES),
+                )
+        app.processEvents()
+
+    def test_preferences_dialog_defaults_match_normalize_ai_settings(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        defaults = qt.normalize_ai_settings({})
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+
+                self.assertEqual(dialog.ai_provider_combo.currentText(), str(defaults["provider"]))
+                self.assertEqual(dialog.ai_model_edit.text(), str(defaults["model"]))
+                self.assertEqual(dialog.ai_text_limit_edit.text(), str(defaults["text_limit"]))
+        app.processEvents()
+
+    def test_save_library_persists_ollama_provider_model_and_text_limit(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                dialog.library_edit.setText("B:\\lib")
+                dialog.ai_provider_combo.setCurrentText("ollama")
+                dialog.ai_model_edit.setText("llama-prefs")
+                dialog.ai_text_limit_edit.setText("12345")
+
+                dialog.save_library()
+
+                saved = json.loads(tmp_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["ai"]["provider"], "ollama")
+                self.assertEqual(saved["ai"]["model"], "llama-prefs")
+                self.assertEqual(saved["ai"]["text_limit"], 12345)
+        app.processEvents()
+
+    def test_save_library_persists_disabled_provider(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                dialog.library_edit.setText("B:\\lib")
+                dialog.ai_provider_combo.setCurrentText("off")
+                dialog.ai_model_edit.setText("llama-keep")
+                dialog.ai_text_limit_edit.setText("7000")
+
+                dialog.save_library()
+
+                saved = json.loads(tmp_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["ai"]["provider"], "off")
+                self.assertEqual(saved["ai"]["model"], "llama-keep")
+                self.assertEqual(saved["ai"]["text_limit"], 7000)
+        app.processEvents()
+
+    def test_save_library_normalizes_empty_text_limit_to_default(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        defaults = qt.normalize_ai_settings({})
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                dialog.library_edit.setText("B:\\lib")
+                dialog.ai_provider_combo.setCurrentText("ollama")
+                dialog.ai_model_edit.setText("")
+                dialog.ai_text_limit_edit.setText("not-a-number")
+
+                dialog.save_library()
+
+                saved = json.loads(tmp_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["ai"]["model"], str(defaults["model"]))
+                self.assertEqual(saved["ai"]["text_limit"], int(defaults["text_limit"]))
+        app.processEvents()
+
+
 class RunImportAnalysisTests(unittest.TestCase):
     def _make_analysis(self, preview=None):
         return cme.ImportAnalysis(
