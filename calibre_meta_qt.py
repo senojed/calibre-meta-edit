@@ -654,6 +654,7 @@ if PYSIDE6_AVAILABLE:
             self.import_button = self._add_button(
                 toolbar, "Import EPUB", self.start_epub_import, "neutralButton", "epub", show_text=False
             )
+            self.update_import_button_enabled(True)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
@@ -1835,6 +1836,7 @@ if PYSIDE6_AVAILABLE:
             self.set_ui_enabled(True)
             if reload_after and result == 0:
                 self.load_csv(show_message=False)
+            self.update_import_button_enabled(True)
             suffix = "OK" if result == 0 else "CHYBA"
             self.write_output(f"{title}: {suffix}\n\n{text or '(bez vystupu)'}")
             self.set_status(f"{title}: {suffix}. {shared.status_summary(self.rows)}")
@@ -1923,6 +1925,12 @@ if PYSIDE6_AVAILABLE:
                 button.setEnabled(enabled)
             if enabled:
                 self.on_selection_changed()
+            self.update_import_button_enabled(enabled)
+
+        def update_import_button_enabled(self, ui_enabled: bool = True) -> None:
+            """Import EPUB je dostupny vzdy, kdyz nebezi background akce."""
+            if hasattr(self, "import_button"):
+                self.import_button.setEnabled(ui_enabled and not self.worker_running)
 
         def write_output(self, text: str) -> None:
             self.output.setPlainText(text)

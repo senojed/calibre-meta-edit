@@ -684,6 +684,59 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.import_button.toolTip(), "Import EPUB")
         app.processEvents()
 
+    def test_import_epub_button_enabled_on_fresh_idle_window_without_rows(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = []
+        window.refresh_table()
+
+        self.assertFalse(window.worker_running)
+        self.assertEqual(window.selected_book_ids(), set())
+        self.assertTrue(window.import_button.isEnabled())
+        app.processEvents()
+
+    def test_import_epub_button_reenabled_after_ui_enable_cycle_without_selection(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = []
+        window.refresh_table()
+
+        window.set_ui_enabled(False)
+        self.assertFalse(window.import_button.isEnabled())
+        window.set_ui_enabled(True)
+
+        self.assertEqual(window.selected_book_ids(), set())
+        self.assertTrue(window.import_button.isEnabled())
+        app.processEvents()
+
+    def test_import_epub_button_reenabled_after_background_reload_cycle(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = []
+        window.refresh_table()
+        window.worker_running = True
+        window.set_ui_enabled(False)
+
+        with patch.object(window, "load_csv", side_effect=lambda show_message=False: window.refresh_table()):
+            window.finish_background("Nacist z Calibre", 0, "", reload_after=True)
+
+        self.assertFalse(window.worker_running)
+        self.assertEqual(window.selected_book_ids(), set())
+        self.assertTrue(window.import_button.isEnabled())
+        app.processEvents()
+
     def test_start_epub_import_skips_when_no_path_selected(self):
         from PySide6.QtWidgets import QApplication
         import sys
