@@ -652,7 +652,7 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
             self.import_button = self._add_button(
-                toolbar, "Import EPUB", self.start_epub_import, "neutralButton", "epub", show_text=False
+                toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "epub", show_text=False
             )
             self.update_import_button_enabled(True)
             toolbar.addSpacing(10)
@@ -685,7 +685,7 @@ if PYSIDE6_AVAILABLE:
                 button.setIcon(self.icon_for(icon))
             if object_name:
                 button.setObjectName(object_name)
-            button.clicked.connect(callback)
+            button.clicked.connect(lambda _checked=False, callback=callback: callback())
             layout.addWidget(button)
             self.buttons.append(button)
             return button

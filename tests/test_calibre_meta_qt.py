@@ -737,6 +737,76 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertTrue(window.import_button.isEnabled())
         app.processEvents()
 
+    def test_clicking_visible_import_epub_button_invokes_start_epub_import(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with patch.object(window, "start_epub_import") as start_import:
+            window.import_button.click()
+
+        start_import.assert_called_once_with()
+        app.processEvents()
+
+    def test_clicking_visible_import_epub_button_uses_file_picker(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "_choose_epub_file", return_value="") as choose_file,
+        ):
+            window.import_button.click()
+
+        choose_file.assert_called_once_with()
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_clicking_import_epub_cancel_without_rows_exits_cleanly(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.rows = []
+        window.refresh_table()
+
+        with (
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "_choose_epub_file", return_value=""),
+        ):
+            window.import_button.click()
+
+        self.assertEqual(window.selected_book_ids(), set())
+        self.assertFalse(window.worker_running)
+        self.assertTrue(window.import_button.isEnabled())
+        app.processEvents()
+
+    def test_import_epub_click_still_works_after_ui_enable_cycle(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.set_ui_enabled(False)
+        self.assertFalse(window.import_button.isEnabled())
+        window.set_ui_enabled(True)
+
+        with patch.object(window, "start_epub_import") as start_import:
+            window.import_button.click()
+
+        start_import.assert_called_once_with()
+        app.processEvents()
+
     def test_start_epub_import_skips_when_no_path_selected(self):
         from PySide6.QtWidgets import QApplication
         import sys
