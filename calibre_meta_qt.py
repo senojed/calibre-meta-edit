@@ -371,6 +371,7 @@ if PYSIDE6_AVAILABLE:
         cover_ready = Signal(int, str, str, str, bytes)
         review_ready = Signal(int, int, str, object, str)
         import_ready = Signal(object, str)
+        apply_ready = Signal(object, str)
 
 
     class ImportDialog(QDialog):
@@ -582,6 +583,7 @@ if PYSIDE6_AVAILABLE:
             self.bridge.cover_ready.connect(self.finish_cover_preview)
             self.bridge.review_ready.connect(self.finish_review_metadata_preview)
             self.bridge.import_ready.connect(self.finish_import_analysis)
+            self.bridge.apply_ready.connect(self.finish_import_apply)
             self.cover_preview_request_id = 0
             self.review_preview_request_id = 0
             self.review_preview_book_id: int | None = None
@@ -1605,20 +1607,93 @@ if PYSIDE6_AVAILABLE:
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
 
-        def run_import_apply(self, preview: cme.ImportPreview, epub_path: Path) -> None:
-            """Docasna no-write zaverecna akce importu pro Task 11.
+        def run_import_apply(
+            self,
+            preview: cme.ImportPreview,
+            epub_path: Path,
+            *,
+            apply_func: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+            allow_force: bool = True,
+        ) -> None:
+            """Spusti realny zapis EPUB importu pres backend apply_import_preview.
 
-            Task 12 nahradi telem realnym apply workerem; tady appka jen
-            ukaze, ze data z dialogu prosla, a nic nezapisuje do Calibre.
+            Provadi se na samostatnem vlakne; vysledek se vraci pres
+            `WorkerBridge.apply_ready` na UI thread. `apply_func` a `runner`
+            jsou injektovatelne pro testy, aby se nesahalo na Calibre.
             """
-            message = (
-                f"Soubor: {epub_path}\n"
-                f"Nazev: {preview.title}\n"
-                f"Autor/autori: {preview.authors}\n\n"
-                "Zapis do Calibre zatim neni implementovany (Task 12)."
-            )
-            self.write_output(f"Import EPUB: nahled potvrzen\n{message}")
-            self.set_status("Import EPUB: nahled potvrzen")
+            if not cme.is_valid_import_preview(preview):
+                QMessageBox.warning(
+                    self,
+                    "Import EPUB",
+                    "Chybi nazev nebo autor; import zruseny.",
+                )
+                return
+            if self.worker_running:
+                QMessageBox.information(self, "Bezi akce", "Pockej, az skonci aktualni akce.")
+                return
+            if apply_func is None:
+                calibredb_path = cme.find_calibredb()
+                if not calibredb_path:
+                    QMessageBox.warning(
+                        self,
+                        "Import EPUB",
+                        "Nepodarilo se najit calibredb. Zapis zruseny.",
+                    )
+                    return
+                library = self.library_path
+                matches_path = self.matches_path
+                apply_func = lambda prev, ep: cme.apply_import_preview(
+                    prev,
+                    ep,
+                    library=library,
+                    calibredb_path=calibredb_path,
+                    quit_func=lambda force: shared.quit_calibre(allow_force=force),
+                    allow_force=allow_force,
+                    matches_path=matches_path,
+                )
+            if runner is None:
+                runner = lambda target: threading.Thread(target=target, daemon=True).start()
+
+            self.worker_running = True
+            self.set_ui_enabled(False)
+            self.detail_tabs.setCurrentWidget(self.log_tab)
+            self.write_output(f"Import EPUB: zapis {epub_path}...")
+            self.set_status("Import EPUB: zapis")
+
+            def worker() -> None:
+                try:
+                    result = apply_func(preview, epub_path)
+                    self.bridge.apply_ready.emit(result, "")
+                except Exception as exc:
+                    self.bridge.apply_ready.emit(None, str(exc))
+
+            runner(worker)
+
+        def finish_import_apply(self, result: object, error: str) -> None:
+            """Zpracuje vysledek apply workeru: dialog, refresh tabulky."""
+            self.worker_running = False
+            self.set_ui_enabled(True)
+            if error or result is None:
+                message = error or "Zapis se nepodaril."
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            status = getattr(result, "status", "")
+            backup = getattr(result, "backup_path", "") or "bez zalohy"
+            if status != "updated":
+                reason = getattr(result, "error", "") or "neznama chyba"
+                message = f"Zapis selhal: {reason}\nZaloha: {backup}"
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            book_id = getattr(result, "book_id", 0)
+            message = f"Kniha {book_id} byla naimportovana.\nZaloha: {backup}"
+            self.write_output(f"Import EPUB: OK\n{message}")
+            self.set_status("Import EPUB: OK")
+            self.load_csv(show_message=False)
             QMessageBox.information(self, "Import EPUB", message)
 
         def run_rebuild(self) -> None:

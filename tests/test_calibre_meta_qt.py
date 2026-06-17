@@ -797,6 +797,209 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(Path(str(called_path)), Path("b.epub"))
         app.processEvents()
 
+    def test_run_import_apply_blocks_invalid_preview(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        apply_calls = []
+
+        def fake_runner(target):
+            apply_calls.append("runner")
+            target()
+
+        def fake_apply(prev, ep):
+            apply_calls.append("apply")
+            return cme.ImportApplyResult(0, "updated")
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            window.run_import_apply(
+                cme.ImportPreview(title="", authors=""),
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+
+        warning.assert_called_once()
+        self.assertEqual(apply_calls, [])
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_success_reloads_csv_and_restores_ui(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
+        captured = {}
+
+        def fake_apply(prev, ep):
+            captured["preview"] = prev
+            captured["path"] = ep
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv") as load_csv,
+            patch.object(qt.QMessageBox, "information") as info,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        self.assertIs(captured["preview"], preview)
+        self.assertEqual(captured["path"], Path("kniha.epub"))
+        load_csv.assert_called_once_with(show_message=False)
+        info.assert_called_once()
+        warning.assert_not_called()
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_failed_status_shows_warning_and_no_reload(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(
+            book_id=0, status="failed", error="strong-duplicate", backup_path="C:/back.db"
+        )
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv") as load_csv,
+            patch.object(qt.QMessageBox, "information") as info,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        load_csv.assert_not_called()
+        info.assert_not_called()
+        warning.assert_called_once()
+        self.assertIn("strong-duplicate", warning.call_args.args[2])
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_exception_shows_warning_and_restores_ui(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+
+        def boom(prev, ep):
+            raise RuntimeError("calibredb chybi")
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv") as load_csv,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=boom,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        load_csv.assert_not_called()
+        warning.assert_called_once()
+        self.assertIn("calibredb chybi", warning.call_args.args[2])
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_default_path_uses_apply_import_preview_and_quit_calibre(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        captured = {}
+
+        def fake_apply_import_preview(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return cme.ImportApplyResult(book_id=11, status="updated", backup_path="b.db")
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(cme, "apply_import_preview", side_effect=fake_apply_import_preview),
+            patch.object(cme, "find_calibredb", return_value="C:/Calibre2/calibredb.exe"),
+            patch.object(window, "load_csv"),
+            patch.object(qt.QMessageBox, "information"),
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                runner=fake_runner,
+                allow_force=False,
+            )
+            app.processEvents()
+
+        kwargs = captured["kwargs"]
+        self.assertEqual(captured["args"][0], preview)
+        self.assertEqual(captured["args"][1], Path("kniha.epub"))
+        self.assertEqual(kwargs["calibredb_path"], "C:/Calibre2/calibredb.exe")
+        self.assertEqual(kwargs["allow_force"], False)
+        self.assertTrue(callable(kwargs["quit_func"]))
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_warns_when_calibredb_missing(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+
+        with (
+            patch.object(cme, "find_calibredb", return_value=None),
+            patch.object(cme, "apply_import_preview") as apply_call,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(preview, Path("kniha.epub"))
+
+        apply_call.assert_not_called()
+        warning.assert_called_once()
+        self.assertFalse(window.worker_running)
+        app.processEvents()
+
     def test_rejected_import_dialog_does_not_call_apply_stub(self):
         from PySide6.QtWidgets import QApplication, QDialog
         import sys
