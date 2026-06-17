@@ -325,8 +325,8 @@ def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPixmap
+    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
+    from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -344,6 +344,7 @@ if PYSIDE6_AVAILABLE:
         QMenu,
         QMessageBox,
         QListWidget,
+        QListWidgetItem,
         QStyleFactory,
         QPushButton,
         QSizePolicy,
@@ -402,8 +403,16 @@ if PYSIDE6_AVAILABLE:
             left.addWidget(QLabel("Kandidati"))
             self.candidates_list = QListWidget()
             for candidate in analysis.candidates:
-                self.candidates_list.addItem(f"{candidate.score} {candidate.source}: {candidate.title} / {candidate.authors}")
+                item = QListWidgetItem(self.candidate_display_text(candidate))
+                item.setData(Qt.ItemDataRole.UserRole, candidate)
+                self.candidates_list.addItem(item)
             left.addWidget(self.candidates_list, stretch=1)
+            self.use_candidate_button = QPushButton("Pouzit kandidata")
+            self.use_candidate_button.setEnabled(False)
+            self.use_candidate_button.clicked.connect(self.apply_selected_candidate)
+            self.candidates_list.currentItemChanged.connect(lambda _current, _previous: self.update_candidate_button_enabled())
+            self.candidates_list.itemDoubleClicked.connect(lambda _item: self.apply_selected_candidate())
+            left.addWidget(self.use_candidate_button)
 
             left.addWidget(QLabel("Duplicity"))
             self.duplicates_list = QListWidget()
@@ -429,7 +438,12 @@ if PYSIDE6_AVAILABLE:
             right.addRow("Rok vydani", self.year_edit)
             right.addRow("Vydavatel", self.publisher_edit)
             right.addRow("Tagy", self.tags_edit)
-            right.addRow("Odkaz", self.url_edit)
+            link_row = QHBoxLayout()
+            link_row.addWidget(self.url_edit, stretch=1)
+            self.open_link_button = QPushButton("Otevrit odkaz")
+            self.open_link_button.clicked.connect(self.open_current_url)
+            link_row.addWidget(self.open_link_button)
+            right.addRow("Odkaz", link_row)
             right.addRow("Komentar", self.comment_edit)
 
             buttons = QHBoxLayout()
@@ -441,9 +455,55 @@ if PYSIDE6_AVAILABLE:
             buttons.addWidget(self.cancel_button)
             self.cancel_button.clicked.connect(self.reject)
             self.import_button.clicked.connect(self.accept)
+            self.url_edit.textChanged.connect(self.update_open_link_enabled)
             self.title_edit.textChanged.connect(self.update_import_enabled)
             self.authors_edit.textChanged.connect(self.update_import_enabled)
+            self.update_candidate_button_enabled()
+            self.update_open_link_enabled()
             self.update_import_enabled()
+
+        def candidate_display_text(self, candidate: cme.ImportCandidate) -> str:
+            return f"{candidate.score}% {candidate.source}: {candidate.title} / {candidate.authors}"
+
+        def selected_candidate(self) -> cme.ImportCandidate | None:
+            item = self.candidates_list.currentItem()
+            candidate = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            return candidate if isinstance(candidate, cme.ImportCandidate) else None
+
+        def update_candidate_button_enabled(self) -> None:
+            self.use_candidate_button.setEnabled(self.selected_candidate() is not None)
+
+        def update_open_link_enabled(self) -> None:
+            self.open_link_button.setEnabled(bool(self.url_edit.text().strip()))
+
+        def open_current_url(self) -> None:
+            url = self.url_edit.text().strip()
+            if not url:
+                return
+            QDesktopServices.openUrl(QUrl(url))
+
+        def apply_selected_candidate(self) -> None:
+            candidate = self.selected_candidate()
+            if candidate is None:
+                return
+            if candidate.title:
+                self.title_edit.setText(candidate.title)
+            if candidate.authors:
+                self.authors_edit.setText(candidate.authors)
+            if candidate.url:
+                self.url_edit.setText(candidate.url)
+            detail = candidate.detail
+            if detail is not None:
+                if detail.published_year:
+                    self.year_edit.setText(detail.published_year)
+                if detail.publisher:
+                    self.publisher_edit.setText(detail.publisher)
+                if detail.tags:
+                    self.tags_edit.setText(", ".join(detail.tags))
+                if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
+                    self.comment_edit.setHtml(cme.format_enriched_comment(candidate.url, detail))
+            self.update_import_enabled()
+            self.update_open_link_enabled()
 
         def update_import_enabled(self) -> None:
             self.import_button.setEnabled(bool(self.title_edit.text().strip() and self.authors_edit.text().strip()))

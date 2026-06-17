@@ -358,6 +358,207 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(preview.comment, "Komentar")
         app.processEvents()
 
+    def test_import_dialog_candidate_score_display_includes_percent(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://x", score=42)],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        self.assertTrue(dialog.candidates_list.item(0).text().startswith("42% databazeknih:"))
+        app.processEvents()
+
+    def test_import_dialog_low_score_candidate_can_be_manually_applied(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        detail = cme.BookDetailMetadata(published_year="1990", publisher="Talpress", tags=["Fantasy", "Humor"])
+        candidate = cme.ImportCandidate("databazeknih", "Kandidat", "Autor", "https://x", score=12, detail=detail)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Puvodni", authors="Puvodni autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        dialog.candidates_list.setCurrentRow(0)
+
+        dialog.apply_selected_candidate()
+
+        self.assertEqual(dialog.title_edit.text(), "Kandidat")
+        self.assertEqual(dialog.authors_edit.text(), "Autor")
+        self.assertEqual(dialog.url_edit.text(), "https://x")
+        self.assertEqual(dialog.year_edit.text(), "1990")
+        self.assertEqual(dialog.publisher_edit.text(), "Talpress")
+        self.assertEqual(dialog.tags_edit.text(), "Fantasy, Humor")
+        app.processEvents()
+
+    def test_import_dialog_double_clicking_candidate_populates_preview_fields(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        item = dialog.candidates_list.item(0)
+        dialog.candidates_list.setCurrentItem(item)
+
+        dialog.candidates_list.itemDoubleClicked.emit(item)
+
+        self.assertEqual(dialog.title_edit.text(), "Manual")
+        self.assertEqual(dialog.authors_edit.text(), "Autor")
+        self.assertEqual(dialog.url_edit.text(), "https://manual")
+        app.processEvents()
+
+    def test_import_dialog_use_candidate_button_state_and_click(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        self.assertFalse(dialog.use_candidate_button.isEnabled())
+        dialog.candidates_list.setCurrentRow(0)
+        self.assertTrue(dialog.use_candidate_button.isEnabled())
+        dialog.use_candidate_button.click()
+
+        self.assertEqual(dialog.title_edit.text(), "Manual")
+        self.assertEqual(dialog.url_edit.text(), "https://manual")
+        app.processEvents()
+
+    def test_import_dialog_open_link_button_state_tracks_url(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        self.assertFalse(dialog.open_link_button.isEnabled())
+        dialog.url_edit.setText("https://example.test/book")
+        self.assertTrue(dialog.open_link_button.isEnabled())
+        app.processEvents()
+
+    def test_import_dialog_open_link_button_opens_current_url(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(url="https://example.test/book"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        with patch.object(qt.QDesktopServices, "openUrl", return_value=True) as open_url:
+            dialog.open_link_button.click()
+
+        opened = open_url.call_args.args[0]
+        self.assertIsInstance(opened, QUrl)
+        self.assertEqual(opened.toString(), "https://example.test/book")
+        app.processEvents()
+
+    def test_import_dialog_open_link_ignores_empty_url(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        with patch.object(qt.QDesktopServices, "openUrl") as open_url:
+            dialog.open_current_url()
+
+        open_url.assert_not_called()
+        app.processEvents()
+
+    def test_import_dialog_using_candidate_does_not_accept_or_apply(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        dialog.candidates_list.setCurrentRow(0)
+
+        with patch.object(dialog, "accept") as accept:
+            dialog.use_candidate_button.click()
+
+        accept.assert_not_called()
+        self.assertEqual(dialog.title_edit.text(), "Manual")
+        app.processEvents()
+
     def test_qt_startup_preview_uses_single_shot_timer(self):
         import calibre_meta_qt as qt
 
