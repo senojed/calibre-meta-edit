@@ -40,11 +40,12 @@ Note: `python -m unittest discover` without `-s tests` may not discover tests in
 * Task 10: Qt Import Dialog Skeleton
 * Task 11: Qt Import Button And Analysis Worker
 * Task 12: Qt Apply Worker And Import Commit
-* Latest clean Task 12 commit: `1ad29fe Add Qt apply worker and import commit`
+* Task 13: Preferences UI
+* Latest clean Task 13 commit: `7d218f8 Add AI import settings to Preferences UI`
 
 ## Next task
 
-Task 13: Preferences UI.
+Awaiting next task assignment.
 
 ## Reporting format
 
