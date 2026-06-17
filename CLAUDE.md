@@ -43,6 +43,39 @@ Note: `python -m unittest discover` without `-s tests` may not discover tests in
 * Task 13: Preferences UI
 * Latest clean Task 13 commit: `7d218f8 Add AI import settings to Preferences UI`
 
+### Post-Task 13 smoke-test/UX fixes
+
+* Fix disabled EPUB import toolbar button
+* Fix EPUB import toolbar click
+* Improve EPUB import dialog candidate UX
+* Mark imported EPUB rows for review
+* Show review rows after EPUB import
+
+## Final smoke test state
+
+EPUB import flow was manually smoke tested.
+
+Verified manually:
+
+* Preferences
+* Import EPUB button
+* file picker
+* analysis dialog
+* candidate selection including low-score candidates
+* duplicate detection
+* apply/import
+* backup creation
+* table reload
+* imported rows marked review
+* review filter shown after import
+
+Final automated verification:
+
+* `python -m unittest discover -s tests`: 314 OK
+* `python -m py_compile calibre_meta_edit.py calibre_meta_qt.py`: OK
+
+Next state: ready for merge/release review.
+
 ## Next task
 
 Awaiting next task assignment.
