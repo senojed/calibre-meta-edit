@@ -1314,6 +1314,49 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertFalse(window.worker_running)
         app.processEvents()
 
+    def test_run_import_apply_success_reload_shows_imported_review_row(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.auto_skip_filter_allowed = False
+        window.status_checks["approve"].setChecked(True)
+        window.status_checks["review"].setChecked(True)
+        window.status_checks["skip"].setChecked(False)
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
+        imported = cme.MatchRow(99, "Kniha", "Autor", "review", "", "", "imported", "imported")
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        def fake_load_csv(show_message=False):
+            window.rows = [imported]
+            window.refresh_table()
+
+        with (
+            patch.object(window, "load_csv", side_effect=fake_load_csv),
+            patch.object(qt.QMessageBox, "information"),
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        self.assertTrue(window.status_checks["review"].isChecked())
+        self.assertFalse(window.status_checks["skip"].isChecked())
+        self.assertEqual(window.table.rowCount(), 1)
+        self.assertEqual(window.table.item(0, 3).text(), "review")
+        app.processEvents()
+
     def test_run_import_apply_failed_status_shows_warning_and_no_reload(self):
         from PySide6.QtWidgets import QApplication
         import sys

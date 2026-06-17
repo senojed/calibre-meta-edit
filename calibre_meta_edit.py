@@ -747,7 +747,7 @@ def import_preview_to_match_row(book_id: int, preview: ImportPreview) -> MatchRo
         book_id,
         preview.title,
         preview.authors,
-        "skip",
+        "review",
         preview.url,
         "",
         "imported",

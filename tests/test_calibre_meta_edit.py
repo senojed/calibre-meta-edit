@@ -317,7 +317,7 @@ class ImportApplyTests(unittest.TestCase):
         self.assertEqual(result.book_id, 42)
         self.assertEqual(result.status, "updated")
         self.assertEqual(rows_written[0].book_id, 42)
-        self.assertEqual(rows_written[0].status, "skip")
+        self.assertEqual(rows_written[0].status, "review")
         self.assertTrue(any(call[1] == "add" for call in calls))
         self.assertTrue(any(call[1] == "set_metadata" for call in calls))
 
