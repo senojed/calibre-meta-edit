@@ -1038,6 +1038,8 @@ class QtImportWiringTests(unittest.TestCase):
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
+        window.status_checks["review"].setChecked(False)
+        window.status_checks["skip"].setChecked(True)
         analysis = self._make_analysis()
         captured = {}
 
@@ -1281,6 +1283,8 @@ class QtImportWiringTests(unittest.TestCase):
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
+        window.status_checks["review"].setChecked(False)
+        window.status_checks["skip"].setChecked(True)
         preview = cme.ImportPreview(title="Kniha", authors="Autor")
         result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
         captured = {}
@@ -1311,6 +1315,8 @@ class QtImportWiringTests(unittest.TestCase):
         load_csv.assert_called_once_with(show_message=False)
         info.assert_called_once()
         warning.assert_not_called()
+        self.assertTrue(window.status_checks["review"].isChecked())
+        self.assertFalse(window.status_checks["skip"].isChecked())
         self.assertFalse(window.worker_running)
         app.processEvents()
 
@@ -1323,8 +1329,8 @@ class QtImportWiringTests(unittest.TestCase):
         window = qt.CalibreMetaQtWindow()
         window.auto_skip_filter_allowed = False
         window.status_checks["approve"].setChecked(True)
-        window.status_checks["review"].setChecked(True)
-        window.status_checks["skip"].setChecked(False)
+        window.status_checks["review"].setChecked(False)
+        window.status_checks["skip"].setChecked(True)
         preview = cme.ImportPreview(title="Kniha", authors="Autor")
         result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
         imported = cme.MatchRow(99, "Kniha", "Autor", "review", "", "", "imported", "imported")
@@ -1353,8 +1359,45 @@ class QtImportWiringTests(unittest.TestCase):
 
         self.assertTrue(window.status_checks["review"].isChecked())
         self.assertFalse(window.status_checks["skip"].isChecked())
+        self.assertTrue(window.status_checks["approve"].isChecked())
         self.assertEqual(window.table.rowCount(), 1)
         self.assertEqual(window.table.item(0, 3).text(), "review")
+        app.processEvents()
+
+    def test_run_import_apply_success_leaves_approve_unchanged(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.status_checks["approve"].setChecked(False)
+        window.status_checks["review"].setChecked(False)
+        window.status_checks["skip"].setChecked(True)
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv"),
+            patch.object(qt.QMessageBox, "information"),
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        self.assertTrue(window.status_checks["review"].isChecked())
+        self.assertFalse(window.status_checks["skip"].isChecked())
+        self.assertFalse(window.status_checks["approve"].isChecked())
         app.processEvents()
 
     def test_run_import_apply_failed_status_shows_warning_and_no_reload(self):
@@ -1364,6 +1407,8 @@ class QtImportWiringTests(unittest.TestCase):
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
+        window.status_checks["review"].setChecked(False)
+        window.status_checks["skip"].setChecked(True)
         preview = cme.ImportPreview(title="Kniha", authors="Autor")
         result = cme.ImportApplyResult(
             book_id=0, status="failed", error="strong-duplicate", backup_path="C:/back.db"
@@ -1392,6 +1437,8 @@ class QtImportWiringTests(unittest.TestCase):
         info.assert_not_called()
         warning.assert_called_once()
         self.assertIn("strong-duplicate", warning.call_args.args[2])
+        self.assertFalse(window.status_checks["review"].isChecked())
+        self.assertTrue(window.status_checks["skip"].isChecked())
         self.assertFalse(window.worker_running)
         app.processEvents()
 
@@ -1504,6 +1551,8 @@ class QtImportWiringTests(unittest.TestCase):
                 pass
 
             def exec(self):
+                window.status_checks["review"].setChecked(False)
+                window.status_checks["skip"].setChecked(True)
                 return QDialog.DialogCode.Rejected
 
             def preview(self):
@@ -1524,4 +1573,6 @@ class QtImportWiringTests(unittest.TestCase):
             app.processEvents()
 
         apply_stub.assert_not_called()
+        self.assertFalse(window.status_checks["review"].isChecked())
+        self.assertTrue(window.status_checks["skip"].isChecked())
         app.processEvents()

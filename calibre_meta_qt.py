@@ -1773,8 +1773,20 @@ if PYSIDE6_AVAILABLE:
             message = f"Kniha {book_id} byla naimportovana.\nZaloha: {backup}"
             self.write_output(f"Import EPUB: OK\n{message}")
             self.set_status("Import EPUB: OK")
+            self.show_import_review_filter()
             self.load_csv(show_message=False)
             QMessageBox.information(self, "Import EPUB", message)
+
+        def show_import_review_filter(self) -> None:
+            """Po importu ukaze nove review radky a schova skip. Approve nemeni."""
+            self.auto_skip_filter_allowed = False
+            for key, checked in {"review": True, "skip": False}.items():
+                check = self.status_checks.get(key)
+                if check is None:
+                    continue
+                check.blockSignals(True)
+                check.setChecked(checked)
+                check.blockSignals(False)
 
         def run_rebuild(self) -> None:
             message = (
