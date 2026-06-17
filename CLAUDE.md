@@ -37,15 +37,15 @@ Note: `python -m unittest discover` without `-s tests` may not discover tests in
 * Task 7: Support import cover bytes
 * Task 8: Apply EPUB import preview
 * Task 9: Add optional Ollama import resolver
-* Latest clean Task 9 commit: `42412c7 Add optional Ollama import resolver`
+* Task 10: Qt Import Dialog Skeleton
+* Latest clean Task 10 commit: `763ee3d Add EPUB import dialog`
 
 ## Next task
 
-Task 10: Qt Import Dialog Skeleton.
+Task 11: Qt Import Button And Analysis Worker.
 
-Task 10 must not implement:
+Task 11 must not implement:
 
-* Task 11 analysis worker
 * Task 12 apply worker
 
 ## Reporting format
