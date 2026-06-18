@@ -74,9 +74,19 @@ Pre-merge AI resolver edge-case tests (backend-only, added):
 * malformed Ollama response returns None gracefully
 * AI confidence below threshold falls back to scored candidate
 
+Final pre-merge EPUB import UX simplification (completed):
+
+* simplified import dialog to decision/confirmation workflow
+* removed redundant editable metadata fields from the import dialog
+* candidate selection updates the final import preview
+* success confirmation popup after import removed
+* error/warning dialogs kept
+* EPUB import toolbar icon made distinct
+* hidden candidate metadata leak between candidate selections fixed
+
 Final automated verification:
 
-* `python -m unittest discover -s tests`: 316 OK
+* `python -m unittest discover -s tests`: 323 OK
 * `python -m py_compile calibre_meta_edit.py calibre_meta_qt.py`: OK
 
 Next state: ready for merge/release review.
