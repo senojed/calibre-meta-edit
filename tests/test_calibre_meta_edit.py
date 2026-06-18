@@ -824,6 +824,39 @@ class ImportEpubParsingTests(unittest.TestCase):
 
         self.assertIsNone(selected)
 
+    def test_ollama_ai_resolver_returns_none_on_malformed_response(self):
+        # Ollama vrati nevalidni JSON nebo vnitrni "response" neni platny JSON.
+        # resolve() musi chybu spolknout a vratit None bez vyjimky.
+        candidates = [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good")]
+
+        def invalid_outer_json(_url, _payload, _headers):
+            return "this is not json"
+
+        def malformed_inner_response(_url, _payload, _headers):
+            return json.dumps({"response": "{not valid json"})
+
+        for requester in (invalid_outer_json, malformed_inner_response):
+            resolver = cme.OllamaAIResolver(requester=requester)
+            choice = resolver.resolve([], candidates)
+            self.assertIsNone(choice)
+
+    def test_ai_choice_below_confidence_threshold_falls_back_to_scored(self):
+        # AI vrati platnou URL, ale s confidence pod prahem 80.
+        # Nesmi vybrat AI URL; ma padnout zpet na normalni skore (candidates[0]).
+        class LowConfidenceResolver:
+            def resolve(self, _signals, _candidates):
+                return cme.AIImportChoice("https://good", 50, "match")
+
+        candidates = [
+            cme.ImportCandidate("openlibrary", "Top", "Autor", "https://top", score=85),
+            cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, LowConfidenceResolver())
+
+        self.assertEqual(selected.url, "https://top")
+        self.assertNotEqual(selected.url, "https://good")
+
     def test_extract_year_reads_reasonable_publication_year(self):
         self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
         self.assertEqual(cme.extract_year("bez roku"), "")
