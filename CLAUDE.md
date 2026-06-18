@@ -69,9 +69,14 @@ Verified manually:
 * imported rows marked review
 * review filter shown after import
 
+Pre-merge AI resolver edge-case tests (backend-only, added):
+
+* malformed Ollama response returns None gracefully
+* AI confidence below threshold falls back to scored candidate
+
 Final automated verification:
 
-* `python -m unittest discover -s tests`: 314 OK
+* `python -m unittest discover -s tests`: 316 OK
 * `python -m py_compile calibre_meta_edit.py calibre_meta_qt.py`: OK
 
 Next state: ready for merge/release review.
