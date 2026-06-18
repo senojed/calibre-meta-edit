@@ -18,7 +18,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -729,9 +729,14 @@ if PYSIDE6_AVAILABLE:
             toolbar.setSpacing(6)
             self.buttons: list[QToolButton] = []
 
+            # Leva skupina: nacist, ulozit - maly odstup - preferences.
             self._add_button(toolbar, "Nacist data", self.load_csv, "neutralButton", "load", show_text=False)
             self._add_button(toolbar, "Ulozit data", self.save_csv, "neutralButton", "save", show_text=False)
             toolbar.addSpacing(10)
+            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "preferences", show_text=False)
+            # Velky odstup deli levou skupinu (u leveho okraje) od prave (u praveho okraje).
+            toolbar.addStretch(1)
+            # Prava skupina: calibre, odkaz, obalky, import - maly odstup - zapsat na konci.
             self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "load-calibre", show_text=False)
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
@@ -739,8 +744,7 @@ if PYSIDE6_AVAILABLE:
                 toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
             self.update_import_button_enabled(True)
-            toolbar.addStretch(1)
-            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "preferences", show_text=False)
+            toolbar.addSpacing(10)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "write-calibre", show_text=False)
             return toolbar
 
