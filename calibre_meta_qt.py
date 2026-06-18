@@ -704,6 +704,7 @@ if PYSIDE6_AVAILABLE:
             layout.setContentsMargins(10, 10, 10, 6)
             layout.setSpacing(8)
             layout.addLayout(self._build_toolbar())
+            layout.addLayout(self._build_filter_row())
             layout.addWidget(self._build_main_area(), stretch=1)
             self.setCentralWidget(root)
             self.setStatusBar(QStatusBar())
@@ -727,12 +728,18 @@ if PYSIDE6_AVAILABLE:
                 toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "epub", show_text=False
             )
             self.update_import_button_enabled(True)
-            toolbar.addSpacing(10)
-            self._build_filterbar(toolbar)
-            toolbar.addSpacing(10)
+            toolbar.addStretch(1)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
             return toolbar
+
+        def _build_filter_row(self) -> QHBoxLayout:
+            # Filtry maji vlastni radek primo nad tabulkou (drive byly v toolbaru s tlacitky).
+            bar = QHBoxLayout()
+            bar.setSpacing(6)
+            self._build_filterbar(bar)
+            bar.addStretch(1)
+            return bar
 
         def _add_button(
             self,
