@@ -4,13 +4,57 @@ import contextlib
 import csv
 import io
 import inspect
+import json
 import sqlite3
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import calibre_meta_edit as cme
+
+
+def write_test_epub(
+    path: Path,
+    title: str = "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b",
+    creator: str = "John Irving",
+    creators: list[str] | None = None,
+    language: str = "cs",
+    body: str = "John Irving\nImagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b\nCopyright 1996",
+    opf_path: str = "OEBPS/content.opf",
+    item_href: str = "title.xhtml",
+    item_path: str = "OEBPS/title.xhtml",
+) -> None:
+    container_xml = f"""<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="{opf_path}" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"""
+    creator_tags = "\n".join(f"    <dc:creator>{value}</dc:creator>" for value in (creators or [creator]))
+    opf = f"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{title}</dc:title>
+{creator_tags}
+    <dc:language>{language}</dc:language>
+    <dc:publisher>Odeon</dc:publisher>
+    <dc:date>1996</dc:date>
+  </metadata>
+  <manifest>
+    <item id="title" href="{item_href}" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="title"/>
+  </spine>
+</package>"""
+    xhtml = f"""<html xmlns="http://www.w3.org/1999/xhtml"><body><p>{body}</p></body></html>"""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml", container_xml)
+        archive.writestr(opf_path, opf)
+        archive.writestr(item_path, xhtml)
 
 
 class TextAndUrlTests(unittest.TestCase):
@@ -177,6 +221,701 @@ class CommentTests(unittest.TestCase):
     def test_extract_first_databaze_link_returns_first_url(self):
         comment = '<a href="https://www.databazeknih.cz/knihy/foo-123">x</a>'
         self.assertEqual(cme.extract_first_databaze_link(comment), "https://www.databazeknih.cz/knihy/foo-123")
+
+
+class ImportModelTests(unittest.TestCase):
+    def test_import_preview_requires_title_and_author(self):
+        valid = cme.ImportPreview(title="Kniha", authors="Autor")
+        missing_title = cme.ImportPreview(title="", authors="Autor")
+        missing_author = cme.ImportPreview(title="Kniha", authors="")
+
+        self.assertTrue(cme.is_valid_import_preview(valid))
+        self.assertFalse(cme.is_valid_import_preview(missing_title))
+        self.assertFalse(cme.is_valid_import_preview(missing_author))
+
+    def test_import_candidate_defaults_are_safe(self):
+        candidate = cme.ImportCandidate(source="databazeknih", title="Kniha", authors="Autor", url="https://x")
+
+        self.assertEqual(candidate.score, 0)
+        self.assertEqual(candidate.reason, "")
+        self.assertEqual(candidate.work_type, "")
+        self.assertEqual(candidate.evidence_text, "")
+        self.assertIsNone(candidate.detail)
+
+
+class ImportDuplicateTests(unittest.TestCase):
+    def test_find_import_duplicates_strong_match_title_and_author(self):
+        books = [
+            cme.Book(1, "Str\u00e1\u017ee! Str\u00e1\u017ee!", ["Terry Pratchett"]),
+            cme.Book(2, "Mort", ["Terry Pratchett"]),
+        ]
+        preview = cme.ImportPreview(title="Str\u00e1\u017ee str\u00e1\u017ee", authors="Terry Pratchett")
+
+        duplicates = cme.find_import_duplicates(preview, books)
+
+        self.assertEqual([item.book_id for item in duplicates], [1])
+        self.assertTrue(duplicates[0].strong)
+
+    def test_find_import_duplicates_ignores_same_author_different_title(self):
+        books = [cme.Book(2, "Mort", ["Terry Pratchett"])]
+        preview = cme.ImportPreview(title="Str\u00e1\u017ee str\u00e1\u017ee", authors="Terry Pratchett")
+
+        duplicates = cme.find_import_duplicates(preview, books)
+
+        self.assertEqual(duplicates, [])
+
+    def test_find_calibre_import_duplicates_uses_books_reader(self):
+        preview = cme.ImportPreview(title="Mort", authors="Terry Pratchett")
+
+        duplicates = cme.find_calibre_import_duplicates(
+            "B:\\",
+            preview,
+            books_reader=lambda library: [cme.Book(2, "Mort", ["Terry Pratchett"])],
+        )
+
+        self.assertEqual(duplicates[0].book_id, 2)
+
+
+class ImportApplyTests(unittest.TestCase):
+    def test_parse_calibredb_add_book_ids_reads_single_id(self):
+        self.assertEqual(cme.parse_calibredb_add_book_ids("Added book ids: 123"), [123])
+
+    def test_parse_calibredb_add_book_ids_reads_multiple_ids(self):
+        self.assertEqual(cme.parse_calibredb_add_book_ids("Added book ids: 10, 11"), [10, 11])
+
+    def test_apply_import_preview_adds_book_sets_metadata_and_writes_match_row(self):
+        calls = []
+        rows_written = []
+        preview = cme.ImportPreview(
+            title="Kniha",
+            authors="Autor",
+            url="https://example.test/book",
+            source="openlibrary",
+            comment="Komentar",
+        )
+
+        def runner(args):
+            calls.append(args)
+            if args[1] == "add":
+                return cme.CommandResult(0, "Added book ids: 42", "")
+            return cme.CommandResult(0, "ok", "")
+
+        result = cme.apply_import_preview(
+            preview,
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backups/metadata-test.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.book_id, 42)
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(rows_written[0].book_id, 42)
+        self.assertEqual(rows_written[0].status, "review")
+        self.assertTrue(any(call[1] == "add" for call in calls))
+        self.assertTrue(any(call[1] == "set_metadata" for call in calls))
+
+    def test_apply_import_preview_rejects_invalid_preview_before_side_effects(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            quit_func=lambda allow_force: calls.append(["quit"]) or 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "missing-title-or-author")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_stops_when_quit_calibre_fails(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: calls.append(["backup"]) or Path("backup.db"),
+            quit_func=lambda allow_force: 1,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "quit-calibre-failed")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_blocks_strong_duplicate_before_quit(self):
+        calls = []
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            duplicate_reader=lambda library, preview: [duplicate],
+            quit_func=lambda allow_force: calls.append(["quit"]) or 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "strong-duplicate")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_blocks_strong_duplicate_after_backup(self):
+        calls = []
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+        duplicate_calls = []
+
+        def duplicate_reader(library, preview):
+            duplicate_calls.append(1)
+            return [] if len(duplicate_calls) == 1 else [duplicate]
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=duplicate_reader,
+            backup_func=lambda library, backups_dir: Path("backups/metadata-test.db"),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "strong-duplicate-after-close")
+        self.assertEqual(result.backup_path, "backups\\metadata-test.db")
+        self.assertEqual(calls, [])
+
+    def test_apply_import_preview_reports_add_failure(self):
+        calls = []
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=lambda args: calls.append(args) or cme.CommandResult(1, "", "add failed"),
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "add failed")
+        self.assertTrue(any(call[1] == "add" for call in calls))
+        self.assertFalse(any(len(call) > 1 and call[1] == "set_metadata" for call in calls))
+
+    def test_apply_import_preview_uses_existing_ids_diff_when_add_output_has_no_id(self):
+        calls = []
+        id_reads = []
+
+        def existing_ids_reader(library):
+            id_reads.append(1)
+            return {1} if len(id_reads) == 1 else {1, 42}
+
+        def runner(args):
+            calls.append(args)
+            if args[1] == "add":
+                return cme.CommandResult(0, "ok", "")
+            return cme.CommandResult(0, "metadata ok", "")
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=existing_ids_reader,
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: None,
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.book_id, 42)
+
+    def test_apply_import_preview_reports_metadata_failure_without_writing_rows(self):
+        rows_written = []
+
+        def runner(args):
+            if args[1] == "add":
+                return cme.CommandResult(0, "Added book ids: 42", "")
+            return cme.CommandResult(1, "", "metadata failed")
+
+        result = cme.apply_import_preview(
+            cme.ImportPreview(title="Kniha", authors="Autor"),
+            epub_path=Path("book.epub"),
+            library="B:\\",
+            calibredb_path="calibredb",
+            runner=runner,
+            existing_ids_reader=lambda library: {1},
+            duplicate_reader=lambda library, preview: [],
+            backup_func=lambda library, backups_dir: Path("backup.db"),
+            rows_reader=lambda path: [],
+            rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+            quit_func=lambda allow_force: 0,
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.book_id, 42)
+        self.assertEqual(result.error, "metadata failed")
+        self.assertEqual(rows_written, [])
+
+    def test_apply_import_preview_appends_match_row_to_existing_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.db"
+            matches_path.write_text("", encoding="utf-8")
+            old_row = cme.MatchRow(1, "Stara", "Autor", "skip", "", "", "manual", "manual")
+            rows_written = []
+
+            def runner(args):
+                if args[1] == "add":
+                    return cme.CommandResult(0, "Added book ids: 42", "")
+                return cme.CommandResult(0, "ok", "")
+
+            result = cme.apply_import_preview(
+                cme.ImportPreview(title="Nova", authors="Autor"),
+                epub_path=Path("book.epub"),
+                library="B:\\",
+                calibredb_path="calibredb",
+                runner=runner,
+                existing_ids_reader=lambda library: {1},
+                duplicate_reader=lambda library, preview: [],
+                backup_func=lambda library, backups_dir: Path("backup.db"),
+                rows_reader=lambda path: [old_row],
+                rows_writer=lambda path, rows, overwrite: rows_written.extend(rows),
+                quit_func=lambda allow_force: 0,
+                matches_path=matches_path,
+            )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual([row.book_id for row in rows_written], [1, 42])
+
+
+class ImportCandidateScoringTests(unittest.TestCase):
+    def test_score_import_candidates_prefers_title_and_author_match(self):
+        signals = [
+            cme.ImportSourceSignal("epub-metadata", "Str\u00e1\u017ee! Str\u00e1\u017ee!", "Terry Pratchett", language="cs"),
+            cme.ImportSourceSignal("filename", "Str\u00e1\u017ee str\u00e1\u017ee", "Terry Pratchett"),
+        ]
+        candidates = [
+            cme.ImportCandidate(
+                "databazeknih",
+                "Str\u00e1\u017ee! Str\u00e1\u017ee!",
+                "Terry Pratchett",
+                "https://dk/good",
+                evidence_text="Str\u00e1\u017ee! Str\u00e1\u017ee! Terry Pratchett",
+            ),
+            cme.ImportCandidate("databazeknih", "Str\u00e1\u017ee stromy", "Jin\u00fd Autor", "https://dk/bad"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_score_import_candidates_requires_databaze_author_evidence_text(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/no-author", evidence_text="Kniha Jiny")
+
+        scored = cme.score_import_candidates(signals, [candidate])
+
+        self.assertEqual(scored[0].reason, "title=70;author=0")
+        self.assertEqual(scored[0].score, 70)
+
+    def test_score_import_candidates_prefers_clean_filename_signal_over_broken_epub_metadata(self):
+        signals = [
+            cme.ImportSourceSignal("epub-metadata", "Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", "Irving John\u256a", language="cs", confidence=60),
+            cme.ImportSourceSignal("filename", "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b", "John Irving", confidence=30),
+        ]
+        candidates = [
+            cme.ImportCandidate(
+                "databazeknih",
+                "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b",
+                "",
+                "https://dk/good",
+                evidence_text="Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b John Irving",
+            ),
+            cme.ImportCandidate("databazeknih", "Imagin\u00e1rn\u00ed planeta", "", "https://dk/bad", evidence_text="Imagin\u00e1rn\u00ed planeta Jiny"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreaterEqual(scored[0].score, 90)
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_score_import_candidates_gives_one_word_title_match_low_score(self):
+        signals = [cme.ImportSourceSignal("filename", "Purpurov\u00e1 mumie", "Anatolij Dn\u011bprov")]
+        candidates = [cme.ImportCandidate("databazeknih", "Purpurov\u00e1 planeta", "Jin\u00fd Autor", "https://dk/bad")]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertLess(scored[0].score, 50)
+
+    def test_score_import_candidates_uses_evidence_text_for_databaze_author(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/good", evidence_text="Kniha Autor"),
+            cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/bad", evidence_text="Kniha Jiny"),
+        ]
+
+        scored = cme.score_import_candidates(signals, candidates)
+
+        self.assertEqual(scored[0].url, "https://dk/good")
+        self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_import_source_names_for_czech_english_and_unknown(self):
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="cs")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="en")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="cs"), cme.ImportSourceSignal("text", language="cs")]), ["databazeknih", "legie"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="en"), cme.ImportSourceSignal("text", language="en")]), ["googlebooks", "openlibrary"])
+        self.assertEqual(cme.import_lookup_sources([cme.ImportSourceSignal("epub", language="")]), ["databazeknih", "legie", "googlebooks", "openlibrary"])
+
+
+class ImportOnlineLookupTests(unittest.TestCase):
+    def test_lookup_import_candidates_uses_existing_parsers(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        google_json = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "abc",
+                        "volumeInfo": {
+                            "title": "Turn Coat",
+                            "authors": ["Jim Butcher"],
+                        },
+                    }
+                ]
+            }
+        )
+        open_json = json.dumps({"docs": []})
+
+        def fetcher(url):
+            if "googleapis" in url:
+                return google_json
+            if "openlibrary" in url:
+                return open_json
+            return ""
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertEqual(candidates[0].source, "googlebooks")
+        self.assertEqual(candidates[0].title, "Turn Coat")
+        self.assertEqual(candidates[0].authors, "Jim Butcher")
+
+    def test_import_candidate_from_databaze_keeps_author_empty_and_uses_evidence(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
+        raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
+
+        candidate = cme.import_candidate_from_search_candidate("databazeknih", raw, signals)
+
+        self.assertEqual(candidate.authors, "")
+        self.assertEqual(candidate.evidence_text, "volny text bez strukturovaneho autora")
+
+    def test_lookup_import_candidates_single_english_language_calls_all_sources(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        calls = []
+
+        def fetcher(url):
+            calls.append(url)
+            if "googleapis" in url:
+                return json.dumps({"items": []})
+            if "openlibrary" in url:
+                return json.dumps({"docs": []})
+            return ""
+
+        cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertTrue(any("databazeknih.cz" in url for url in calls))
+        self.assertTrue(any("legie.info" in url for url in calls))
+        self.assertTrue(any("googleapis" in url for url in calls))
+        self.assertTrue(any("openlibrary" in url for url in calls))
+
+    def test_lookup_import_candidates_continues_after_source_error(self):
+        signals = [cme.ImportSourceSignal("epub-metadata", "Turn Coat", "Jim Butcher", language="en")]
+        google_json = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "abc",
+                        "volumeInfo": {"title": "Turn Coat", "authors": ["Jim Butcher"]},
+                    }
+                ]
+            }
+        )
+
+        def fetcher(url):
+            if "databazeknih.cz" in url:
+                raise OSError("down")
+            if "googleapis" in url:
+                return google_json
+            if "openlibrary" in url:
+                return json.dumps({"docs": []})
+            return ""
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].source, "googlebooks")
+
+    def test_analyze_epub_for_import_keeps_fallback_preview_when_lookup_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: (_ for _ in ()).throw(OSError("down")),
+            )
+
+        self.assertIsNone(analysis.recommended)
+        self.assertEqual(analysis.candidates, [])
+        self.assertEqual(analysis.preview.title, "Turn Coat")
+        self.assertEqual(analysis.preview.authors, "Jim Butcher")
+
+
+class ImportEpubParsingTests(unittest.TestCase):
+    def test_filename_signal_cleans_broken_diacritics_and_reversed_author(self):
+        signal = cme.import_signal_from_path(Path("C:/inbox/Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"))
+
+        self.assertEqual(signal.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(signal.authors, "John Irving")
+        self.assertEqual(signal.source, "filename")
+
+    def test_analyze_epub_for_import_combines_epub_and_filename_signals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"
+            write_test_epub(epub)
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(analysis.preview.authors, "John Irving")
+        self.assertGreaterEqual(len(analysis.signals), 2)
+
+    def test_analyze_epub_for_import_prefers_clean_filename_over_broken_epub_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Irving John - Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a.epub"
+            write_test_epub(epub, title="Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", creator="Irving John\u256a")
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(analysis.preview.authors, "John Irving")
+
+    def test_analyze_epub_for_import_keeps_complete_metadata_over_title_only_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Imaginarni pritelkyne.epub"
+            write_test_epub(epub, title="Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a", creator="John Irving\u256a")
+
+            analysis = cme.analyze_epub_for_import(epub, library="B:\\", settings={}, online_lookup=lambda _signals: [])
+
+        self.assertTrue(cme.is_valid_import_preview(analysis.preview))
+        self.assertEqual(analysis.preview.title, "Imagin\u00e1rn\u00ed p\u00b2\u00edtelkyn\u256a")
+        self.assertEqual(analysis.preview.authors, "John Irving\u256a")
+
+    def test_analyze_epub_for_import_ignores_weak_online_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+            candidates = [cme.ImportCandidate("openlibrary", "Storm Front", "Jim Butcher", "https://weak")]
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: candidates,
+            )
+
+        self.assertIsNone(analysis.recommended)
+        self.assertEqual(analysis.preview.title, "Turn Coat")
+        self.assertEqual(analysis.preview.authors, "Jim Butcher")
+        self.assertEqual(analysis.preview.url, "")
+
+    def test_analyze_epub_for_import_reorders_candidates_before_recommendation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "Jim Butcher - Turn Coat.epub"
+            write_test_epub(epub, title="Turn Coat", creator="Jim Butcher", language="en")
+            candidates = [
+                cme.ImportCandidate("openlibrary", "Storm Front", "Jim Butcher", "https://bad"),
+                cme.ImportCandidate("googlebooks", "Turn Coat", "Jim Butcher", "https://good"),
+            ]
+
+            analysis = cme.analyze_epub_for_import(
+                epub,
+                library="B:\\",
+                settings={},
+                online_lookup=lambda _signals: candidates,
+            )
+
+        self.assertIsNotNone(analysis.recommended)
+        self.assertEqual(analysis.recommended.url, "https://good")
+        self.assertEqual(analysis.candidates[0].url, "https://good")
+        self.assertEqual(analysis.preview.source, "googlebooks")
+
+    def test_disabled_ai_resolver_returns_none(self):
+        resolver = cme.DisabledAIResolver()
+
+        choice = resolver.resolve([], [])
+
+        self.assertIsNone(choice)
+
+    def test_ollama_ai_resolver_returns_none_when_unavailable(self):
+        def failing_requester(_url, _payload, _headers):
+            raise OSError("offline")
+
+        resolver = cme.OllamaAIResolver(requester=failing_requester)
+
+        choice = resolver.resolve([], [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good")])
+
+        self.assertIsNone(choice)
+
+    def test_ai_choice_can_promote_matching_candidate(self):
+        class FixedResolver:
+            def resolve(self, _signals, _candidates):
+                return cme.AIImportChoice("https://good", 90, "match")
+
+        candidates = [
+            cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=70),
+            cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, FixedResolver())
+
+        self.assertEqual(selected.url, "https://good")
+        self.assertIn("ai=90", selected.reason)
+
+    def test_ai_resolver_failure_falls_back_to_scored_candidate(self):
+        class FailingResolver:
+            def resolve(self, _signals, _candidates):
+                raise OSError("offline")
+
+        candidates = [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=80)]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, FailingResolver())
+
+        self.assertEqual(selected.url, "https://good")
+
+    def test_low_score_candidate_is_not_recommended_without_ai_confidence(self):
+        candidates = [cme.ImportCandidate("openlibrary", "Bad", "Autor", "https://bad", score=10)]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, cme.DisabledAIResolver())
+
+        self.assertIsNone(selected)
+
+    def test_ollama_ai_resolver_returns_none_on_malformed_response(self):
+        # Ollama vrati nevalidni JSON nebo vnitrni "response" neni platny JSON.
+        # resolve() musi chybu spolknout a vratit None bez vyjimky.
+        candidates = [cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good")]
+
+        def invalid_outer_json(_url, _payload, _headers):
+            return "this is not json"
+
+        def malformed_inner_response(_url, _payload, _headers):
+            return json.dumps({"response": "{not valid json"})
+
+        for requester in (invalid_outer_json, malformed_inner_response):
+            resolver = cme.OllamaAIResolver(requester=requester)
+            choice = resolver.resolve([], candidates)
+            self.assertIsNone(choice)
+
+    def test_ai_choice_below_confidence_threshold_falls_back_to_scored(self):
+        # AI vrati platnou URL, ale s confidence pod prahem 80.
+        # Nesmi vybrat AI URL; ma padnout zpet na normalni skore (candidates[0]).
+        class LowConfidenceResolver:
+            def resolve(self, _signals, _candidates):
+                return cme.AIImportChoice("https://good", 50, "match")
+
+        candidates = [
+            cme.ImportCandidate("openlibrary", "Top", "Autor", "https://top", score=85),
+            cme.ImportCandidate("openlibrary", "Good", "Autor", "https://good", score=60),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, LowConfidenceResolver())
+
+        self.assertEqual(selected.url, "https://top")
+        self.assertNotEqual(selected.url, "https://good")
+
+    def test_extract_year_reads_reasonable_publication_year(self):
+        self.assertEqual(cme.extract_year("Published 1996-01-01"), "1996")
+        self.assertEqual(cme.extract_year("bez roku"), "")
+
+    def test_read_epub_metadata_extracts_basic_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub)
+
+            metadata = cme.read_epub_metadata(epub)
+
+        self.assertEqual(metadata.title, "Imagin\u00e1rn\u00ed p\u0159\u00edtelkyn\u011b")
+        self.assertEqual(metadata.authors, "John Irving")
+        self.assertEqual(metadata.language, "cs")
+        self.assertEqual(metadata.publisher, "Odeon")
+        self.assertEqual(metadata.published_year, "1996")
+
+    def test_read_epub_metadata_joins_multiple_creators(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, creators=["John One", "Jane Two"])
+
+            metadata = cme.read_epub_metadata(epub)
+
+        self.assertEqual(metadata.authors, "John One & Jane Two")
+
+    def test_extract_epub_start_text_reads_spine_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, body="Tituln\u00ed strana\nSpr\u00e1vn\u00fd n\u00e1zev\nAutor")
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Tituln\u00ed strana", text)
+        self.assertIn("Spr\u00e1vn\u00fd n\u00e1zev", text)
+
+    def test_extract_epub_start_text_resolves_uri_spine_href(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(
+                epub,
+                opf_path="OPS/package/content.opf",
+                item_href="../Text/chapter%201.xhtml#start",
+                item_path="OPS/Text/chapter 1.xhtml",
+                body="Text pres relativni URI",
+            )
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Text pres relativni URI", text)
+
+    def test_extract_epub_start_text_reads_start_of_oversized_spine_item(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            write_test_epub(epub, body="Oversized zacatek " + ("A" * 6_000_000))
+
+            text = cme.extract_epub_start_text(epub, limit=80)
+
+        self.assertIn("Oversized zacatek", text)
 
 
 class ParserAndMatchingTests(unittest.TestCase):
@@ -2738,6 +3477,58 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "skipped")
         self.assertEqual(calls, [])
+
+
+class ImportCoverCommandTests(unittest.TestCase):
+    def test_run_metadata_command_with_cover_accepts_cover_bytes(self):
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            cover_field = next(arg for arg in args if arg.startswith("cover:"))
+            self.assertTrue(Path(cover_field.removeprefix("cover:")).exists())
+            return cme.CommandResult(0, "ok", "")
+
+        result = cme.run_metadata_command_with_cover(
+            ["calibredb", "set_metadata", "1"],
+            "",
+            runner,
+            cover_bytes=b"image-bytes",
+            cover_suffix=".jpg",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(any(arg.startswith("cover:") for arg in calls[0]))
+
+    def test_run_metadata_command_with_cover_prefers_cover_bytes_over_url_fetcher(self):
+        calls = []
+        fetch_calls = []
+
+        def runner(args):
+            calls.append(args)
+            cover_field = next(arg for arg in args if arg.startswith("cover:"))
+            cover_path = Path(cover_field.removeprefix("cover:"))
+            self.assertEqual(cover_path.read_bytes(), b"local-image-bytes")
+            return cme.CommandResult(0, "ok", "")
+
+        def cover_fetcher(url):
+            fetch_calls.append(url)
+            return b"remote-image-bytes"
+
+        result = cme.run_metadata_command_with_cover(
+            ["calibredb", "set_metadata", "1"],
+            "https://example.test/cover.png",
+            runner,
+            cover_fetcher=cover_fetcher,
+            cover_bytes=b"local-image-bytes",
+            cover_suffix=".exe",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(fetch_calls, [])
+        self.assertTrue(any(arg.startswith("cover:") for arg in calls[0]))
+        cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
+        self.assertTrue(cover_field.endswith("cover.jpg"))
 
 
 if __name__ == "__main__":

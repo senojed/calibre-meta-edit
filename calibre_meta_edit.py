@@ -6,6 +6,7 @@ import argparse
 import csv
 import html
 import json
+import posixpath
 import re
 import shutil
 import sqlite3
@@ -17,6 +18,8 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import urllib.robotparser
+import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, replace
 from datetime import datetime
 from html.parser import HTMLParser
@@ -39,6 +42,14 @@ LEGACY_MATCHES_CSV_PATH = Path("matches.csv")
 APPLY_RESULTS_DIR = Path("apply-results")
 LEGIE_FALLBACK_REASONS = {"no-candidates", "title-only", "multiple-title-matches", "partial-title", "http-error"}
 HTML_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+EPUB_TEXT_ITEM_MAX_BYTES = 1_000_000
+MOJIBAKE_REPLACEMENTS = {
+    "p\u00b2": "p\u0159",
+    "\u256a": "\u011b",
+    "\u2563": "\u016f",
+    "\u00de": "\u0161",
+    "\u010e": "\u011b",
+}
 MATCHES_FIELDS = [
     "book_id",
     "title",
@@ -170,10 +181,422 @@ class CoverCandidate:
 
 
 @dataclass(frozen=True)
+class ImportSourceSignal:
+    source: str
+    title: str = ""
+    authors: str = ""
+    language: str = ""
+    publisher: str = ""
+    published_year: str = ""
+    text: str = ""
+    confidence: int = 0
+
+
+@dataclass(frozen=True)
+class EpubMetadata:
+    title: str = ""
+    authors: str = ""
+    language: str = ""
+    publisher: str = ""
+    published_year: str = ""
+
+
+@dataclass(frozen=True)
+class ImportCandidate:
+    source: str
+    title: str
+    authors: str
+    url: str
+    score: int = 0
+    reason: str = ""
+    work_type: str = ""
+    evidence_text: str = ""
+    detail: BookDetailMetadata | None = None
+
+
+@dataclass(frozen=True)
+class AIImportChoice:
+    url: str
+    confidence: int = 0
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class DuplicateCandidate:
+    book_id: int
+    title: str
+    authors: str
+    series: str = ""
+    score: int = 0
+    reason: str = ""
+    strong: bool = False
+
+
+@dataclass(frozen=True)
+class ImportPreview:
+    title: str = ""
+    authors: str = ""
+    series: str = ""
+    series_index: str = ""
+    published_year: str = ""
+    publisher: str = ""
+    tags: str = ""
+    url: str = ""
+    source: str = ""
+    work_type: str = ""
+    rating_percent: str = ""
+    original_title: str = ""
+    original_publication: str = ""
+    original_publisher: str = ""
+    comment: str = ""
+    selected_cover_url: str = ""
+    cover_bytes: bytes = b""
+    allow_strong_duplicate: bool = False
+
+
+@dataclass(frozen=True)
+class ImportAnalysis:
+    epub_path: str
+    signals: list[ImportSourceSignal]
+    candidates: list[ImportCandidate]
+    recommended: ImportCandidate | None
+    duplicates: list[DuplicateCandidate]
+    preview: ImportPreview
+    messages: list[str]
+
+
+@dataclass(frozen=True)
+class ImportApplyResult:
+    book_id: int
+    status: str
+    error: str = ""
+    backup_path: str = ""
+
+
+@dataclass(frozen=True)
 class CoverOption:
     url: str
     source: str
     label: str = ""
+
+
+def is_valid_import_preview(preview: ImportPreview) -> bool:
+    return bool(preview.title.strip() and preview.authors.strip())
+
+
+def _epub_opf_path(archive: zipfile.ZipFile) -> str:
+    try:
+        container = archive.read("META-INF/container.xml")
+    except KeyError as exc:
+        raise ValueError("epub-missing-container") from exc
+    root = ET.fromstring(container)
+    namespace = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+    rootfile = root.find(".//c:rootfile", namespace)
+    if rootfile is None:
+        raise ValueError("epub-missing-rootfile")
+    full_path = rootfile.attrib.get("full-path", "").strip()
+    if not full_path:
+        raise ValueError("epub-empty-rootfile")
+    return full_path
+
+
+def _opf_text(root: ET.Element, tag: str) -> str:
+    namespace = {"dc": "http://purl.org/dc/elements/1.1/"}
+    value = root.findtext(f".//dc:{tag}", default="", namespaces=namespace)
+    return html.unescape(value or "").strip()
+
+
+def _opf_texts(root: ET.Element, tag: str) -> list[str]:
+    namespace = {"dc": "http://purl.org/dc/elements/1.1/"}
+    values: list[str] = []
+    for element in root.findall(f".//dc:{tag}", namespace):
+        value = html.unescape(element.text or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def extract_year(text: str) -> str:
+    return _first_reasonable_year(text or "")
+
+
+def read_epub_metadata(path: str | Path) -> EpubMetadata:
+    with zipfile.ZipFile(path) as archive:
+        opf_path = _epub_opf_path(archive)
+        root = ET.fromstring(archive.read(opf_path))
+    return EpubMetadata(
+        title=_opf_text(root, "title"),
+        authors=" & ".join(_opf_texts(root, "creator")),
+        language=_opf_text(root, "language"),
+        publisher=_opf_text(root, "publisher"),
+        published_year=extract_year(_opf_text(root, "date")),
+    )
+
+
+class PlainTextHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        clean = " ".join(data.split())
+        if clean:
+            self.parts.append(clean)
+
+    def text(self) -> str:
+        return "\n".join(self.parts)
+
+
+def _epub_spine_item_paths(archive: zipfile.ZipFile, opf_path: str, root: ET.Element) -> list[str]:
+    namespace = {"opf": "http://www.idpf.org/2007/opf"}
+    manifest: dict[str, str] = {}
+    base = urllib.parse.quote(str(Path(opf_path).parent).replace("\\", "/").rstrip("/") + "/")
+    for item in root.findall(".//opf:manifest/opf:item", namespace):
+        item_id = item.attrib.get("id", "")
+        href = item.attrib.get("href", "")
+        media_type = item.attrib.get("media-type", "")
+        if item_id and href and "html" in media_type:
+            joined = urllib.parse.urljoin(base if base != "./" else "", href)
+            clean = urllib.parse.unquote(urllib.parse.urldefrag(joined).url)
+            manifest[item_id] = posixpath.normpath(clean)
+    paths: list[str] = []
+    for itemref in root.findall(".//opf:spine/opf:itemref", namespace):
+        href = manifest.get(itemref.attrib.get("idref", ""))
+        if href and href in archive.namelist():
+            paths.append(href)
+    return paths
+
+
+def _read_epub_text_item(archive: zipfile.ZipFile, item_path: str) -> str:
+    info = archive.getinfo(item_path)
+    with archive.open(info) as item:
+        return item.read(min(info.file_size, EPUB_TEXT_ITEM_MAX_BYTES)).decode("utf-8", errors="replace")
+
+
+def extract_epub_start_text(path: str | Path, limit: int = 5000) -> str:
+    texts: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        opf_path = _epub_opf_path(archive)
+        root = ET.fromstring(archive.read(opf_path))
+        for item_path in _epub_spine_item_paths(archive, opf_path, root):
+            html_text = _read_epub_text_item(archive, item_path)
+            if not html_text:
+                continue
+            parser = PlainTextHTMLParser()
+            parser.feed(html_text)
+            texts.append(parser.text())
+            joined = "\n".join(texts).strip()
+            if len(joined) >= limit:
+                return joined[:limit]
+    return "\n".join(texts).strip()[:limit]
+
+
+def repair_filename_text(text: str) -> str:
+    repaired = text.replace("_", " ")
+    for broken, fixed in MOJIBAKE_REPLACEMENTS.items():
+        repaired = repaired.replace(broken, fixed)
+    repaired = re.sub(r"\s+", " ", repaired)
+    return repaired.strip(" -_.")
+
+
+def split_author_title_from_filename(stem: str) -> tuple[str, str]:
+    clean = repair_filename_text(stem)
+    parts = [part.strip() for part in re.split(r"\s+-\s+", clean, maxsplit=1)]
+    if len(parts) != 2:
+        return clean, ""
+    left, right = parts
+    words = left.split()
+    if len(words) == 2:
+        author = f"{words[1]} {words[0]}"
+    else:
+        author = left
+    return right, author
+
+
+def import_signal_from_path(path: str | Path) -> ImportSourceSignal:
+    file_path = Path(path)
+    title, authors = split_author_title_from_filename(file_path.stem)
+    folder_text = repair_filename_text(" ".join(part for part in file_path.parts[:-1] if part))
+    return ImportSourceSignal(
+        source="filename",
+        title=title,
+        authors=authors,
+        text=folder_text,
+        confidence=30,
+    )
+
+
+def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSignal:
+    return ImportSourceSignal(
+        source="epub-metadata",
+        title=metadata.title,
+        authors=metadata.authors,
+        language=metadata.language,
+        publisher=metadata.publisher,
+        published_year=metadata.published_year,
+        confidence=60 if metadata.title and metadata.authors else 30,
+    )
+
+
+def import_signal_from_epub_text(text: str) -> ImportSourceSignal:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return ImportSourceSignal(source="epub-text", text="\n".join(lines[:20]), confidence=20)
+
+
+def has_known_mojibake(text: str) -> bool:
+    return any(broken in text for broken in MOJIBAKE_REPLACEMENTS)
+
+
+def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int]:
+    preview_text = " ".join(part for part in (signal.title, signal.authors) if part.strip())
+    clean_bonus = 100 if preview_text and not has_known_mojibake(preview_text) else 0
+    completeness = int(bool(signal.title.strip())) + int(bool(signal.authors.strip()))
+    return completeness, clean_bonus, signal.confidence
+
+
+def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> ImportPreview:
+    preview_signal = max(signals, key=signal_preview_quality) if signals else ImportSourceSignal(source="")
+    metadata_signal = next((signal for signal in signals if signal.source == "epub-metadata"), None)
+    return ImportPreview(
+        title=preview_signal.title,
+        authors=preview_signal.authors,
+        published_year=metadata_signal.published_year if metadata_signal else "",
+        publisher=metadata_signal.publisher if metadata_signal else "",
+    )
+
+
+def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: ImportPreview) -> ImportPreview:
+    if candidate is None:
+        return fallback
+    return replace(
+        fallback,
+        title=candidate.title or fallback.title,
+        authors=candidate.authors or fallback.authors,
+        url=candidate.url,
+        source=candidate.source,
+        work_type=candidate.work_type,
+    )
+
+
+class DisabledAIResolver:
+    """Vypnuta AI vrstva: nikdy nevybira kandidata."""
+
+    def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
+        return None
+
+
+class OllamaAIResolver:
+    """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi."""
+
+    def __init__(
+        self,
+        model: str = "llama3",
+        requester: Callable[[str, bytes, dict[str, str]], str] | None = None,
+    ) -> None:
+        self.model = model.strip() or "llama3"
+        self.requester = requester or self._request
+
+    def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
+        compact_candidates = [
+            {
+                "source": candidate.source,
+                "title": candidate.title,
+                "authors": candidate.authors,
+                "url": candidate.url,
+                "score": candidate.score,
+                "reason": candidate.reason,
+                "work_type": candidate.work_type,
+                "evidence_text": candidate.evidence_text[:500],
+            }
+            for candidate in candidates[:5]
+        ]
+        prompt = {
+            "task": "Choose the correct book candidate. Return JSON only: {\"url\":\"...\",\"confidence\":0-100,\"reason\":\"...\"}.",
+            "signals": [signal.__dict__ for signal in signals],
+            "candidates": compact_candidates,
+        }
+        try:
+            raw = self.requester(
+                "http://127.0.0.1:11434/api/generate",
+                json.dumps({"model": self.model, "prompt": json.dumps(prompt, ensure_ascii=False), "stream": False}).encode("utf-8"),
+                {"Content-Type": "application/json"},
+            )
+            data = json.loads(raw)
+            answer = json.loads(str(data.get("response", "{}")))
+            return AIImportChoice(
+                url=str(answer.get("url", "")),
+                confidence=int(answer.get("confidence", 0) or 0),
+                reason=str(answer.get("reason", "")),
+            )
+        except Exception:
+            return None
+
+
+def resolve_import_candidate_with_ai(
+    signals: Sequence[ImportSourceSignal],
+    candidates: Sequence[ImportCandidate],
+    resolver: object | None = None,
+    minimum_score: int = 80,
+) -> ImportCandidate | None:
+    if not candidates:
+        return None
+    ai_resolver = resolver or DisabledAIResolver()
+    try:
+        choice = ai_resolver.resolve(signals, candidates) if hasattr(ai_resolver, "resolve") else None
+    except Exception:
+        choice = None
+    try:
+        confidence = int(getattr(choice, "confidence", 0) or 0)
+    except (TypeError, ValueError):
+        confidence = 0
+    confidence = max(0, min(confidence, 100))
+    if choice and confidence >= 80:
+        for candidate in candidates:
+            if candidate.url == getattr(choice, "url", ""):
+                reason = f"{candidate.reason};ai={confidence}"
+                choice_reason = str(getattr(choice, "reason", ""))
+                if choice_reason:
+                    reason = f"{reason}:{choice_reason}"
+                return replace(candidate, reason=reason)
+    return candidates[0] if candidates[0].score >= minimum_score else None
+
+
+def analyze_epub_for_import(
+    path: str | Path,
+    library: str | Path,
+    settings: dict[str, object],
+    online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
+    ai_resolver: object | None = None,
+) -> ImportAnalysis:
+    epub_path = Path(path)
+    metadata = read_epub_metadata(epub_path)
+    text = extract_epub_start_text(epub_path, limit=int(settings.get("epub_text_limit", 5000) or 5000))
+    signals = [
+        import_signal_from_epub_metadata(metadata),
+        import_signal_from_epub_text(text),
+        import_signal_from_path(epub_path),
+    ]
+    try:
+        candidates = score_import_candidates(signals, online_lookup(signals)) if online_lookup else lookup_import_candidates(signals)
+    except Exception:
+        candidates = []
+    recommended = resolve_import_candidate_with_ai(signals, candidates, ai_resolver)
+    fallback_preview = choose_initial_import_preview(signals)
+    preview = import_preview_from_candidate(recommended, fallback_preview)
+    return ImportAnalysis(
+        epub_path=str(epub_path),
+        signals=signals,
+        candidates=candidates,
+        recommended=recommended,
+        duplicates=[],
+        preview=preview,
+        messages=[],
+    )
 
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
@@ -201,6 +624,316 @@ def normalize_text(text: str) -> str:
     without_punctuation = re.sub(r"[^a-z0-9]+", " ", without_marks.lower())
     normalized_spaces = re.sub(r"\s+", " ", without_punctuation)
     return normalized_spaces.strip()
+
+
+def _best_normalized_title(signals: Sequence[ImportSourceSignal]) -> str:
+    title_signals = [signal for signal in signals if signal.title.strip()]
+    if not title_signals:
+        return ""
+    return max(title_signals, key=signal_preview_quality).title
+
+
+def _best_normalized_authors(signals: Sequence[ImportSourceSignal]) -> str:
+    author_signals = [signal for signal in signals if signal.authors.strip()]
+    if not author_signals:
+        return ""
+    return max(author_signals, key=signal_preview_quality).authors
+
+
+def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
+    title = _best_normalized_title(signals)
+    authors = [part.strip() for part in _best_normalized_authors(signals).split("&") if part.strip()]
+    return Book(0, title, authors)
+
+
+def _word_overlap_score(left: str, right: str) -> int:
+    left_words = set(normalize_text(left).split())
+    right_words = set(normalize_text(right).split())
+    if not left_words or not right_words:
+        return 0
+    overlap = left_words & right_words
+    if len(overlap) == 1 and max(len(left_words), len(right_words)) > 1:
+        return 10
+    return int(60 * len(overlap) / max(len(left_words), len(right_words)))
+
+
+def _authors_text(authors: Sequence[str] | str) -> str:
+    if isinstance(authors, str):
+        return authors
+    return " & ".join(authors)
+
+
+def duplicate_score(preview: ImportPreview, book: Book) -> tuple[int, str]:
+    book_authors = _authors_text(book.authors)
+    title_score = (
+        100
+        if normalize_text(preview.title) == normalize_text(book.title)
+        else _word_overlap_score(preview.title, book.title)
+    )
+    author_score = (
+        100
+        if normalize_text(preview.authors) == normalize_text(book_authors)
+        else _word_overlap_score(preview.authors, book_authors)
+    )
+    if author_score >= 80 and title_score >= 80:
+        return 100, "title-author"
+    if author_score >= 50 and title_score >= 50:
+        return 70, "similar-title-author"
+    if title_score >= 80 and author_score < 50:
+        return 55, "same-title-different-author"
+    return 0, ""
+
+
+def find_import_duplicates(preview: ImportPreview, books: Sequence[Book]) -> list[DuplicateCandidate]:
+    duplicates: list[DuplicateCandidate] = []
+    for book in books:
+        score, reason = duplicate_score(preview, book)
+        if score <= 0:
+            continue
+        duplicates.append(
+            DuplicateCandidate(
+                book_id=book.id,
+                title=book.title,
+                authors=_authors_text(book.authors),
+                score=score,
+                reason=reason,
+                strong=score >= 90,
+            )
+        )
+    return sorted(duplicates, key=lambda item: item.score, reverse=True)
+
+
+def parse_calibredb_add_book_ids(output: str) -> list[int]:
+    match = re.search(r"Added book ids?:\s*([0-9,\s]+)", output or "", re.IGNORECASE)
+    if not match:
+        return []
+    return [int(value) for value in re.findall(r"\d+", match.group(1))]
+
+
+def read_calibre_book_ids(library: str | Path) -> set[int]:
+    with open_calibre_db_readonly(library) as connection:
+        return {int(row["id"]) for row in connection.execute("select id from books").fetchall()}
+
+
+def _import_set_metadata_args(calibredb_path: str, library: str | Path, book_id: int, preview: ImportPreview) -> list[str]:
+    args = [
+        calibredb_path,
+        "set_metadata",
+        str(book_id),
+        "--with-library",
+        str(library),
+        "--field",
+        "title:" + preview.title,
+        "--field",
+        "authors:" + preview.authors,
+    ]
+    if preview.comment:
+        args.extend(["--field", "comments:" + preview.comment])
+    if preview.published_year:
+        args.extend(["--field", "pubdate:" + calibre_pubdate_value(preview.published_year)])
+    if preview.publisher:
+        args.extend(["--field", "publisher:" + preview.publisher])
+    if preview.tags:
+        args.extend(["--field", "tags:" + preview.tags])
+    if preview.series:
+        args.extend(["--field", "series:" + preview.series])
+    if preview.series_index:
+        args.extend(["--field", "series_index:" + preview.series_index])
+    return args
+
+
+def import_preview_to_match_row(book_id: int, preview: ImportPreview) -> MatchRow:
+    return MatchRow(
+        book_id,
+        preview.title,
+        preview.authors,
+        "review",
+        preview.url,
+        "",
+        "imported",
+        "imported",
+        preview.source or source_and_work_type_for_url(preview.url)[0],
+        preview.work_type,
+        "",
+        preview.selected_cover_url,
+        "",
+        preview.published_year,
+        preview.publisher,
+        preview.tags,
+        preview.rating_percent,
+        preview.original_title,
+        preview.original_publication,
+        preview.original_publisher,
+    )
+
+
+def apply_import_preview(
+    preview: ImportPreview,
+    epub_path: str | Path,
+    library: str | Path,
+    calibredb_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+    existing_ids_reader: Callable[[str | Path], set[int]] = read_calibre_book_ids,
+    duplicate_reader: Callable[[str | Path, ImportPreview], list[DuplicateCandidate]] | None = None,
+    backup_func: Callable[[str | Path, Path], Path] | None = None,
+    rows_reader: Callable[[Path], list[MatchRow]] | None = None,
+    rows_writer: Callable[[Path, Iterable[MatchRow], bool], None] | None = None,
+    quit_func: Callable[[bool], int] | None = None,
+    allow_force: bool = True,
+    matches_path: Path = MATCHES_PATH,
+) -> ImportApplyResult:
+    command_runner = runner or run_command
+    read_duplicates = duplicate_reader or find_calibre_import_duplicates
+    create_backup_func = backup_func or create_backup
+    read_rows = rows_reader or read_matches_csv
+    write_rows = rows_writer or write_matches_csv
+    if not is_valid_import_preview(preview):
+        return ImportApplyResult(0, "failed", "missing-title-or-author")
+    if any(item.strong for item in read_duplicates(library, preview)) and not preview.allow_strong_duplicate:
+        return ImportApplyResult(0, "failed", "strong-duplicate")
+    quit_runner = quit_func or (lambda force: 0)
+    quit_result = quit_runner(allow_force)
+    if quit_result != 0:
+        return ImportApplyResult(0, "failed", "quit-calibre-failed")
+    backup_path = create_backup_func(library, Path("backups"))
+    before_ids = existing_ids_reader(library)
+    fresh_duplicates = read_duplicates(library, preview)
+    if any(item.strong for item in fresh_duplicates) and not preview.allow_strong_duplicate:
+        return ImportApplyResult(0, "failed", "strong-duplicate-after-close", str(backup_path))
+    add_result = command_runner([calibredb_path, "add", str(epub_path), "--with-library", str(library)])
+    if add_result.returncode != 0:
+        return ImportApplyResult(0, "failed", (add_result.stderr or add_result.stdout).strip(), str(backup_path))
+    new_ids = parse_calibredb_add_book_ids(add_result.stdout + "\n" + add_result.stderr)
+    if len(new_ids) != 1:
+        new_ids = sorted(existing_ids_reader(library) - before_ids)
+    if len(new_ids) != 1:
+        return ImportApplyResult(0, "failed", "new-book-id-not-unique", str(backup_path))
+    book_id = new_ids[0]
+    metadata_result = run_metadata_command_with_cover(
+        _import_set_metadata_args(calibredb_path, library, book_id, preview),
+        preview.selected_cover_url,
+        command_runner,
+        cover_bytes=preview.cover_bytes,
+    )
+    if metadata_result.returncode != 0:
+        return ImportApplyResult(book_id, "failed", (metadata_result.stderr or metadata_result.stdout).strip(), str(backup_path))
+    rows = read_rows(matches_path) if matches_storage_exists(matches_path) else []
+    write_rows(matches_path, [*rows, import_preview_to_match_row(book_id, preview)], True)
+    return ImportApplyResult(book_id, "updated", "", str(backup_path))
+
+
+def _title_similarity_score(left: str, right: str) -> int:
+    if normalize_text(left) == normalize_text(right) and left:
+        return 70
+    return min(70, int(_word_overlap_score(left, right) * 70 / 60))
+
+
+def _author_similarity_score(signals_author: str, candidate: ImportCandidate) -> int:
+    if candidate.source in {"databazeknih", "legie"}:
+        if signals_author and candidate.evidence_text and _author_matches_text(signals_author, candidate.evidence_text):
+            return 30
+        return 0
+    if normalize_text(candidate.authors) == normalize_text(signals_author) and signals_author:
+        return 30
+    if candidate.authors:
+        return min(30, int(_word_overlap_score(signals_author, candidate.authors) * 30 / 60))
+    return 0
+
+
+def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: ImportCandidate) -> ImportCandidate:
+    title = _best_normalized_title(signals)
+    authors = _best_normalized_authors(signals)
+    title_score = _title_similarity_score(title, candidate.title)
+    author_score = _author_similarity_score(authors, candidate)
+    score = title_score + author_score
+    reason = f"title={title_score};author={author_score}"
+    return replace(candidate, score=score, reason=reason)
+
+
+def score_import_candidates(signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> list[ImportCandidate]:
+    scored = [score_import_candidate(signals, candidate) for candidate in candidates]
+    return sorted(scored, key=lambda candidate: candidate.score, reverse=True)
+
+
+def import_lookup_sources(signals: Sequence[ImportSourceSignal]) -> list[str]:
+    languages = [signal.language.lower().strip() for signal in signals if signal.language.strip()]
+    language_set = set(languages)
+    text = normalize_text(" ".join([signal.title + " " + signal.authors + " " + signal.text for signal in signals]))
+    if len(languages) >= 2 and language_set == {"cs"}:
+        return ["databazeknih", "legie"]
+    if len(languages) >= 2 and language_set == {"en"}:
+        return ["googlebooks", "openlibrary"]
+    if "prelozil" in text or "vydalo" in text:
+        return ["databazeknih", "legie"]
+    return ["databazeknih", "legie", "googlebooks", "openlibrary"]
+
+
+def import_candidate_from_search_candidate(
+    source: str,
+    candidate: Candidate,
+    signals: Sequence[ImportSourceSignal],
+    work_type: str = "",
+) -> ImportCandidate:
+    authors = candidate.text.strip() if source in {"googlebooks", "openlibrary"} else ""
+    return ImportCandidate(
+        source=source,
+        title=candidate.title,
+        authors=authors,
+        url=candidate.url,
+        work_type=work_type,
+        evidence_text=candidate.text,
+    )
+
+
+def _lookup_import_source(
+    source: str,
+    book: Book,
+    signals: Sequence[ImportSourceSignal],
+    fetch: Callable[[str], str],
+) -> list[ImportCandidate]:
+    if source == "databazeknih":
+        html_text = fetch(build_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("databazeknih", item, signals)
+            for item in parse_search_results(html_text)
+        ]
+    if source == "legie":
+        html_text = fetch(build_legie_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("legie", item, signals, "povidka")
+            for item in parse_legie_search_results(html_text)
+        ]
+    if source == "googlebooks":
+        json_text = fetch(build_google_books_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("googlebooks", item, signals)
+            for item in parse_google_books_search_results(json_text)
+        ]
+    if source == "openlibrary":
+        json_text = fetch(build_openlibrary_search_url(book.title, book.authors))
+        return [
+            import_candidate_from_search_candidate("openlibrary", item, signals)
+            for item in parse_openlibrary_search_results(json_text)
+        ]
+    return []
+
+
+def lookup_import_candidates(
+    signals: Sequence[ImportSourceSignal],
+    fetcher: Callable[[str], str] | None = None,
+    sleep_seconds: float = 0.0,
+) -> list[ImportCandidate]:
+    fetch = fetcher or fetch_text
+    book = _signal_book(signals)
+    candidates: list[ImportCandidate] = []
+    for source in import_lookup_sources(signals):
+        try:
+            candidates.extend(_lookup_import_source(source, book, signals, fetch))
+        except Exception:
+            pass
+        if sleep_seconds:
+            time.sleep(sleep_seconds)
+    return score_import_candidates(signals, candidates)
 
 
 def metadata_db_path(library: str | Path) -> Path:
@@ -2374,6 +3107,14 @@ def read_books(library: str | Path, book_id: int | None = None, limit: int | Non
     return books
 
 
+def find_calibre_import_duplicates(
+    library: str | Path,
+    preview: ImportPreview,
+    books_reader: Callable[[str | Path], list[Book]] = read_books,
+) -> list[DuplicateCandidate]:
+    return find_import_duplicates(preview, books_reader(library))
+
+
 def get_current_comment(library: str | Path, book_id: int) -> str:
     connection = open_calibre_db_readonly(library)
     try:
@@ -2727,20 +3468,27 @@ def run_metadata_command_with_cover(
     selected_cover_url: str,
     runner: Callable[[Sequence[str]], CommandResult],
     cover_fetcher: Callable[[str], bytes] = fetch_binary,
+    cover_bytes: bytes = b"",
+    cover_suffix: str = ".jpg",
 ) -> CommandResult:
     """Spusti calibredb a volitelne prida vybranou obalku z docasneho souboru."""
     cover_url = selected_cover_url.strip()
-    if not cover_url:
+    bytes_to_write = cover_bytes
+    allowed_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+    suffix = cover_suffix.lower() if cover_suffix.lower() in allowed_suffixes else ".jpg"
+    if cover_url and not bytes_to_write:
+        try:
+            bytes_to_write = cover_fetcher(cover_url)
+        except Exception as exc:
+            return CommandResult(1, "", f"cover-fetch-error: {exc}")
+        suffix = _cover_suffix(cover_url)
+    if not cover_url and not bytes_to_write:
         return runner(args)
-    try:
-        cover_bytes = cover_fetcher(cover_url)
-    except Exception as exc:
-        return CommandResult(1, "", f"cover-fetch-error: {exc}")
-    if not cover_bytes:
+    if not bytes_to_write:
         return CommandResult(1, "", "cover-empty")
     with tempfile.TemporaryDirectory() as tmp:
-        cover_path = Path(tmp) / ("cover" + _cover_suffix(cover_url))
-        cover_path.write_bytes(cover_bytes)
+        cover_path = Path(tmp) / ("cover" + suffix)
+        cover_path.write_bytes(bytes_to_write)
         args_with_cover = list(args) + ["--field", "cover:" + str(cover_path)]
         return runner(args_with_cover)
 

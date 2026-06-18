@@ -9,6 +9,7 @@ import json
 import os
 import threading
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -17,7 +18,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.12"
+APP_VERSION = "0.4.0"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -29,6 +30,7 @@ DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
 SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks", "openlibrary")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
+AI_PROVIDER_VALUES = ("off", "ollama")
 REVIEW_EDITABLE_FIELDS = (
     "Rok vydani",
     "Vydavatel",
@@ -43,6 +45,7 @@ AUTO_SETTING_DEFAULTS = {
     "auto_link_audit": True,
     "auto_cover_audit": True,
 }
+AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000}
 
 
 def app_title() -> str:
@@ -227,6 +230,22 @@ def normalize_auto_settings(raw: Any) -> dict[str, bool]:
     }
 
 
+def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
+    """Vrati platne nastaveni volitelne AI vrstvy pro import."""
+    ai_raw = raw.get("ai") if isinstance(raw, dict) else {}
+    if not isinstance(ai_raw, dict):
+        ai_raw = {}
+    provider = str(ai_raw.get("provider", AI_SETTING_DEFAULTS["provider"])).strip().casefold()
+    if provider not in AI_PROVIDER_VALUES:
+        provider = str(AI_SETTING_DEFAULTS["provider"])
+    model = str(ai_raw.get("model", AI_SETTING_DEFAULTS["model"])).strip() or str(AI_SETTING_DEFAULTS["model"])
+    try:
+        text_limit = int(ai_raw.get("text_limit", AI_SETTING_DEFAULTS["text_limit"]))
+    except (TypeError, ValueError):
+        text_limit = int(AI_SETTING_DEFAULTS["text_limit"])
+    return {"provider": provider, "model": model, "text_limit": max(500, min(text_limit, 50000))}
+
+
 def auto_workflow_title(auto_settings: dict[str, bool]) -> str:
     """Slozi titulek background akce podle zapnutych automatickych kroku."""
     parts = ["Nacitani novych knih"]
@@ -262,6 +281,30 @@ def save_app_settings(library: str, theme: str, settings_path: Path | None = Non
     )
 
 
+def run_import_analysis(
+    epub_path: str | Path,
+    library: str | Path,
+    settings: dict[str, object] | None = None,
+    analyze: Callable[..., cme.ImportAnalysis] = cme.analyze_epub_for_import,
+    find_duplicates: Callable[..., list[cme.DuplicateCandidate]] = cme.find_calibre_import_duplicates,
+    ai_resolver: object | None = None,
+) -> cme.ImportAnalysis:
+    """Spusti EPUB analyzu a doplni Calibre duplicity.
+
+    Backend wiring layer: drzi analyze + find_duplicates pohromade,
+    aby Qt vrstva videla jedno volani. Pri selhani hledani duplicit
+    vrati analyzu bez duplicit, aby UI mohlo dat na vyber alespon
+    preview a kandidaty.
+    """
+    settings = settings or {}
+    analysis = analyze(epub_path, library, settings, ai_resolver=ai_resolver)
+    try:
+        duplicates = find_duplicates(library, analysis.preview)
+    except Exception:
+        duplicates = []
+    return replace(analysis, duplicates=duplicates)
+
+
 def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
     """Vybere jen platne nastaveni sloupcu podle aktualni tabulky."""
     if not isinstance(raw, dict):
@@ -282,14 +325,15 @@ def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal
-    from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPixmap
+    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
+    from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
         QComboBox,
         QDialog,
         QFileDialog,
+        QFormLayout,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -299,6 +343,8 @@ if PYSIDE6_AVAILABLE:
         QMainWindow,
         QMenu,
         QMessageBox,
+        QListWidget,
+        QListWidgetItem,
         QStyleFactory,
         QPushButton,
         QSizePolicy,
@@ -325,6 +371,169 @@ if PYSIDE6_AVAILABLE:
         finished = Signal(str, int, str, bool)
         cover_ready = Signal(int, str, str, str, bytes)
         review_ready = Signal(int, int, str, object, str)
+        import_ready = Signal(object, str)
+        apply_ready = Signal(object, str)
+
+
+    class ImportDialog(QDialog):
+        """Modalni okno pro kontrolu jednoho EPUB importu pred zapisem."""
+
+        def __init__(self, analysis: cme.ImportAnalysis, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.analysis = analysis
+            self.setWindowTitle("Import EPUB")
+            self.resize(1180, 720)
+            root = QVBoxLayout(self)
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+
+            left = QVBoxLayout()
+            body.addLayout(left, stretch=1)
+            left.addWidget(QLabel("Soubor"))
+            self.file_label = QLabel(analysis.epub_path)
+            self.file_label.setWordWrap(True)
+            left.addWidget(self.file_label)
+
+            left.addWidget(QLabel("Signaly"))
+            self.signals_list = QListWidget()
+            for signal in analysis.signals:
+                self.signals_list.addItem(f"{signal.source}: {signal.title} / {signal.authors}")
+            left.addWidget(self.signals_list, stretch=1)
+
+            left.addWidget(QLabel("Kandidati"))
+            self.candidates_list = QListWidget()
+            for candidate in analysis.candidates:
+                item = QListWidgetItem(self.candidate_display_text(candidate))
+                item.setData(Qt.ItemDataRole.UserRole, candidate)
+                self.candidates_list.addItem(item)
+            left.addWidget(self.candidates_list, stretch=1)
+            self.use_candidate_button = QPushButton("Pouzit kandidata")
+            self.use_candidate_button.setEnabled(False)
+            self.use_candidate_button.clicked.connect(self.apply_selected_candidate)
+            self.candidates_list.currentItemChanged.connect(lambda _current, _previous: self.update_candidate_button_enabled())
+            self.candidates_list.itemDoubleClicked.connect(lambda _item: self.apply_selected_candidate())
+            left.addWidget(self.use_candidate_button)
+
+            left.addWidget(QLabel("Duplicity"))
+            self.duplicates_list = QListWidget()
+            for duplicate in analysis.duplicates:
+                self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
+            left.addWidget(self.duplicates_list, stretch=1)
+
+            # Dialog je rozhodovaci/potvrzovaci, ne plny editor metadat.
+            # Importovane radky jdou na review a doladi se pozdeji v hlavni tabulce,
+            # takze tady drzime jen kompaktni nahled: nazev, autor, zdroj, odkaz.
+            # Ostatni pole (serie, rok, vydavatel, tagy, komentar) se plni interne
+            # z kandidata do self.current_preview, ale nezobrazuji se jako editovatelna.
+            # base_preview je stabilni fallback z analyzy; kazdy kandidat se staví
+            # z nej, aby skryta metadata jednoho kandidata neprosakla do dalsiho.
+            self.base_preview = analysis.preview
+            self.current_preview = analysis.preview
+
+            right = QVBoxLayout()
+            body.addLayout(right, stretch=1)
+            right.addWidget(QLabel("Co se naimportuje"))
+            form = QFormLayout()
+            right.addLayout(form)
+            self.title_edit = QLineEdit(analysis.preview.title)
+            self.authors_edit = QLineEdit(analysis.preview.authors)
+            form.addRow("Nazev", self.title_edit)
+            form.addRow("Autor/autori", self.authors_edit)
+            self.source_label = QLabel()
+            self.source_label.setWordWrap(True)
+            form.addRow("Zdroj", self.source_label)
+            link_row = QHBoxLayout()
+            self.url_label = QLabel()
+            self.url_label.setWordWrap(True)
+            self.url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            link_row.addWidget(self.url_label, stretch=1)
+            self.open_link_button = QPushButton("Otevrit odkaz")
+            self.open_link_button.clicked.connect(self.open_current_url)
+            link_row.addWidget(self.open_link_button)
+            form.addRow("Odkaz", link_row)
+            right.addStretch(1)
+
+            buttons = QHBoxLayout()
+            root.addLayout(buttons)
+            buttons.addStretch(1)
+            self.import_button = QPushButton("Importovat")
+            self.cancel_button = QPushButton("Zrusit")
+            buttons.addWidget(self.import_button)
+            buttons.addWidget(self.cancel_button)
+            self.cancel_button.clicked.connect(self.reject)
+            self.import_button.clicked.connect(self.accept)
+            self.title_edit.textChanged.connect(self.update_import_enabled)
+            self.authors_edit.textChanged.connect(self.update_import_enabled)
+            self.update_candidate_button_enabled()
+            self.refresh_preview_labels()
+            self.update_import_enabled()
+
+        def candidate_display_text(self, candidate: cme.ImportCandidate) -> str:
+            return f"{candidate.score}% {candidate.source}: {candidate.title} / {candidate.authors}"
+
+        def selected_candidate(self) -> cme.ImportCandidate | None:
+            item = self.candidates_list.currentItem()
+            candidate = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            return candidate if isinstance(candidate, cme.ImportCandidate) else None
+
+        def update_candidate_button_enabled(self) -> None:
+            self.use_candidate_button.setEnabled(self.selected_candidate() is not None)
+
+        def current_url(self) -> str:
+            return (self.current_preview.url or "").strip()
+
+        def refresh_preview_labels(self) -> None:
+            """Aktualizuje read-only nahled zdroje a odkazu podle current_preview."""
+            self.source_label.setText(self.current_preview.source or "nenacteno")
+            self.url_label.setText(self.current_url() or "nenacteno")
+            self.open_link_button.setEnabled(bool(self.current_url()))
+
+        def open_current_url(self) -> None:
+            url = self.current_url()
+            if not url:
+                return
+            QDesktopServices.openUrl(QUrl(url))
+
+        def apply_selected_candidate(self) -> None:
+            candidate = self.selected_candidate()
+            if candidate is None:
+                return
+            # Stavime vzdy ze stabilniho base_preview, ne z current_preview, aby
+            # skryta metadata predchoziho kandidata neprosakla do noveho.
+            enriched = cme.import_preview_from_candidate(candidate, self.base_preview)
+            detail = candidate.detail
+            if detail is not None:
+                updates: dict[str, str] = {}
+                if detail.published_year:
+                    updates["published_year"] = detail.published_year
+                if detail.publisher:
+                    updates["publisher"] = detail.publisher
+                if detail.tags:
+                    updates["tags"] = ", ".join(detail.tags)
+                if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
+                    updates["comment"] = cme.format_enriched_comment(candidate.url, detail)
+                if updates:
+                    enriched = replace(enriched, **updates)
+            self.current_preview = enriched
+            # Nazev/autor bereme z enriched (uz vyresil fallback na base_preview),
+            # aby nezustaly stare hodnoty z drive vybraneho kandidata.
+            self.title_edit.setText(enriched.title)
+            self.authors_edit.setText(enriched.authors)
+            self.refresh_preview_labels()
+            self.update_import_enabled()
+
+        def update_import_enabled(self) -> None:
+            self.import_button.setEnabled(bool(self.title_edit.text().strip() and self.authors_edit.text().strip()))
+
+        def preview(self) -> cme.ImportPreview:
+            # Uzivatel edituje jen nazev a autora; zbytek bere z current_preview
+            # (pocatecni fallback nebo aplikovany kandidat).
+            return replace(
+                self.current_preview,
+                title=self.title_edit.text(),
+                authors=self.authors_edit.text(),
+            )
+
 
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
@@ -365,6 +574,19 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(self.startup_preview_check, 2, 1, 1, 3)
             form.addWidget(self.auto_link_audit_check, 3, 1, 1, 3)
             form.addWidget(self.auto_cover_audit_check, 4, 1, 1, 3)
+
+            ai_settings = normalize_ai_settings(read_app_settings())
+            form.addWidget(QLabel("AI provider importu"), 5, 0)
+            self.ai_provider_combo = QComboBox()
+            self.ai_provider_combo.addItems(AI_PROVIDER_VALUES)
+            self.ai_provider_combo.setCurrentText(str(ai_settings["provider"]))
+            form.addWidget(self.ai_provider_combo, 5, 1, 1, 3)
+            form.addWidget(QLabel("Ollama model"), 6, 0)
+            self.ai_model_edit = QLineEdit(str(ai_settings["model"]))
+            form.addWidget(self.ai_model_edit, 6, 1, 1, 3)
+            form.addWidget(QLabel("EPUB text limit"), 7, 0)
+            self.ai_text_limit_edit = QLineEdit(str(ai_settings["text_limit"]))
+            form.addWidget(self.ai_text_limit_edit, 7, 1, 1, 3)
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -409,6 +631,12 @@ if PYSIDE6_AVAILABLE:
             settings["startup_preview"] = self.startup_preview_check.isChecked()
             settings["auto_link_audit"] = self.auto_link_audit_check.isChecked()
             settings["auto_cover_audit"] = self.auto_cover_audit_check.isChecked()
+            ai_raw = {
+                "provider": self.ai_provider_combo.currentText(),
+                "model": self.ai_model_edit.text(),
+                "text_limit": self.ai_text_limit_edit.text(),
+            }
+            settings["ai"] = normalize_ai_settings({"ai": ai_raw})
             shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
             self.parent_window.library_path = library
             self.parent_window.theme = normalize_theme(self.theme_combo.currentText())
@@ -445,6 +673,8 @@ if PYSIDE6_AVAILABLE:
             self.bridge.finished.connect(self.finish_background)
             self.bridge.cover_ready.connect(self.finish_cover_preview)
             self.bridge.review_ready.connect(self.finish_review_metadata_preview)
+            self.bridge.import_ready.connect(self.finish_import_analysis)
+            self.bridge.apply_ready.connect(self.finish_import_apply)
             self.cover_preview_request_id = 0
             self.review_preview_request_id = 0
             self.review_preview_book_id: int | None = None
@@ -493,6 +723,10 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
+            self.import_button = self._add_button(
+                toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "epub", show_text=False
+            )
+            self.update_import_button_enabled(True)
             toolbar.addSpacing(10)
             self._build_filterbar(toolbar)
             toolbar.addSpacing(10)
@@ -523,7 +757,7 @@ if PYSIDE6_AVAILABLE:
                 button.setIcon(self.icon_for(icon))
             if object_name:
                 button.setObjectName(object_name)
-            button.clicked.connect(callback)
+            button.clicked.connect(lambda _checked=False, callback=callback: callback())
             layout.addWidget(button)
             self.buttons.append(button)
             return button
@@ -533,10 +767,13 @@ if PYSIDE6_AVAILABLE:
             path = ICON_DIR / f"{name}.svg"
             if path.exists():
                 return QIcon(str(path))
+            # "epub" a "cover" nemaji vlastni SVG; bez tohoto rozliseni by oba
+            # spadly na SP_FileIcon a vypadaly stejne. Import EPUB = sipka dolu (import).
             fallback = {
                 "open": QStyle.StandardPixmap.SP_DialogOpenButton,
                 "save": QStyle.StandardPixmap.SP_DialogSaveButton,
                 "apply": QStyle.StandardPixmap.SP_DialogApplyButton,
+                "epub": QStyle.StandardPixmap.SP_ArrowDown,
             }.get(name, QStyle.StandardPixmap.SP_FileIcon)
             return self.style().standardIcon(fallback)
 
@@ -1384,6 +1621,188 @@ if PYSIDE6_AVAILABLE:
             action = shared.make_cover_audit_action(args=args, matches_path=self.matches_path)
             self.run_background("Audit obalek", action, reload_after=True)
 
+        def start_epub_import(
+            self,
+            path: str | None = None,
+            *,
+            analyze: Callable[[str], cme.ImportAnalysis] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+        ) -> None:
+            """Spusti analyzu EPUB importu a po dokonceni otevre ImportDialog.
+
+            `analyze` a `runner` jsou injektovatelne pro testy.
+            Bez nich appka pouzije realnou backend analyzu (vcetne AI nastaveni)
+            na samostatnem vlakne pres `WorkerBridge.import_ready`.
+            Pred otevrenim dialogu na vyber souboru ulozi pracovni data.
+            """
+            interactive = path is None
+            if interactive:
+                if not self.save_csv(show_message=False):
+                    return
+                path = self._choose_epub_file()
+            epub_path = path
+            if not epub_path:
+                return
+            if self.worker_running:
+                QMessageBox.information(self, "Bezi akce", "Pockej, az skonci aktualni akce.")
+                return
+            if analyze is None:
+                analyze = self._build_import_analyze_callable()
+            if runner is None:
+                runner = lambda target: threading.Thread(target=target, daemon=True).start()
+            self.worker_running = True
+            self.set_ui_enabled(False)
+            self.detail_tabs.setCurrentWidget(self.log_tab)
+            self.write_output(f"Import EPUB: analyza {epub_path}...")
+            self.set_status("Import EPUB: analyza")
+
+            def worker() -> None:
+                try:
+                    analysis = analyze(epub_path)
+                    self.bridge.import_ready.emit(analysis, "")
+                except Exception as exc:
+                    self.bridge.import_ready.emit(None, str(exc))
+
+            runner(worker)
+
+        def _build_import_analyze_callable(self) -> Callable[[str], cme.ImportAnalysis]:
+            """Slozi default analyze funkci podle aktualnich AI nastaveni."""
+            library = self.library_path
+            ai_settings = normalize_ai_settings(read_app_settings())
+            provider = str(ai_settings.get("provider", "off"))
+            if provider == "ollama":
+                resolver: object = cme.OllamaAIResolver(str(ai_settings.get("model", "llama3")))
+            else:
+                resolver = cme.DisabledAIResolver()
+            settings = {"epub_text_limit": ai_settings.get("text_limit", 5000)}
+            return lambda epub: run_import_analysis(epub, library, settings, ai_resolver=resolver)
+
+        def _choose_epub_file(self) -> str:
+            path, _filter = QFileDialog.getOpenFileName(
+                self,
+                "Vyber EPUB k importu",
+                "",
+                "EPUB soubory (*.epub);;Vsechny soubory (*.*)",
+            )
+            return path
+
+        def finish_import_analysis(self, analysis: object, error: str) -> None:
+            """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""
+            self.worker_running = False
+            self.set_ui_enabled(True)
+            if analysis is None or error:
+                message = error or "Analyzu se nepodarilo dokoncit."
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            self.write_output("Import EPUB: nahled pripraven")
+            self.set_status("Import EPUB: nahled pripraven")
+            dialog = ImportDialog(analysis, parent=self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
+
+        def run_import_apply(
+            self,
+            preview: cme.ImportPreview,
+            epub_path: Path,
+            *,
+            apply_func: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+            allow_force: bool = True,
+        ) -> None:
+            """Spusti realny zapis EPUB importu pres backend apply_import_preview.
+
+            Provadi se na samostatnem vlakne; vysledek se vraci pres
+            `WorkerBridge.apply_ready` na UI thread. `apply_func` a `runner`
+            jsou injektovatelne pro testy, aby se nesahalo na Calibre.
+            """
+            if not cme.is_valid_import_preview(preview):
+                QMessageBox.warning(
+                    self,
+                    "Import EPUB",
+                    "Chybi nazev nebo autor; import zruseny.",
+                )
+                return
+            if self.worker_running:
+                QMessageBox.information(self, "Bezi akce", "Pockej, az skonci aktualni akce.")
+                return
+            if apply_func is None:
+                calibredb_path = cme.find_calibredb()
+                if not calibredb_path:
+                    QMessageBox.warning(
+                        self,
+                        "Import EPUB",
+                        "Nepodarilo se najit calibredb. Zapis zruseny.",
+                    )
+                    return
+                library = self.library_path
+                matches_path = self.matches_path
+                apply_func = lambda prev, ep: cme.apply_import_preview(
+                    prev,
+                    ep,
+                    library=library,
+                    calibredb_path=calibredb_path,
+                    quit_func=lambda force: shared.quit_calibre(allow_force=force),
+                    allow_force=allow_force,
+                    matches_path=matches_path,
+                )
+            if runner is None:
+                runner = lambda target: threading.Thread(target=target, daemon=True).start()
+
+            self.worker_running = True
+            self.set_ui_enabled(False)
+            self.detail_tabs.setCurrentWidget(self.log_tab)
+            self.write_output(f"Import EPUB: zapis {epub_path}...")
+            self.set_status("Import EPUB: zapis")
+
+            def worker() -> None:
+                try:
+                    result = apply_func(preview, epub_path)
+                    self.bridge.apply_ready.emit(result, "")
+                except Exception as exc:
+                    self.bridge.apply_ready.emit(None, str(exc))
+
+            runner(worker)
+
+        def finish_import_apply(self, result: object, error: str) -> None:
+            """Zpracuje vysledek apply workeru: dialog, refresh tabulky."""
+            self.worker_running = False
+            self.set_ui_enabled(True)
+            if error or result is None:
+                message = error or "Zapis se nepodaril."
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            status = getattr(result, "status", "")
+            backup = getattr(result, "backup_path", "") or "bez zalohy"
+            if status != "updated":
+                reason = getattr(result, "error", "") or "neznama chyba"
+                message = f"Zapis selhal: {reason}\nZaloha: {backup}"
+                self.write_output(f"Import EPUB: CHYBA\n{message}")
+                self.set_status("Import EPUB: CHYBA")
+                QMessageBox.warning(self, "Import EPUB", message)
+                return
+            book_id = getattr(result, "book_id", 0)
+            message = f"Kniha {book_id} byla naimportovana.\nZaloha: {backup}"
+            # Uspech uz je videt v logu a status baru; modalni potvrzeni je navic.
+            self.write_output(f"Import EPUB: OK\n{message}")
+            self.set_status("Import EPUB: OK")
+            self.show_import_review_filter()
+            self.load_csv(show_message=False)
+
+        def show_import_review_filter(self) -> None:
+            """Po importu ukaze nove review radky a schova skip. Approve nemeni."""
+            self.auto_skip_filter_allowed = False
+            for key, checked in {"review": True, "skip": False}.items():
+                check = self.status_checks.get(key)
+                if check is None:
+                    continue
+                check.blockSignals(True)
+                check.setChecked(checked)
+                check.blockSignals(False)
+
         def run_rebuild(self) -> None:
             message = (
                 "Rebuild prepise pracovni data.\n"
@@ -1504,6 +1923,7 @@ if PYSIDE6_AVAILABLE:
             self.set_ui_enabled(True)
             if reload_after and result == 0:
                 self.load_csv(show_message=False)
+            self.update_import_button_enabled(True)
             suffix = "OK" if result == 0 else "CHYBA"
             self.write_output(f"{title}: {suffix}\n\n{text or '(bez vystupu)'}")
             self.set_status(f"{title}: {suffix}. {shared.status_summary(self.rows)}")
@@ -1592,6 +2012,12 @@ if PYSIDE6_AVAILABLE:
                 button.setEnabled(enabled)
             if enabled:
                 self.on_selection_changed()
+            self.update_import_button_enabled(enabled)
+
+        def update_import_button_enabled(self, ui_enabled: bool = True) -> None:
+            """Import EPUB je dostupny vzdy, kdyz nebezi background akce."""
+            if hasattr(self, "import_button"):
+                self.import_button.setEnabled(ui_enabled and not self.worker_running)
 
         def write_output(self, text: str) -> None:
             self.output.setPlainText(text)
