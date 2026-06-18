@@ -22,6 +22,7 @@ APP_VERSION = "0.4.0"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
+ASSETS_ICON_DIR = APP_DIR / "assets" / "icons"
 TABLE_COLUMNS = ("ID", "Kniha", "Autor", "Status", "Zdroj", "Typ", "Odkaz", "Duvod")
 REQUIRED_COLUMN_INDEXES = {0, 1, 2}
 MIN_COLUMN_WIDTH = 36
@@ -51,6 +52,16 @@ AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000}
 def app_title() -> str:
     """Vrati titulek hlavniho okna vcetne verze."""
     return f"Calibre Meta Edit {APP_VERSION}"
+
+
+def asset_icon_path(name: str) -> Path | None:
+    """Najde SVG ikonu v assets/icons podle jmena bez pripony.
+
+    Vrati cestu jen kdyz soubor existuje; jinak None, aby app pri chybejici
+    ikone nespadla a mohla pouzit zalozni ikonu.
+    """
+    path = ASSETS_ICON_DIR / f"{name}.svg"
+    return path if path.exists() else None
 
 
 def filter_rows(
@@ -718,19 +729,19 @@ if PYSIDE6_AVAILABLE:
             toolbar.setSpacing(6)
             self.buttons: list[QToolButton] = []
 
-            self._add_button(toolbar, "Nacist data", self.load_csv, "neutralButton", "open", show_text=False)
+            self._add_button(toolbar, "Nacist data", self.load_csv, "neutralButton", "load", show_text=False)
             self._add_button(toolbar, "Ulozit data", self.save_csv, "neutralButton", "save", show_text=False)
             toolbar.addSpacing(10)
-            self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "recycle", show_text=False)
-            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "chain", show_text=False)
-            self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "cover", show_text=False)
+            self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "load-calibre", show_text=False)
+            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)
+            self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
             self.import_button = self._add_button(
-                toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "epub", show_text=False
+                toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
             self.update_import_button_enabled(True)
             toolbar.addStretch(1)
-            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "gear", show_text=False)
-            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "apply", show_text=False)
+            self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "preferences", show_text=False)
+            self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "write-calibre", show_text=False)
             return toolbar
 
         def _build_filter_row(self) -> QHBoxLayout:
@@ -770,7 +781,10 @@ if PYSIDE6_AVAILABLE:
             return button
 
         def icon_for(self, name: str) -> QIcon:
-            """Vrati vlastni SVG ikonu, nebo Qt fallback."""
+            """Vrati vlastni SVG ikonu (assets/icons, pak icons/), nebo Qt fallback."""
+            asset_path = asset_icon_path(name)
+            if asset_path is not None:
+                return QIcon(str(asset_path))
             path = ICON_DIR / f"{name}.svg"
             if path.exists():
                 return QIcon(str(path))
