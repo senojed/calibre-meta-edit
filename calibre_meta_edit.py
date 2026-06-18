@@ -447,6 +447,58 @@ def has_known_mojibake(text: str) -> bool:
     return any(broken in text for broken in MOJIBAKE_REPLACEMENTS)
 
 
+# Pripony jmena (Jr., III, PhD); za carkou nejde o krestni jmeno -> neprehazovat.
+_AUTHOR_NAME_SUFFIXES = {
+    "jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "dds", "esq",
+}
+
+# Slova typicka pro firmu/organizaci; takove nazvy nikdy neprehazujeme.
+_AUTHOR_ORG_KEYWORDS = {
+    "inc", "ltd", "llc", "gmbh", "co", "corp", "corporation", "company",
+    "press", "verlag", "publishing", "publishers", "books", "edition",
+    "editions", "foundation", "association", "university", "institute",
+    "society", "group", "team",
+}
+
+
+def _looks_like_name_suffix(text: str) -> bool:
+    return text.replace(".", "").strip().lower() in _AUTHOR_NAME_SUFFIXES
+
+
+def _looks_like_organization(text: str) -> bool:
+    tokens = {token.strip(".,").lower() for token in text.split()}
+    return bool(tokens & _AUTHOR_ORG_KEYWORDS)
+
+
+def normalize_author_display_name(name: str) -> str:
+    """Prevede jednoho autora z razeneho tvaru 'Prijmeni, Jmeno' na 'Jmeno Prijmeni'.
+
+    Konzervativni: prehodi jen jednoznacne osobni jmeno s prave jednou carkou.
+    Nejasne pripady (vic carek, pripona za carkou, firma, prazdne) necha beze zmeny.
+    """
+    stripped = name.strip()
+    if stripped.count(",") != 1:
+        return stripped
+    last, first = (part.strip() for part in stripped.split(","))
+    if not last or not first:
+        return stripped
+    if _looks_like_name_suffix(first):
+        return stripped
+    if _looks_like_organization(last) or _looks_like_organization(first):
+        return stripped
+    return f"{first} {last}"
+
+
+def normalize_author_display_names(authors: str) -> str:
+    """Normalizuje cely retezec autoru oddeleny ' & ' na zobrazeny tvar."""
+    if not authors.strip():
+        return authors
+    # Delic autoru je ampersand obklopeny mezerami (" & "); bare "&" uvnitr slov
+    # (AT&T, R&D) neni delic a zustane soucasti jmena.
+    parts = [part.strip() for part in re.split(r"\s+&\s+", authors) if part.strip()]
+    return " & ".join(normalize_author_display_name(part) for part in parts)
+
+
 def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int]:
     preview_text = " ".join(part for part in (signal.title, signal.authors) if part.strip())
     clean_bonus = 100 if preview_text and not has_known_mojibake(preview_text) else 0
@@ -459,7 +511,7 @@ def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> Impo
     metadata_signal = next((signal for signal in signals if signal.source == "epub-metadata"), None)
     return ImportPreview(
         title=preview_signal.title,
-        authors=preview_signal.authors,
+        authors=normalize_author_display_names(preview_signal.authors),
         published_year=metadata_signal.published_year if metadata_signal else "",
         publisher=metadata_signal.publisher if metadata_signal else "",
     )
@@ -471,7 +523,7 @@ def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: I
     return replace(
         fallback,
         title=candidate.title or fallback.title,
-        authors=candidate.authors or fallback.authors,
+        authors=normalize_author_display_names(candidate.authors or fallback.authors),
         url=candidate.url,
         source=candidate.source,
         work_type=candidate.work_type,

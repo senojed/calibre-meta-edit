@@ -243,6 +243,76 @@ class ImportModelTests(unittest.TestCase):
         self.assertIsNone(candidate.detail)
 
 
+class AuthorDisplayNameTests(unittest.TestCase):
+    def test_normalizes_simple_sort_name_to_display_order(self):
+        self.assertEqual(cme.normalize_author_display_name("Verne, Jules"), "Jules Verne")
+        self.assertEqual(cme.normalize_author_display_name("Asimov, Isaac"), "Isaac Asimov")
+
+    def test_normalizes_sort_name_with_diacritics(self):
+        self.assertEqual(cme.normalize_author_display_name("\u010capek, Karel"), "Karel \u010capek")
+
+    def test_normalizes_sort_name_with_initials(self):
+        self.assertEqual(cme.normalize_author_display_name("Tolkien, J. R. R."), "J. R. R. Tolkien")
+
+    def test_keeps_already_display_name_unchanged(self):
+        self.assertEqual(cme.normalize_author_display_name("Jules Verne"), "Jules Verne")
+
+    def test_keeps_empty_author_safe(self):
+        self.assertEqual(cme.normalize_author_display_name(""), "")
+        self.assertEqual(cme.normalize_author_display_names(""), "")
+        self.assertEqual(cme.normalize_author_display_names("   "), "   ")
+
+    def test_does_not_mangle_ambiguous_multi_comma(self):
+        self.assertEqual(
+            cme.normalize_author_display_name("King, Jr., Martin Luther"),
+            "King, Jr., Martin Luther",
+        )
+
+    def test_does_not_mangle_suffix_sort_name(self):
+        self.assertEqual(cme.normalize_author_display_name("Tolkien, Jr."), "Tolkien, Jr.")
+
+    def test_does_not_rewrite_organization_name(self):
+        self.assertEqual(
+            cme.normalize_author_display_name("Penguin Books, Ltd"),
+            "Penguin Books, Ltd",
+        )
+
+    def test_normalizes_each_author_in_multi_author_string(self):
+        self.assertEqual(
+            cme.normalize_author_display_names("Verne, Jules & Asimov, Isaac"),
+            "Jules Verne & Isaac Asimov",
+        )
+
+    def test_does_not_split_bare_ampersand_inside_name(self):
+        self.assertEqual(cme.normalize_author_display_names("AT&T Press"), "AT&T Press")
+        self.assertEqual(cme.normalize_author_display_names("R&D Team"), "R&D Team")
+
+    def test_does_not_normalize_organization_with_comma(self):
+        self.assertEqual(
+            cme.normalize_author_display_name("R&D Team, Editorial"),
+            "R&D Team, Editorial",
+        )
+
+    def test_initial_epub_preview_uses_normalized_display_author(self):
+        signal = cme.import_signal_from_epub_metadata(
+            cme.EpubMetadata(title="Tajupln\u00fd ostrov", authors="Verne, Jules")
+        )
+
+        preview = cme.choose_initial_import_preview([signal])
+
+        self.assertEqual(preview.authors, "Jules Verne")
+
+    def test_candidate_preview_normalizes_sort_style_author(self):
+        fallback = cme.ImportPreview(title="Nadace", authors="Isaac Asimov")
+        candidate = cme.ImportCandidate(
+            source="databazeknih", title="Nadace", authors="Asimov, Isaac", url="https://x"
+        )
+
+        preview = cme.import_preview_from_candidate(candidate, fallback)
+
+        self.assertEqual(preview.authors, "Isaac Asimov")
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [
