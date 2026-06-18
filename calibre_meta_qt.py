@@ -420,31 +420,38 @@ if PYSIDE6_AVAILABLE:
                 self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
             left.addWidget(self.duplicates_list, stretch=1)
 
-            right = QFormLayout()
+            # Dialog je rozhodovaci/potvrzovaci, ne plny editor metadat.
+            # Importovane radky jdou na review a doladi se pozdeji v hlavni tabulce,
+            # takze tady drzime jen kompaktni nahled: nazev, autor, zdroj, odkaz.
+            # Ostatni pole (serie, rok, vydavatel, tagy, komentar) se plni interne
+            # z kandidata do self.current_preview, ale nezobrazuji se jako editovatelna.
+            # base_preview je stabilni fallback z analyzy; kazdy kandidat se staví
+            # z nej, aby skryta metadata jednoho kandidata neprosakla do dalsiho.
+            self.base_preview = analysis.preview
+            self.current_preview = analysis.preview
+
+            right = QVBoxLayout()
             body.addLayout(right, stretch=1)
+            right.addWidget(QLabel("Co se naimportuje"))
+            form = QFormLayout()
+            right.addLayout(form)
             self.title_edit = QLineEdit(analysis.preview.title)
             self.authors_edit = QLineEdit(analysis.preview.authors)
-            self.series_edit = QLineEdit(analysis.preview.series)
-            self.series_index_edit = QLineEdit(analysis.preview.series_index)
-            self.year_edit = QLineEdit(analysis.preview.published_year)
-            self.publisher_edit = QLineEdit(analysis.preview.publisher)
-            self.tags_edit = QLineEdit(analysis.preview.tags)
-            self.url_edit = QLineEdit(analysis.preview.url)
-            self.comment_edit = QTextEdit(analysis.preview.comment)
-            right.addRow("Nazev", self.title_edit)
-            right.addRow("Autor/autori", self.authors_edit)
-            right.addRow("Serie", self.series_edit)
-            right.addRow("Cislo serie", self.series_index_edit)
-            right.addRow("Rok vydani", self.year_edit)
-            right.addRow("Vydavatel", self.publisher_edit)
-            right.addRow("Tagy", self.tags_edit)
+            form.addRow("Nazev", self.title_edit)
+            form.addRow("Autor/autori", self.authors_edit)
+            self.source_label = QLabel()
+            self.source_label.setWordWrap(True)
+            form.addRow("Zdroj", self.source_label)
             link_row = QHBoxLayout()
-            link_row.addWidget(self.url_edit, stretch=1)
+            self.url_label = QLabel()
+            self.url_label.setWordWrap(True)
+            self.url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            link_row.addWidget(self.url_label, stretch=1)
             self.open_link_button = QPushButton("Otevrit odkaz")
             self.open_link_button.clicked.connect(self.open_current_url)
             link_row.addWidget(self.open_link_button)
-            right.addRow("Odkaz", link_row)
-            right.addRow("Komentar", self.comment_edit)
+            form.addRow("Odkaz", link_row)
+            right.addStretch(1)
 
             buttons = QHBoxLayout()
             root.addLayout(buttons)
@@ -455,11 +462,10 @@ if PYSIDE6_AVAILABLE:
             buttons.addWidget(self.cancel_button)
             self.cancel_button.clicked.connect(self.reject)
             self.import_button.clicked.connect(self.accept)
-            self.url_edit.textChanged.connect(self.update_open_link_enabled)
             self.title_edit.textChanged.connect(self.update_import_enabled)
             self.authors_edit.textChanged.connect(self.update_import_enabled)
             self.update_candidate_button_enabled()
-            self.update_open_link_enabled()
+            self.refresh_preview_labels()
             self.update_import_enabled()
 
         def candidate_display_text(self, candidate: cme.ImportCandidate) -> str:
@@ -473,11 +479,17 @@ if PYSIDE6_AVAILABLE:
         def update_candidate_button_enabled(self) -> None:
             self.use_candidate_button.setEnabled(self.selected_candidate() is not None)
 
-        def update_open_link_enabled(self) -> None:
-            self.open_link_button.setEnabled(bool(self.url_edit.text().strip()))
+        def current_url(self) -> str:
+            return (self.current_preview.url or "").strip()
+
+        def refresh_preview_labels(self) -> None:
+            """Aktualizuje read-only nahled zdroje a odkazu podle current_preview."""
+            self.source_label.setText(self.current_preview.source or "nenacteno")
+            self.url_label.setText(self.current_url() or "nenacteno")
+            self.open_link_button.setEnabled(bool(self.current_url()))
 
         def open_current_url(self) -> None:
-            url = self.url_edit.text().strip()
+            url = self.current_url()
             if not url:
                 return
             QDesktopServices.openUrl(QUrl(url))
@@ -486,40 +498,40 @@ if PYSIDE6_AVAILABLE:
             candidate = self.selected_candidate()
             if candidate is None:
                 return
-            if candidate.title:
-                self.title_edit.setText(candidate.title)
-            if candidate.authors:
-                self.authors_edit.setText(candidate.authors)
-            if candidate.url:
-                self.url_edit.setText(candidate.url)
+            # Stavime vzdy ze stabilniho base_preview, ne z current_preview, aby
+            # skryta metadata predchoziho kandidata neprosakla do noveho.
+            enriched = cme.import_preview_from_candidate(candidate, self.base_preview)
             detail = candidate.detail
             if detail is not None:
+                updates: dict[str, str] = {}
                 if detail.published_year:
-                    self.year_edit.setText(detail.published_year)
+                    updates["published_year"] = detail.published_year
                 if detail.publisher:
-                    self.publisher_edit.setText(detail.publisher)
+                    updates["publisher"] = detail.publisher
                 if detail.tags:
-                    self.tags_edit.setText(", ".join(detail.tags))
+                    updates["tags"] = ", ".join(detail.tags)
                 if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
-                    self.comment_edit.setHtml(cme.format_enriched_comment(candidate.url, detail))
+                    updates["comment"] = cme.format_enriched_comment(candidate.url, detail)
+                if updates:
+                    enriched = replace(enriched, **updates)
+            self.current_preview = enriched
+            # Nazev/autor bereme z enriched (uz vyresil fallback na base_preview),
+            # aby nezustaly stare hodnoty z drive vybraneho kandidata.
+            self.title_edit.setText(enriched.title)
+            self.authors_edit.setText(enriched.authors)
+            self.refresh_preview_labels()
             self.update_import_enabled()
-            self.update_open_link_enabled()
 
         def update_import_enabled(self) -> None:
             self.import_button.setEnabled(bool(self.title_edit.text().strip() and self.authors_edit.text().strip()))
 
         def preview(self) -> cme.ImportPreview:
+            # Uzivatel edituje jen nazev a autora; zbytek bere z current_preview
+            # (pocatecni fallback nebo aplikovany kandidat).
             return replace(
-                self.analysis.preview,
+                self.current_preview,
                 title=self.title_edit.text(),
                 authors=self.authors_edit.text(),
-                series=self.series_edit.text(),
-                series_index=self.series_index_edit.text(),
-                published_year=self.year_edit.text(),
-                publisher=self.publisher_edit.text(),
-                tags=self.tags_edit.text(),
-                url=self.url_edit.text(),
-                comment=self.comment_edit.toPlainText(),
             )
 
 
@@ -755,10 +767,13 @@ if PYSIDE6_AVAILABLE:
             path = ICON_DIR / f"{name}.svg"
             if path.exists():
                 return QIcon(str(path))
+            # "epub" a "cover" nemaji vlastni SVG; bez tohoto rozliseni by oba
+            # spadly na SP_FileIcon a vypadaly stejne. Import EPUB = sipka dolu (import).
             fallback = {
                 "open": QStyle.StandardPixmap.SP_DialogOpenButton,
                 "save": QStyle.StandardPixmap.SP_DialogSaveButton,
                 "apply": QStyle.StandardPixmap.SP_DialogApplyButton,
+                "epub": QStyle.StandardPixmap.SP_ArrowDown,
             }.get(name, QStyle.StandardPixmap.SP_FileIcon)
             return self.style().standardIcon(fallback)
 
@@ -1771,11 +1786,11 @@ if PYSIDE6_AVAILABLE:
                 return
             book_id = getattr(result, "book_id", 0)
             message = f"Kniha {book_id} byla naimportovana.\nZaloha: {backup}"
+            # Uspech uz je videt v logu a status baru; modalni potvrzeni je navic.
             self.write_output(f"Import EPUB: OK\n{message}")
             self.set_status("Import EPUB: OK")
             self.show_import_review_filter()
             self.load_csv(show_message=False)
-            QMessageBox.information(self, "Import EPUB", message)
 
         def show_import_review_filter(self) -> None:
             """Po importu ukaze nove review radky a schova skip. Approve nemeni."""

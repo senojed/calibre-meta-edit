@@ -330,7 +330,9 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(dialog.import_button.isEnabled())
         app.processEvents()
 
-    def test_import_dialog_returns_edited_preview(self):
+    def test_import_dialog_returns_preview_with_edited_title_author(self):
+        # Dialog je zjednoduseny: uzivatel edituje jen nazev a autora.
+        # Zbyle pole (publisher, comment, ...) se berou z puvodniho preview.
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -342,20 +344,41 @@ class QtImportTests(unittest.TestCase):
             candidates=[],
             recommended=None,
             duplicates=[],
-            preview=cme.ImportPreview(title="Stary", authors="Autor", comment="Popis"),
+            preview=cme.ImportPreview(title="Stary", authors="Autor", publisher="Vydavatel", comment="Popis"),
             messages=[],
         )
         dialog = qt.ImportDialog(analysis)
         dialog.title_edit.setText("Novy")
-        dialog.publisher_edit.setText("Vydavatel")
-        dialog.comment_edit.setPlainText("Komentar")
 
         preview = dialog.preview()
 
         self.assertEqual(preview.title, "Novy")
         self.assertEqual(preview.authors, "Autor")
+        # Nezobrazena pole zustavaji zachovana z puvodniho preview.
         self.assertEqual(preview.publisher, "Vydavatel")
-        self.assertEqual(preview.comment, "Komentar")
+        self.assertEqual(preview.comment, "Popis")
+        app.processEvents()
+
+    def test_import_dialog_has_no_editable_metadata_fields(self):
+        # Zjednoduseny dialog uz nesmi vystavovat siroky editor metadat.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        for removed in ("series_edit", "series_index_edit", "year_edit", "publisher_edit", "tags_edit", "url_edit", "comment_edit"):
+            self.assertFalse(hasattr(dialog, removed), f"{removed} ma byt odstraneno")
         app.processEvents()
 
     def test_import_dialog_candidate_score_display_includes_percent(self):
@@ -400,12 +423,17 @@ class QtImportTests(unittest.TestCase):
 
         dialog.apply_selected_candidate()
 
+        # Nazev/autor se promitnou do editovatelnych poli.
         self.assertEqual(dialog.title_edit.text(), "Kandidat")
         self.assertEqual(dialog.authors_edit.text(), "Autor")
-        self.assertEqual(dialog.url_edit.text(), "https://x")
-        self.assertEqual(dialog.year_edit.text(), "1990")
-        self.assertEqual(dialog.publisher_edit.text(), "Talpress")
-        self.assertEqual(dialog.tags_edit.text(), "Fantasy, Humor")
+        # URL se zobrazi jen jako read-only label.
+        self.assertEqual(dialog.url_label.text(), "https://x")
+        # Obohacena metadata (rok, vydavatel, tagy) jdou interne do preview().
+        preview = dialog.preview()
+        self.assertEqual(preview.url, "https://x")
+        self.assertEqual(preview.published_year, "1990")
+        self.assertEqual(preview.publisher, "Talpress")
+        self.assertEqual(preview.tags, "Fantasy, Humor")
         app.processEvents()
 
     def test_import_dialog_double_clicking_candidate_populates_preview_fields(self):
@@ -432,7 +460,8 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(dialog.title_edit.text(), "Manual")
         self.assertEqual(dialog.authors_edit.text(), "Autor")
-        self.assertEqual(dialog.url_edit.text(), "https://manual")
+        self.assertEqual(dialog.url_label.text(), "https://manual")
+        self.assertEqual(dialog.preview().url, "https://manual")
         app.processEvents()
 
     def test_import_dialog_use_candidate_button_state_and_click(self):
@@ -459,7 +488,8 @@ class QtImportTests(unittest.TestCase):
         dialog.use_candidate_button.click()
 
         self.assertEqual(dialog.title_edit.text(), "Manual")
-        self.assertEqual(dialog.url_edit.text(), "https://manual")
+        self.assertEqual(dialog.url_label.text(), "https://manual")
+        self.assertEqual(dialog.preview().url, "https://manual")
         app.processEvents()
 
     def test_import_dialog_open_link_button_state_tracks_url(self):
@@ -468,10 +498,11 @@ class QtImportTests(unittest.TestCase):
         import calibre_meta_qt as qt
 
         app = QApplication.instance() or QApplication(sys.argv)
+        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://example.test/book", score=5)
         analysis = cme.ImportAnalysis(
             epub_path="book.epub",
             signals=[],
-            candidates=[],
+            candidates=[candidate],
             recommended=None,
             duplicates=[],
             preview=cme.ImportPreview(),
@@ -479,8 +510,10 @@ class QtImportTests(unittest.TestCase):
         )
         dialog = qt.ImportDialog(analysis)
 
+        # Bez URL je tlacitko vypnute; po aplikaci kandidata s URL se zapne.
         self.assertFalse(dialog.open_link_button.isEnabled())
-        dialog.url_edit.setText("https://example.test/book")
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.apply_selected_candidate()
         self.assertTrue(dialog.open_link_button.isEnabled())
         app.processEvents()
 
@@ -557,6 +590,165 @@ class QtImportTests(unittest.TestCase):
 
         accept.assert_not_called()
         self.assertEqual(dialog.title_edit.text(), "Manual")
+        app.processEvents()
+
+    def test_import_dialog_accept_uses_final_preview(self):
+        # Dialog lze potvrdit; preview() vraci aktualni rozhodnuti.
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        self.assertTrue(dialog.import_button.isEnabled())
+        dialog.import_button.click()
+
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        preview = dialog.preview()
+        self.assertEqual(preview.title, "Kniha")
+        self.assertEqual(preview.authors, "Autor")
+        app.processEvents()
+
+    def test_import_dialog_using_candidate_updates_import_choice(self):
+        # Vyber a pouziti kandidata zmeni preview pouzity pro import (URL, zdroj).
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        candidate = cme.ImportCandidate("databazeknih", "Spravny", "Autor", "https://spravny", score=88)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Fallback", authors="Fallback autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        # Pred pouzitim kandidata drzi preview fallback.
+        self.assertEqual(dialog.preview().title, "Fallback")
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.apply_selected_candidate()
+
+        preview = dialog.preview()
+        self.assertEqual(preview.title, "Spravny")
+        self.assertEqual(preview.authors, "Autor")
+        self.assertEqual(preview.url, "https://spravny")
+        self.assertEqual(preview.source, "databazeknih")
+        self.assertEqual(dialog.source_label.text(), "databazeknih")
+        app.processEvents()
+
+    def test_import_dialog_switching_candidate_does_not_leak_hidden_metadata(self):
+        # Kandidat A ma detail metadata; kandidat B ne. Po prepnuti z A na B
+        # nesmi B podedit skryta metadata z A; ma padnout jen na base_preview.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        detail = cme.BookDetailMetadata(published_year="1990", publisher="Talpress", tags=["Fantasy", "Humor"], about_text="popis A")
+        candidate_a = cme.ImportCandidate("databazeknih", "Kniha A", "Autor A", "https://a", score=80, detail=detail)
+        candidate_b = cme.ImportCandidate("openlibrary", "Kniha B", "Autor B", "https://b", score=70)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate_a, candidate_b],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Fallback", authors="Fallback autor", publisher="BaseVydavatel"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        # Aplikuj A -> preview ma detail metadata z A.
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.apply_selected_candidate()
+        preview_a = dialog.preview()
+        self.assertEqual(preview_a.publisher, "Talpress")
+        self.assertEqual(preview_a.tags, "Fantasy, Humor")
+        self.assertEqual(preview_a.published_year, "1990")
+        self.assertTrue(preview_a.comment)
+
+        # Aplikuj B -> preview pouziva B, ale neprosaknou metadata z A.
+        dialog.candidates_list.setCurrentRow(1)
+        dialog.apply_selected_candidate()
+        preview_b = dialog.preview()
+        self.assertEqual(preview_b.title, "Kniha B")
+        self.assertEqual(preview_b.authors, "Autor B")
+        self.assertEqual(preview_b.url, "https://b")
+        self.assertEqual(preview_b.source, "openlibrary")
+        # Zadne A metadata.
+        self.assertNotEqual(preview_b.publisher, "Talpress")
+        self.assertEqual(preview_b.tags, "")
+        self.assertEqual(preview_b.published_year, "")
+        self.assertEqual(preview_b.comment, "")
+        # Fallback jen na base_preview metadata.
+        self.assertEqual(preview_b.publisher, "BaseVydavatel")
+        app.processEvents()
+
+    def test_import_dialog_candidate_without_title_uses_base_fallback(self):
+        # Kandidat bez title/authors nesmi nechat stare viditelne hodnoty;
+        # ma ukazat enriched/base fallback.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        candidate_a = cme.ImportCandidate("databazeknih", "Kniha A", "Autor A", "https://a", score=80)
+        candidate_empty = cme.ImportCandidate("openlibrary", "", "", "https://b", score=70)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate_a, candidate_empty],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="BaseTitul", authors="BaseAutor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.apply_selected_candidate()
+        self.assertEqual(dialog.title_edit.text(), "Kniha A")
+
+        # Kandidat bez title/authors -> fallback na base, ne stale "Kniha A".
+        dialog.candidates_list.setCurrentRow(1)
+        dialog.apply_selected_candidate()
+        self.assertEqual(dialog.title_edit.text(), "BaseTitul")
+        self.assertEqual(dialog.authors_edit.text(), "BaseAutor")
+        self.assertEqual(dialog.preview().url, "https://b")
+        app.processEvents()
+
+    def test_import_epub_icon_is_distinct_from_cover_icon(self):
+        # Import EPUB a Obalky drive padaly na stejny SP_FileIcon; musi se lisit.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        epub_icon = window.icon_for("epub")
+        cover_icon = window.icon_for("cover")
+
+        self.assertFalse(epub_icon.isNull())
+        epub_img = epub_icon.pixmap(32, 32).toImage()
+        cover_img = cover_icon.pixmap(32, 32).toImage()
+        self.assertFalse(epub_img.isNull())
+        self.assertNotEqual(epub_img, cover_img)
         app.processEvents()
 
     def test_qt_startup_preview_uses_single_shot_timer(self):
@@ -1313,7 +1505,7 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertIs(captured["preview"], preview)
         self.assertEqual(captured["path"], Path("kniha.epub"))
         load_csv.assert_called_once_with(show_message=False)
-        info.assert_called_once()
+        info.assert_not_called()
         warning.assert_not_called()
         self.assertTrue(window.status_checks["review"].isChecked())
         self.assertFalse(window.status_checks["skip"].isChecked())
@@ -1398,6 +1590,42 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertTrue(window.status_checks["review"].isChecked())
         self.assertFalse(window.status_checks["skip"].isChecked())
         self.assertFalse(window.status_checks["approve"].isChecked())
+        app.processEvents()
+
+    def test_run_import_apply_success_shows_no_success_messagebox(self):
+        # Po uspesnem importu uz nechceme modalni potvrzeni; staci log + status.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv") as load_csv,
+            patch.object(qt.QMessageBox, "information") as info,
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=fake_apply,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        info.assert_not_called()
+        warning.assert_not_called()
+        load_csv.assert_called_once_with(show_message=False)
+        self.assertFalse(window.worker_running)
         app.processEvents()
 
     def test_run_import_apply_failed_status_shows_warning_and_no_reload(self):
