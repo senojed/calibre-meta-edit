@@ -698,20 +698,38 @@ def resolve_import_candidate_with_ai(
     return candidates[0] if candidates[0].score >= minimum_score else None
 
 
-def analyze_epub_for_import(
+def analyze_book_for_import(
     path: str | Path,
     library: str | Path,
     settings: dict[str, object],
     online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
     ai_resolver: object | None = None,
+    epub_metadata_reader: Callable[..., EpubMetadata] = read_epub_metadata,
+    epub_text_reader: Callable[..., str] = extract_epub_start_text,
+    ebook_metadata_reader: Callable[..., EpubMetadata] = read_book_metadata_with_ebook_meta,
+    ebook_text_reader: Callable[..., str] = extract_book_start_text_with_convert,
 ) -> ImportAnalysis:
-    epub_path = Path(path)
-    metadata = read_epub_metadata(epub_path)
-    text = extract_epub_start_text(epub_path, limit=int(settings.get("epub_text_limit", 5000) or 5000))
+    """Analyza importu podle pripony souboru.
+
+    .epub jede stdlib cestou (beze zmeny). .mobi/.azw3/.pdb pres Calibre nastroje.
+    Jine pripony vyhodi ValueError - picker je nepusti, tady jen ciste selze.
+    Spolecna cast (online lookup, scoring, AI, preview) je pro vsechny stejna.
+    """
+    book_path = Path(path)
+    suffix = book_path.suffix.lower()
+    limit = int(settings.get("epub_text_limit", 5000) or 5000)
+    if suffix == ".epub":
+        metadata = epub_metadata_reader(book_path)
+        text = epub_text_reader(book_path, limit=limit)
+    elif suffix in EBOOK_TOOL_FORMATS:
+        metadata = ebook_metadata_reader(book_path, str(settings.get("ebook_meta_path", "ebook-meta")))
+        text = ebook_text_reader(book_path, str(settings.get("ebook_convert_path", "ebook-convert")), limit=limit)
+    else:
+        raise ValueError("unsupported-format")
     signals = [
-        import_signal_from_epub_metadata(metadata),
+        import_signal_from_book_metadata(metadata, source="epub-metadata" if suffix == ".epub" else "ebook-meta"),
         import_signal_from_epub_text(text),
-        import_signal_from_path(epub_path),
+        import_signal_from_path(book_path),
     ]
     try:
         candidates = score_import_candidates(signals, online_lookup(signals)) if online_lookup else lookup_import_candidates(signals)
@@ -721,7 +739,7 @@ def analyze_epub_for_import(
     fallback_preview = choose_initial_import_preview(signals)
     preview = import_preview_from_candidate(recommended, fallback_preview)
     return ImportAnalysis(
-        epub_path=str(epub_path),
+        epub_path=str(book_path),
         signals=signals,
         candidates=candidates,
         recommended=recommended,
@@ -729,6 +747,17 @@ def analyze_epub_for_import(
         preview=preview,
         messages=[],
     )
+
+
+def analyze_epub_for_import(
+    path: str | Path,
+    library: str | Path,
+    settings: dict[str, object],
+    online_lookup: Callable[[Sequence[ImportSourceSignal]], list[ImportCandidate]] | None = None,
+    ai_resolver: object | None = None,
+) -> ImportAnalysis:
+    """Zpetne kompatibilni vstup pro EPUB; deleguje na analyze_book_for_import."""
+    return analyze_book_for_import(path, library, settings, online_lookup, ai_resolver)
 
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:

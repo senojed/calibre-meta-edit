@@ -414,6 +414,33 @@ class BookImportFormatTests(unittest.TestCase):
         self.assertEqual(preview.publisher, "Argo")
         self.assertEqual(preview.published_year, "1951")
 
+    def test_dispatch_routes_mobi_through_ebook_tools(self):
+        used = {}
+
+        def meta_reader(path, settings):
+            used["meta_path"] = path
+            return cme.EpubMetadata(title="Nadace", authors="Isaac Asimov")
+
+        def text_reader(path, settings):
+            used["text_path"] = path
+            return "zacatek"
+
+        analysis = cme.analyze_book_for_import(
+            "kniha.mobi",
+            library="B:\\",
+            settings={},
+            online_lookup=lambda signals: [],
+            ebook_metadata_reader=lambda path, ebook_meta_path, runner=None: meta_reader(path, None),
+            ebook_text_reader=lambda path, ebook_convert_path, runner=None, limit=5000: text_reader(path, None),
+        )
+        self.assertEqual(str(used["meta_path"]), "kniha.mobi")
+        self.assertEqual(analysis.preview.title, "Nadace")
+        self.assertEqual(analysis.preview.authors, "Isaac Asimov")
+
+    def test_dispatch_unsupported_suffix_raises(self):
+        with self.assertRaises(ValueError):
+            cme.analyze_book_for_import("kniha.cbz", library="B:\\", settings={}, online_lookup=lambda s: [])
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
