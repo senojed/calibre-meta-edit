@@ -517,6 +517,8 @@ def folder_author_hint(parent_name: str) -> str:
 def import_signal_from_path(path: str | Path) -> ImportSourceSignal:
     file_path = Path(path)
     title, authors = split_author_title_from_filename(file_path.stem)
+    if not authors and len(file_path.parts) >= 2:
+        authors = folder_author_hint(file_path.parts[-2])
     folder_text = repair_filename_text(" ".join(part for part in file_path.parts[:-1] if part))
     return ImportSourceSignal(
         source="filename",

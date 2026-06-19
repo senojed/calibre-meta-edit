@@ -462,6 +462,21 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
     def test_folder_author_hint_lowercase_rejected(self):
         self.assertEqual(cme.folder_author_hint("various authors"), "")
 
+    def test_path_signal_uses_folder_as_author(self):
+        signal = cme.import_signal_from_path(r"E:\Knihy\Terry_Pratchett\Kobercove.pdb")
+        self.assertEqual(signal.title, "Kobercove")
+        self.assertEqual(signal.authors, "Terry Pratchett")
+
+    def test_path_signal_no_author_when_parent_generic(self):
+        signal = cme.import_signal_from_path(r"E:\Knihy\Kobercove.pdb")
+        self.assertEqual(signal.title, "Kobercove")
+        self.assertEqual(signal.authors, "")
+
+    def test_path_signal_keeps_filename_author_over_folder(self):
+        signal = cme.import_signal_from_path(r"E:\Knihy\Jine_Jmeno\Verne - Tajuplny ostrov.epub")
+        self.assertEqual(signal.title, "Tajuplny ostrov")
+        self.assertEqual(signal.authors, "Verne")
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
