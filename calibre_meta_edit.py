@@ -6,6 +6,7 @@ import argparse
 import csv
 import html
 import json
+import os
 import posixpath
 import re
 import shutil
@@ -377,6 +378,32 @@ def read_book_metadata_with_ebook_meta(
     if result.returncode != 0:
         return EpubMetadata()
     return parse_ebook_meta_output(result.stdout)
+
+
+def extract_book_start_text_with_convert(
+    path: str | Path,
+    ebook_convert_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+    limit: int = 5000,
+) -> str:
+    """Prevede knihu na docasny .txt pres 'ebook-convert' a vrati prvnich `limit` znaku.
+
+    Pri selhani konverze vrati "" - text je jen slaby signal, import jede dal.
+    Docasny soubor vzdy uklidi.
+    """
+    command_runner = runner or run_command
+    handle, tmp_path = tempfile.mkstemp(suffix=".txt")
+    os.close(handle)
+    try:
+        result = command_runner([ebook_convert_path, str(path), tmp_path])
+        if result.returncode != 0:
+            return ""
+        return Path(tmp_path).read_text(encoding="utf-8", errors="replace")[:limit]
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 class PlainTextHTMLParser(HTMLParser):

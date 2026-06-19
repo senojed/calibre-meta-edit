@@ -383,6 +383,28 @@ class BookImportFormatTests(unittest.TestCase):
         )
         self.assertEqual(meta, cme.EpubMetadata())
 
+    def test_extract_text_via_convert_reads_output_file(self):
+        captured = {}
+
+        def fake_runner(args):
+            captured["args"] = args
+            Path(args[2]).write_text("Zacatek knihy " * 100, encoding="utf-8")
+            return cme.CommandResult(0, "", "")
+
+        text = cme.extract_book_start_text_with_convert(
+            "kniha.mobi", "ebook-convert", runner=fake_runner, limit=50
+        )
+        self.assertEqual(len(text), 50)
+        self.assertEqual(captured["args"][0], "ebook-convert")
+        self.assertEqual(captured["args"][1], "kniha.mobi")
+        self.assertTrue(captured["args"][2].endswith(".txt"))
+
+    def test_extract_text_via_convert_failure_returns_empty(self):
+        text = cme.extract_book_start_text_with_convert(
+            "x.mobi", "ebook-convert", runner=lambda args: cme.CommandResult(1, "", "boom")
+        )
+        self.assertEqual(text, "")
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
