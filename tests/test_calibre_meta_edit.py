@@ -313,6 +313,30 @@ class AuthorDisplayNameTests(unittest.TestCase):
         self.assertEqual(preview.authors, "Isaac Asimov")
 
 
+class BookImportFormatTests(unittest.TestCase):
+    def test_ebook_tool_formats_are_lowercase_with_dot(self):
+        self.assertEqual(cme.EBOOK_TOOL_FORMATS, {".mobi", ".azw3", ".pdb"})
+
+    def test_find_ebook_tool_prefers_which(self):
+        found = cme.find_ebook_tool("ebook-meta", which_func=lambda name: "/usr/bin/" + name)
+        self.assertEqual(found, "/usr/bin/ebook-meta")
+
+    def test_find_ebook_tool_falls_back_to_calibre_dir(self):
+        found = cme.find_ebook_tool(
+            "ebook-convert",
+            which_func=lambda name: None,
+            exists_func=lambda path: path.endswith("ebook-convert.exe"),
+        )
+        self.assertTrue(found.endswith("ebook-convert.exe"))
+        self.assertIn("Calibre2", found)
+
+    def test_find_ebook_tool_missing_returns_none(self):
+        found = cme.find_ebook_tool(
+            "ebook-meta", which_func=lambda name: None, exists_func=lambda path: False
+        )
+        self.assertIsNone(found)
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [

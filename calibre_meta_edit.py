@@ -36,6 +36,8 @@ OPEN_LIBRARY_BASE = "https://openlibrary.org"
 OPEN_LIBRARY_SEARCH_API = OPEN_LIBRARY_BASE + "/search.json"
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
+# Jeden zdroj pravdy: pripony co umime nacist pres Calibre nastroje (ebook-meta/convert).
+EBOOK_TOOL_FORMATS = {".mobi", ".azw3", ".pdb"}
 USER_AGENT = "calibre-meta-edit/1.0"
 MATCHES_PATH = Path("matches.db")
 LEGACY_MATCHES_CSV_PATH = Path("matches.csv")
@@ -3030,6 +3032,24 @@ def find_calibredb(
         return found
     exists = exists_func or (lambda path: Path(path).exists())
     return CALIBREDB_FALLBACK if exists(CALIBREDB_FALLBACK) else None
+
+
+def find_ebook_tool(
+    name: str,
+    which_func: Callable[[str], str | None] = shutil.which,
+    exists_func: Callable[[str], bool] | None = None,
+) -> str | None:
+    """Najde Calibre CLI nastroj (ebook-meta/ebook-convert) stejne jako calibredb.
+
+    Nejdriv PATH (which), pak sourozenec ve slozce s calibredb fallbackem.
+    Vrati None kdyz neni - volajici to resi ciste, nepada.
+    """
+    found = which_func(name)
+    if found:
+        return found
+    exists = exists_func or (lambda path: Path(path).exists())
+    sibling = str(Path(CALIBREDB_FALLBACK).with_name(name + ".exe"))
+    return sibling if exists(sibling) else None
 
 
 def select_books(
