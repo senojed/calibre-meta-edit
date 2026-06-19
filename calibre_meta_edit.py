@@ -499,9 +499,12 @@ def import_signal_from_path(path: str | Path) -> ImportSourceSignal:
     )
 
 
-def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSignal:
+METADATA_SIGNAL_SOURCES = {"epub-metadata", "ebook-meta"}
+
+
+def import_signal_from_book_metadata(metadata: EpubMetadata, source: str = "ebook-meta") -> ImportSourceSignal:
     return ImportSourceSignal(
-        source="epub-metadata",
+        source=source,
         title=metadata.title,
         authors=metadata.authors,
         language=metadata.language,
@@ -509,6 +512,10 @@ def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSign
         published_year=metadata.published_year,
         confidence=60 if metadata.title and metadata.authors else 30,
     )
+
+
+def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSignal:
+    return import_signal_from_book_metadata(metadata, source="epub-metadata")
 
 
 def import_signal_from_epub_text(text: str) -> ImportSourceSignal:
@@ -581,7 +588,7 @@ def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int]:
 
 def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> ImportPreview:
     preview_signal = max(signals, key=signal_preview_quality) if signals else ImportSourceSignal(source="")
-    metadata_signal = next((signal for signal in signals if signal.source == "epub-metadata"), None)
+    metadata_signal = next((signal for signal in signals if signal.source in METADATA_SIGNAL_SOURCES), None)
     return ImportPreview(
         title=preview_signal.title,
         authors=normalize_author_display_names(preview_signal.authors),

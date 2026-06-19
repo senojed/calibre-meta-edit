@@ -405,6 +405,15 @@ class BookImportFormatTests(unittest.TestCase):
         )
         self.assertEqual(text, "")
 
+    def test_ebook_metadata_signal_feeds_preview_publisher_and_year(self):
+        signal = cme.import_signal_from_book_metadata(
+            cme.EpubMetadata(title="Nadace", authors="Isaac Asimov", publisher="Argo", published_year="1951")
+        )
+        self.assertEqual(signal.source, "ebook-meta")
+        preview = cme.choose_initial_import_preview([signal])
+        self.assertEqual(preview.publisher, "Argo")
+        self.assertEqual(preview.published_year, "1951")
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
