@@ -493,6 +493,20 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
         title_only = cme.ImportSourceSignal(source="filename", title="Mort", authors="", confidence=30)
         self.assertGreater(cme.signal_preview_quality(complete), cme.signal_preview_quality(title_only))
 
+    def test_preview_and_search_prefer_clean_over_junk(self):
+        signals = [
+            cme.ImportSourceSignal(source="ebook-meta", title="Pratchett_Terry-Kobercove", authors="Neznamy", confidence=60),
+            cme.import_signal_from_epub_text(""),
+            cme.import_signal_from_path(r"E:\Knihy\Terry_Pratchett\Kobercove.pdb"),
+        ]
+        preview = cme.choose_initial_import_preview(signals)
+        self.assertEqual(preview.title, "Kobercove")
+        self.assertEqual(preview.authors, "Terry Pratchett")
+
+        book = cme._signal_book(signals)
+        self.assertEqual(book.title, "Kobercove")
+        self.assertEqual(book.authors, ["Terry Pratchett"])
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
