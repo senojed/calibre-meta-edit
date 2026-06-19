@@ -64,6 +64,12 @@ def asset_icon_path(name: str) -> Path | None:
     return path if path.exists() else None
 
 
+def book_import_file_filter() -> str:
+    """Slozi filtr pro vyber knihy z podporovanych pripon (epub + Calibre nastroje)."""
+    patterns = " ".join("*" + ext for ext in sorted({".epub", *cme.EBOOK_TOOL_FORMATS}))
+    return f"Knihy ({patterns});;EPUB (*.epub);;Vsechny soubory (*.*)"
+
+
 def filter_rows(
     rows: Sequence[cme.MatchRow],
     title: str = "",
@@ -1699,15 +1705,19 @@ if PYSIDE6_AVAILABLE:
                 resolver: object = cme.OllamaAIResolver(str(ai_settings.get("model", "llama3")))
             else:
                 resolver = cme.DisabledAIResolver()
-            settings = {"epub_text_limit": ai_settings.get("text_limit", 5000)}
+            settings = {
+                "epub_text_limit": ai_settings.get("text_limit", 5000),
+                "ebook_meta_path": cme.find_ebook_tool("ebook-meta") or "ebook-meta",
+                "ebook_convert_path": cme.find_ebook_tool("ebook-convert") or "ebook-convert",
+            }
             return lambda epub: run_import_analysis(epub, library, settings, ai_resolver=resolver)
 
         def _choose_epub_file(self) -> str:
             path, _filter = QFileDialog.getOpenFileName(
                 self,
-                "Vyber EPUB k importu",
+                "Vyber knihu k importu",
                 "",
-                "EPUB soubory (*.epub);;Vsechny soubory (*.*)",
+                book_import_file_filter(),
             )
             return path
 
