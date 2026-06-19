@@ -336,6 +336,36 @@ class BookImportFormatTests(unittest.TestCase):
         )
         self.assertIsNone(found)
 
+    def test_parse_ebook_meta_full(self):
+        text = (
+            "Title               : Nadace\n"
+            "Author(s)           : Isaac Asimov [Asimov, Isaac]\n"
+            "Publisher           : Argo\n"
+            "Languages           : ces\n"
+            "Published           : 1951-06-01T00:00:00+00:00\n"
+        )
+        meta = cme.parse_ebook_meta_output(text)
+        self.assertEqual(meta.title, "Nadace")
+        self.assertEqual(meta.authors, "Isaac Asimov")
+        self.assertEqual(meta.publisher, "Argo")
+        self.assertEqual(meta.language, "ces")
+        self.assertEqual(meta.published_year, "1951")
+
+    def test_parse_ebook_meta_multiple_authors_keep_delimiter(self):
+        text = "Author(s)           : Jules Verne & H. G. Wells\n"
+        meta = cme.parse_ebook_meta_output(text)
+        self.assertEqual(meta.authors, "Jules Verne & H. G. Wells")
+
+    def test_parse_ebook_meta_partial_leaves_blanks(self):
+        meta = cme.parse_ebook_meta_output("Title               : Solaris\n")
+        self.assertEqual(meta.title, "Solaris")
+        self.assertEqual(meta.authors, "")
+        self.assertEqual(meta.publisher, "")
+
+    def test_parse_ebook_meta_empty(self):
+        meta = cme.parse_ebook_meta_output("")
+        self.assertEqual(meta, cme.EpubMetadata())
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):

@@ -335,6 +335,33 @@ def read_epub_metadata(path: str | Path) -> EpubMetadata:
     )
 
 
+def parse_ebook_meta_output(text: str) -> EpubMetadata:
+    """Prevede vypis 'ebook-meta <soubor>' na EpubMetadata.
+
+    Cte radky tvaru 'Label : hodnota'. Nezname/chybejici labely ignoruje.
+    U autoru odstrani razici tvar v hranatych zavorkach (napr. '[Asimov, Isaac]').
+    Cista funkce - zadny subprocess, snadno testovatelna.
+    """
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        match = re.match(r"^([A-Za-z()/ ]+?)\s*:\s*(.*)$", line)
+        if not match:
+            continue
+        label = match.group(1).strip().lower()
+        value = match.group(2).strip()
+        if label and value and label not in fields:
+            fields[label] = value
+    authors = re.sub(r"\s*\[[^\]]*\]", "", fields.get("author(s)", "")).strip()
+    language = fields.get("languages", "").split(",")[0].split("&")[0].strip()
+    return EpubMetadata(
+        title=fields.get("title", ""),
+        authors=authors,
+        language=language,
+        publisher=fields.get("publisher", ""),
+        published_year=extract_year(fields.get("published", "")),
+    )
+
+
 class PlainTextHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
