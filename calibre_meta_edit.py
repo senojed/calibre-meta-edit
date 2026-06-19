@@ -486,6 +486,34 @@ def split_author_title_from_filename(stem: str) -> tuple[str, str]:
     return right, author
 
 
+# Obecne slozky co nejsou autor; porovnava se normalizovany token.
+_FOLDER_AUTHOR_STOPWORDS = {
+    "knihy", "kniha", "books", "book", "ebooks", "ebook", "audiobooks",
+    "audioknihy", "kindle", "calibre", "library", "knihovna", "komiksy",
+    "stahnute", "downloads", "temp", "tmp", "authors", "various",
+}
+
+
+def folder_author_hint(parent_name: str) -> str:
+    """Vrati autora ze jmena slozky kdyz vypada jako jmeno osoby, jinak "".
+
+    Konzervativni: presne dve slova, obe pismenna (vc. diakritiky a teckovych
+    iniciel), zacinaji velkym pismenem, zadne stopword. Poradi jmeno/prijmeni
+    nehadame - online nalez kanonicky tvar opravi.
+    """
+    repaired = repair_filename_text(parent_name)
+    tokens = repaired.split()
+    if len(tokens) != 2:
+        return ""
+    if {normalize_text(token) for token in tokens} & _FOLDER_AUTHOR_STOPWORDS:
+        return ""
+    for token in tokens:
+        core = token.rstrip(".")
+        if not core or not core[0].isupper() or not all(ch.isalpha() or ch == "." for ch in token):
+            return ""
+    return repaired
+
+
 def import_signal_from_path(path: str | Path) -> ImportSourceSignal:
     file_path = Path(path)
     title, authors = split_author_title_from_filename(file_path.stem)

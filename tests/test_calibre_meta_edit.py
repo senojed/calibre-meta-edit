@@ -442,6 +442,27 @@ class BookImportFormatTests(unittest.TestCase):
             cme.analyze_book_for_import("kniha.cbz", library="B:\\", settings={}, online_lookup=lambda s: [])
 
 
+class FolderAuthorAndJunkTests(unittest.TestCase):
+    def test_folder_author_hint_person_name(self):
+        self.assertEqual(cme.folder_author_hint("Terry_Pratchett"), "Terry Pratchett")
+
+    def test_folder_author_hint_keeps_order(self):
+        self.assertEqual(cme.folder_author_hint("Pratchett_Terry"), "Pratchett Terry")
+
+    def test_folder_author_hint_single_token_rejected(self):
+        self.assertEqual(cme.folder_author_hint("Knihy"), "")
+
+    def test_folder_author_hint_many_tokens_rejected(self):
+        self.assertEqual(cme.folder_author_hint("e-knihy_cast_T_Z"), "")
+        self.assertEqual(cme.folder_author_hint("J._R._R._Tolkien"), "")
+
+    def test_folder_author_hint_stoplist_token_rejected(self):
+        self.assertEqual(cme.folder_author_hint("Audio_Knihy"), "")
+
+    def test_folder_author_hint_lowercase_rejected(self):
+        self.assertEqual(cme.folder_author_hint("various authors"), "")
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [
