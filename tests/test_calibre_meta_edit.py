@@ -477,6 +477,22 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
         self.assertEqual(signal.title, "Tajuplny ostrov")
         self.assertEqual(signal.authors, "Verne")
 
+    def test_is_junk_signal_underscore_title(self):
+        junk = cme.ImportSourceSignal(source="ebook-meta", title="Pratchett_Terry-Kobercove", authors="Neznamy")
+        clean = cme.ImportSourceSignal(source="filename", title="Kobercove", authors="Terry Pratchett")
+        self.assertTrue(cme.is_junk_signal(junk))
+        self.assertFalse(cme.is_junk_signal(clean))
+
+    def test_clean_signal_outranks_junk(self):
+        junk = cme.ImportSourceSignal(source="ebook-meta", title="Pratchett_Terry-Kobercove", authors="Neznamy", confidence=60)
+        clean = cme.ImportSourceSignal(source="filename", title="Kobercove", authors="Terry Pratchett", confidence=30)
+        self.assertGreater(cme.signal_preview_quality(clean), cme.signal_preview_quality(junk))
+
+    def test_quality_ordering_unchanged_among_clean_signals(self):
+        complete = cme.ImportSourceSignal(source="ebook-meta", title="Mort", authors="Terry Pratchett", confidence=60)
+        title_only = cme.ImportSourceSignal(source="filename", title="Mort", authors="", confidence=30)
+        self.assertGreater(cme.signal_preview_quality(complete), cme.signal_preview_quality(title_only))
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):

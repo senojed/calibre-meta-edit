@@ -609,11 +609,20 @@ def normalize_author_display_names(authors: str) -> str:
     return " & ".join(normalize_author_display_name(part) for part in parts)
 
 
-def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int]:
+def is_junk_signal(signal: ImportSourceSignal) -> bool:
+    """Pozna signal jehoz nazev vypada jako z nazvu souboru (junk).
+
+    Marker: podtrzitko v nazvu. Realne nazvy knih '_' nemaji, filename-derived ano.
+    """
+    return "_" in signal.title
+
+
+def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int, int]:
     preview_text = " ".join(part for part in (signal.title, signal.authors) if part.strip())
     clean_bonus = 100 if preview_text and not has_known_mojibake(preview_text) else 0
     completeness = int(bool(signal.title.strip())) + int(bool(signal.authors.strip()))
-    return completeness, clean_bonus, signal.confidence
+    not_junk = 0 if is_junk_signal(signal) else 1
+    return not_junk, completeness, clean_bonus, signal.confidence
 
 
 def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> ImportPreview:
