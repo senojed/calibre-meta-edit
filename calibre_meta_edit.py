@@ -362,6 +362,23 @@ def parse_ebook_meta_output(text: str) -> EpubMetadata:
     )
 
 
+def read_book_metadata_with_ebook_meta(
+    path: str | Path,
+    ebook_meta_path: str,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+) -> EpubMetadata:
+    """Spusti 'ebook-meta <soubor>' a vrati metadata.
+
+    Pri nenulovem navratu (rozbity/neznamy soubor) vrati prazdne metadata -
+    import jede dal na jmenu souboru + online (chybejici metadata neni pad).
+    """
+    command_runner = runner or run_command
+    result = command_runner([ebook_meta_path, str(path)])
+    if result.returncode != 0:
+        return EpubMetadata()
+    return parse_ebook_meta_output(result.stdout)
+
+
 class PlainTextHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()

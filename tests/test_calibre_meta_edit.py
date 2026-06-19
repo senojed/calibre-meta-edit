@@ -366,6 +366,23 @@ class BookImportFormatTests(unittest.TestCase):
         meta = cme.parse_ebook_meta_output("")
         self.assertEqual(meta, cme.EpubMetadata())
 
+    def test_read_metadata_runs_ebook_meta_and_parses(self):
+        calls = []
+
+        def fake_runner(args):
+            calls.append(args)
+            return cme.CommandResult(0, "Title               : Mlha\n", "")
+
+        meta = cme.read_book_metadata_with_ebook_meta("kniha.mobi", "ebook-meta", runner=fake_runner)
+        self.assertEqual(meta.title, "Mlha")
+        self.assertEqual(calls[0], ["ebook-meta", "kniha.mobi"])
+
+    def test_read_metadata_nonzero_exit_returns_empty(self):
+        meta = cme.read_book_metadata_with_ebook_meta(
+            "x.mobi", "ebook-meta", runner=lambda args: cme.CommandResult(1, "", "boom")
+        )
+        self.assertEqual(meta, cme.EpubMetadata())
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
