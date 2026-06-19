@@ -398,7 +398,7 @@ if PYSIDE6_AVAILABLE:
         def __init__(self, analysis: cme.ImportAnalysis, parent: QWidget | None = None) -> None:
             super().__init__(parent)
             self.analysis = analysis
-            self.setWindowTitle("Import EPUB")
+            self.setWindowTitle("Import knihy")
             self.resize(1180, 720)
             root = QVBoxLayout(self)
             body = QHBoxLayout()
@@ -747,7 +747,7 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
             self.import_button = self._add_button(
-                toolbar, "Import EPUB", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
+                toolbar, "Import knihy", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
             self.update_import_button_enabled(True)
             toolbar.addSpacing(10)
@@ -1684,8 +1684,8 @@ if PYSIDE6_AVAILABLE:
             self.worker_running = True
             self.set_ui_enabled(False)
             self.detail_tabs.setCurrentWidget(self.log_tab)
-            self.write_output(f"Import EPUB: analyza {epub_path}...")
-            self.set_status("Import EPUB: analyza")
+            self.write_output(f"Import knihy: analyza {epub_path}...")
+            self.set_status("Import knihy: analyza")
 
             def worker() -> None:
                 try:
@@ -1727,12 +1727,12 @@ if PYSIDE6_AVAILABLE:
             self.set_ui_enabled(True)
             if analysis is None or error:
                 message = error or "Analyzu se nepodarilo dokoncit."
-                self.write_output(f"Import EPUB: CHYBA\n{message}")
-                self.set_status("Import EPUB: CHYBA")
-                QMessageBox.warning(self, "Import EPUB", message)
+                self.write_output(f"Import knihy: CHYBA\n{message}")
+                self.set_status("Import knihy: CHYBA")
+                QMessageBox.warning(self, "Import knihy", message)
                 return
-            self.write_output("Import EPUB: nahled pripraven")
-            self.set_status("Import EPUB: nahled pripraven")
+            self.write_output("Import knihy: nahled pripraven")
+            self.set_status("Import knihy: nahled pripraven")
             dialog = ImportDialog(analysis, parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
@@ -1755,7 +1755,7 @@ if PYSIDE6_AVAILABLE:
             if not cme.is_valid_import_preview(preview):
                 QMessageBox.warning(
                     self,
-                    "Import EPUB",
+                    "Import knihy",
                     "Chybi nazev nebo autor; import zruseny.",
                 )
                 return
@@ -1767,7 +1767,7 @@ if PYSIDE6_AVAILABLE:
                 if not calibredb_path:
                     QMessageBox.warning(
                         self,
-                        "Import EPUB",
+                        "Import knihy",
                         "Nepodarilo se najit calibredb. Zapis zruseny.",
                     )
                     return
@@ -1788,8 +1788,8 @@ if PYSIDE6_AVAILABLE:
             self.worker_running = True
             self.set_ui_enabled(False)
             self.detail_tabs.setCurrentWidget(self.log_tab)
-            self.write_output(f"Import EPUB: zapis {epub_path}...")
-            self.set_status("Import EPUB: zapis")
+            self.write_output(f"Import knihy: zapis {epub_path}...")
+            self.set_status("Import knihy: zapis")
 
             def worker() -> None:
                 try:
@@ -1806,24 +1806,24 @@ if PYSIDE6_AVAILABLE:
             self.set_ui_enabled(True)
             if error or result is None:
                 message = error or "Zapis se nepodaril."
-                self.write_output(f"Import EPUB: CHYBA\n{message}")
-                self.set_status("Import EPUB: CHYBA")
-                QMessageBox.warning(self, "Import EPUB", message)
+                self.write_output(f"Import knihy: CHYBA\n{message}")
+                self.set_status("Import knihy: CHYBA")
+                QMessageBox.warning(self, "Import knihy", message)
                 return
             status = getattr(result, "status", "")
             backup = getattr(result, "backup_path", "") or "bez zalohy"
             if status != "updated":
                 reason = getattr(result, "error", "") or "neznama chyba"
                 message = f"Zapis selhal: {reason}\nZaloha: {backup}"
-                self.write_output(f"Import EPUB: CHYBA\n{message}")
-                self.set_status("Import EPUB: CHYBA")
-                QMessageBox.warning(self, "Import EPUB", message)
+                self.write_output(f"Import knihy: CHYBA\n{message}")
+                self.set_status("Import knihy: CHYBA")
+                QMessageBox.warning(self, "Import knihy", message)
                 return
             book_id = getattr(result, "book_id", 0)
             message = f"Kniha {book_id} byla naimportovana.\nZaloha: {backup}"
             # Uspech uz je videt v logu a status baru; modalni potvrzeni je navic.
-            self.write_output(f"Import EPUB: OK\n{message}")
-            self.set_status("Import EPUB: OK")
+            self.write_output(f"Import knihy: OK\n{message}")
+            self.set_status("Import knihy: OK")
             self.show_import_review_filter()
             self.load_csv(show_message=False)
 

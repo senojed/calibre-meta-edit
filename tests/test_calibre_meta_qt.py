@@ -1082,7 +1082,7 @@ class QtImportWiringTests(unittest.TestCase):
         window = qt.CalibreMetaQtWindow()
 
         self.assertTrue(hasattr(window, "import_button"))
-        self.assertEqual(window.import_button.toolTip(), "Import EPUB")
+        self.assertEqual(window.import_button.toolTip(), "Import knihy")
         app.processEvents()
 
     def test_import_epub_button_enabled_on_fresh_idle_window_without_rows(self):
@@ -1326,7 +1326,9 @@ class QtImportWiringTests(unittest.TestCase):
             app.processEvents()
 
         self.assertEqual(captured["epub"], "kniha.epub")
-        self.assertEqual(captured["settings"], {"epub_text_limit": 2222})
+        self.assertEqual(captured["settings"]["epub_text_limit"], 2222)
+        self.assertIn("ebook_meta_path", captured["settings"])
+        self.assertIn("ebook_convert_path", captured["settings"])
         self.assertIsInstance(captured["resolver"], cme.OllamaAIResolver)
         self.assertEqual(captured["resolver"].model, "llama-test")
         app.processEvents()
@@ -1358,7 +1360,9 @@ class QtImportWiringTests(unittest.TestCase):
             app.processEvents()
 
         self.assertIsInstance(captured["resolver"], cme.DisabledAIResolver)
-        self.assertEqual(captured["settings"], {"epub_text_limit": 5000})
+        self.assertEqual(captured["settings"]["epub_text_limit"], 5000)
+        self.assertIn("ebook_meta_path", captured["settings"])
+        self.assertIn("ebook_convert_path", captured["settings"])
         app.processEvents()
 
     def test_interactive_import_saves_csv_before_choosing_file(self):
