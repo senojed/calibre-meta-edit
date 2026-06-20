@@ -525,6 +525,24 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
         self.assertEqual(book.authors, ["Terry Pratchett"])
 
 
+class AITextExtractionTests(unittest.TestCase):
+    def test_selection_key_junk_ranks_below_clean(self):
+        junk = cme.ImportSourceSignal(source="ebook-meta", title="A_b-c", authors="X")
+        clean = cme.ImportSourceSignal(source="filename", title="Mort", authors="")
+        self.assertLess(cme._import_selection_key(junk), cme._import_selection_key(clean))
+
+    def test_selection_key_ai_text_beats_metadata_when_both_clean(self):
+        ai = cme.ImportSourceSignal(source="ai-text", title="Mort", authors="Terry Pratchett", confidence=90)
+        meta = cme.ImportSourceSignal(source="ebook-meta", title="Mort", authors="Terry Pratchett", confidence=60)
+        self.assertGreater(cme._import_selection_key(ai), cme._import_selection_key(meta))
+
+    def test_selection_key_priority_beats_completeness(self):
+        # ai-text with title only must outrank filename with title+author
+        ai_title_only = cme.ImportSourceSignal(source="ai-text", title="Mort", authors="", confidence=90)
+        filename_full = cme.ImportSourceSignal(source="filename", title="UZ-20-Mort", authors="Terry Pratchett", confidence=30)
+        self.assertGreater(cme._import_selection_key(ai_title_only), cme._import_selection_key(filename_full))
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [

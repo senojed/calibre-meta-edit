@@ -826,6 +826,32 @@ def normalize_text(text: str) -> str:
     return normalized_spaces.strip()
 
 
+# Priorita zdroju pro vyber nazvu/autora a nahledu.
+# Vyssi cislo = duveryhodnejsi zdroj. Text z AI extrakce je nejjistejsi,
+# pak metadata v souboru, pak nazev souboru/slozky, pak holy text.
+_SOURCE_PRIORITY = {
+    "ai-text": 4,
+    "ebook-meta": 3,
+    "epub-metadata": 3,
+    "filename": 2,
+    "epub-text": 1,
+}
+
+
+def _source_priority(signal: ImportSourceSignal) -> int:
+    return _SOURCE_PRIORITY.get(signal.source, 0)
+
+
+def _import_selection_key(signal: ImportSourceSignal) -> tuple[int, int, int, int, int]:
+    """Klic pro vyber nejlepsiho signalu.
+
+    Poradi vah: nejdriv ne-junk (junk/prazdny nikdy nevyhraje), pak priorita
+    zdroje (ai-text > metadata > nazev souboru), pak uplnost, cistota, confidence.
+    """
+    not_junk, completeness, clean_bonus, confidence = signal_preview_quality(signal)
+    return (not_junk, _source_priority(signal), completeness, clean_bonus, confidence)
+
+
 def _best_normalized_title(signals: Sequence[ImportSourceSignal]) -> str:
     title_signals = [signal for signal in signals if signal.title.strip()]
     if not title_signals:
