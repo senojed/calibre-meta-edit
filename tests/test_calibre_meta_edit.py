@@ -568,6 +568,22 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(preview.title, "Hrr na ně")
         self.assertEqual(preview.authors, "Terry Pratchett")
 
+    def test_ai_signal_built_from_identity(self):
+        identity = cme.AIBookIdentity(title="Hrr na ně", author="Terry Pratchett", confidence=88)
+        signal = cme.import_signal_from_ai_extraction(identity)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.source, "ai-text")
+        self.assertEqual(signal.title, "Hrr na ně")
+        self.assertEqual(signal.authors, "Terry Pratchett")
+        self.assertEqual(signal.confidence, 88)
+
+    def test_ai_signal_none_when_title_empty(self):
+        self.assertIsNone(cme.import_signal_from_ai_extraction(cme.AIBookIdentity(title="   ", author="X")))
+
+    def test_ai_signal_confidence_clamped(self):
+        signal = cme.import_signal_from_ai_extraction(cme.AIBookIdentity(title="T", confidence=999))
+        self.assertEqual(signal.confidence, 100)
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):

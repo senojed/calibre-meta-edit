@@ -196,6 +196,14 @@ class ImportSourceSignal:
 
 
 @dataclass(frozen=True)
+class AIBookIdentity:
+    """Vysledek AI extrakce nazvu a autora z textu knihy."""
+    title: str = ""
+    author: str = ""
+    confidence: int = 0
+
+
+@dataclass(frozen=True)
 class EpubMetadata:
     title: str = ""
     authors: str = ""
@@ -551,6 +559,18 @@ def import_signal_from_epub_metadata(metadata: EpubMetadata) -> ImportSourceSign
 def import_signal_from_epub_text(text: str) -> ImportSourceSignal:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return ImportSourceSignal(source="epub-text", text="\n".join(lines[:20]), confidence=20)
+
+
+def import_signal_from_ai_extraction(identity: AIBookIdentity) -> ImportSourceSignal | None:
+    """Z AI extrakce udela signal s nejvyssi prioritou; bez nazvu vrati None."""
+    if not identity.title.strip():
+        return None
+    return ImportSourceSignal(
+        source="ai-text",
+        title=identity.title.strip(),
+        authors=identity.author.strip(),
+        confidence=max(0, min(identity.confidence, 100)),
+    )
 
 
 def has_known_mojibake(text: str) -> bool:
