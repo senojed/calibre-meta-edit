@@ -509,7 +509,7 @@ def folder_author_hint(parent_name: str) -> str:
         return ""
     for token in tokens:
         core = token.rstrip(".")
-        if not core or not core[0].isupper() or not all(ch.isalpha() or ch == "." for ch in token):
+        if not core or not core[0].isupper() or not all(ch.isalpha() or ch in "-." for ch in token):
             return ""
     return repaired
 
@@ -621,7 +621,7 @@ def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int, i
     preview_text = " ".join(part for part in (signal.title, signal.authors) if part.strip())
     clean_bonus = 100 if preview_text and not has_known_mojibake(preview_text) else 0
     completeness = int(bool(signal.title.strip())) + int(bool(signal.authors.strip()))
-    not_junk = 0 if is_junk_signal(signal) else 1
+    not_junk = 0 if (is_junk_signal(signal) or not signal.title.strip()) else 1
     return not_junk, completeness, clean_bonus, signal.confidence
 
 

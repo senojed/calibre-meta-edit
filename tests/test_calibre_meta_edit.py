@@ -462,6 +462,12 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
     def test_folder_author_hint_lowercase_rejected(self):
         self.assertEqual(cme.folder_author_hint("various authors"), "")
 
+    def test_folder_author_hint_hyphenated_name(self):
+        self.assertEqual(cme.folder_author_hint("Jean-Claude_Izzo"), "Jean-Claude Izzo")
+
+    def test_folder_author_hint_hyphenated_both_tokens(self):
+        self.assertEqual(cme.folder_author_hint("Saint-Exupery_Antoine"), "Saint-Exupery Antoine")
+
     def test_path_signal_uses_folder_as_author(self):
         signal = cme.import_signal_from_path(r"E:\Knihy\Terry_Pratchett\Kobercove.pdb")
         self.assertEqual(signal.title, "Kobercove")
@@ -492,6 +498,17 @@ class FolderAuthorAndJunkTests(unittest.TestCase):
         complete = cme.ImportSourceSignal(source="ebook-meta", title="Mort", authors="Terry Pratchett", confidence=60)
         title_only = cme.ImportSourceSignal(source="filename", title="Mort", authors="", confidence=30)
         self.assertGreater(cme.signal_preview_quality(complete), cme.signal_preview_quality(title_only))
+
+    def test_empty_title_signal_does_not_outrank_signal_with_title(self):
+        # Fix #3: empty title must not win on not_junk alone
+        with_title = cme.ImportSourceSignal(source="filename", title="Kobercove", authors="Terry Pratchett", confidence=30)
+        empty_title = cme.ImportSourceSignal(source="ebook-meta", title="", authors="Terry Pratchett", confidence=60)
+        self.assertGreater(cme.signal_preview_quality(with_title), cme.signal_preview_quality(empty_title))
+
+    def test_empty_title_signal_quality_not_junk_is_zero(self):
+        empty = cme.ImportSourceSignal(source="ebook-meta", title="", authors="some author", confidence=60)
+        not_junk, *_ = cme.signal_preview_quality(empty)
+        self.assertEqual(not_junk, 0)
 
     def test_preview_and_search_prefer_clean_over_junk(self):
         signals = [
