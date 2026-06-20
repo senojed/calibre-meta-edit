@@ -675,6 +675,9 @@ class DisabledAIResolver:
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
         return None
 
+    def extract(self, text: str) -> AIBookIdentity:
+        return AIBookIdentity()
+
 
 class OllamaAIResolver:
     """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi."""
@@ -726,6 +729,28 @@ class OllamaAIResolver:
             )
         except Exception:
             return None
+
+    def extract(self, text: str) -> AIBookIdentity:
+        """Z textu zacatku knihy vytahne skutecny nazev a autora. Pri chybe vrati prazdny."""
+        prompt = {
+            "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
+            "text": text[:4000],
+        }
+        try:
+            raw = self.requester(
+                "http://127.0.0.1:11434/api/generate",
+                json.dumps({"model": self.model, "prompt": json.dumps(prompt, ensure_ascii=False), "stream": False}).encode("utf-8"),
+                {"Content-Type": "application/json"},
+            )
+            data = json.loads(raw)
+            answer = json.loads(str(data.get("response", "{}")))
+            return AIBookIdentity(
+                title=str(answer.get("title", "")),
+                author=str(answer.get("author", "")),
+                confidence=int(answer.get("confidence", 0) or 0),
+            )
+        except Exception:
+            return AIBookIdentity()
 
 
 def resolve_import_candidate_with_ai(

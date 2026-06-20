@@ -584,6 +584,25 @@ class AITextExtractionTests(unittest.TestCase):
         signal = cme.import_signal_from_ai_extraction(cme.AIBookIdentity(title="T", confidence=999))
         self.assertEqual(signal.confidence, 100)
 
+    def test_disabled_resolver_extract_returns_empty(self):
+        identity = cme.DisabledAIResolver().extract("Terry Pratchett\nHRR NA NĚ!")
+        self.assertEqual(identity.title, "")
+
+    def test_ollama_resolver_extract_parses_json(self):
+        def fake_requester(url, payload, headers):
+            return json.dumps({"response": json.dumps({"title": "Hrr na ně", "author": "Terry Pratchett", "confidence": 91})})
+        resolver = cme.OllamaAIResolver("dummy", requester=fake_requester)
+        identity = resolver.extract("Terry Pratchett\nHRR NA NĚ!")
+        self.assertEqual(identity.title, "Hrr na ně")
+        self.assertEqual(identity.author, "Terry Pratchett")
+        self.assertEqual(identity.confidence, 91)
+
+    def test_ollama_resolver_extract_handles_bad_json(self):
+        def fake_requester(url, payload, headers):
+            return "not json"
+        identity = cme.OllamaAIResolver("dummy", requester=fake_requester).extract("text")
+        self.assertEqual(identity.title, "")
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
