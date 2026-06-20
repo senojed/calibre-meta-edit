@@ -603,6 +603,40 @@ class AITextExtractionTests(unittest.TestCase):
         identity = cme.OllamaAIResolver("dummy", requester=fake_requester).extract("text")
         self.assertEqual(identity.title, "")
 
+    def test_analyze_inserts_ai_text_signal(self):
+        class FakeResolver:
+            def extract(self, text):
+                return cme.AIBookIdentity(title="Hrr na ně", author="Terry Pratchett", confidence=90)
+            def resolve(self, signals, candidates):
+                return None
+        meta = cme.EpubMetadata(title="_asn_ zem_plocha - 21", authors="Neznámý")
+        analysis = cme.analyze_book_for_import(
+            r"E:\Knihy\UZ-20-Hrrr_na_ne.pdb",
+            "B:/",
+            {"ebook_meta_path": "x", "ebook_convert_path": "x"},
+            online_lookup=lambda signals: [],
+            ai_resolver=FakeResolver(),
+            ebook_metadata_reader=lambda path, tool: meta,
+            ebook_text_reader=lambda path, tool, limit=5000: "Terry Pratchett\nHRR NA NĚ!\n...",
+        )
+        ai_signals = [s for s in analysis.signals if s.source == "ai-text"]
+        self.assertEqual(len(ai_signals), 1)
+        self.assertEqual(ai_signals[0].title, "Hrr na ně")
+        self.assertEqual(analysis.preview.title, "Hrr na ně")
+
+    def test_analyze_no_ai_signal_when_disabled(self):
+        meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
+        analysis = cme.analyze_book_for_import(
+            r"E:\Knihy\Mort.pdb",
+            "B:/",
+            {"ebook_meta_path": "x", "ebook_convert_path": "x"},
+            online_lookup=lambda signals: [],
+            ai_resolver=cme.DisabledAIResolver(),
+            ebook_metadata_reader=lambda path, tool: meta,
+            ebook_text_reader=lambda path, tool, limit=5000: "some text",
+        )
+        self.assertFalse(any(s.source == "ai-text" for s in analysis.signals))
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):

@@ -753,6 +753,18 @@ class OllamaAIResolver:
             return AIBookIdentity()
 
 
+def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
+    """Bezpecne zavola AI extraktor; pri vypnute AI nebo chybe vrati prazdny vysledek."""
+    extractor = getattr(resolver, "extract", None) if resolver else None
+    if not callable(extractor) or not text.strip():
+        return AIBookIdentity()
+    try:
+        result = extractor(text)
+    except Exception:
+        return AIBookIdentity()
+    return result if isinstance(result, AIBookIdentity) else AIBookIdentity()
+
+
 def resolve_import_candidate_with_ai(
     signals: Sequence[ImportSourceSignal],
     candidates: Sequence[ImportCandidate],
@@ -815,6 +827,9 @@ def analyze_book_for_import(
         import_signal_from_epub_text(text),
         import_signal_from_path(book_path),
     ]
+    ai_signal = import_signal_from_ai_extraction(extract_ai_identity(text, ai_resolver))
+    if ai_signal:
+        signals.insert(0, ai_signal)
     try:
         candidates = score_import_candidates(signals, online_lookup(signals)) if online_lookup else lookup_import_candidates(signals)
     except Exception:
