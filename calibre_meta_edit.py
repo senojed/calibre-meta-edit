@@ -6,6 +6,7 @@ import argparse
 import csv
 import html
 import json
+import logging
 import os
 import posixpath
 import re
@@ -27,6 +28,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
+
+# Logger pro diagnostiku (hlavne AI import). Defaultne tichy; appka/CLI mu da handler.
+logger = logging.getLogger("calibre_meta")
 
 BASE_URL = "https://www.databazeknih.cz"
 SEARCH_URL = BASE_URL + "/vyhledavani/knihy?q="
@@ -736,6 +740,7 @@ class OllamaAIResolver:
             "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
             "text": text[:4000],
         }
+        logger.info("AI extrakce: model=%s, delka textu=%d znaku", self.model, len(text))
         try:
             raw = self.requester(
                 "http://127.0.0.1:11434/api/generate",
@@ -744,23 +749,34 @@ class OllamaAIResolver:
             )
             data = json.loads(raw)
             answer = json.loads(str(data.get("response", "{}")))
-            return AIBookIdentity(
+            identity = AIBookIdentity(
                 title=str(answer.get("title", "")),
                 author=str(answer.get("author", "")),
                 confidence=int(answer.get("confidence", 0) or 0),
             )
-        except Exception:
+            logger.info(
+                "AI extrakce vysledek: nazev=%r autor=%r confidence=%d",
+                identity.title, identity.author, identity.confidence,
+            )
+            return identity
+        except Exception as exc:
+            logger.warning("AI extrakce selhala: %s", exc)
             return AIBookIdentity()
 
 
 def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
     """Bezpecne zavola AI extraktor; pri vypnute AI nebo chybe vrati prazdny vysledek."""
     extractor = getattr(resolver, "extract", None) if resolver else None
-    if not callable(extractor) or not text.strip():
+    if not callable(extractor):
+        logger.info("AI extrakce preskocena: AI vypnuta nebo bez extraktoru")
+        return AIBookIdentity()
+    if not text.strip():
+        logger.info("AI extrakce preskocena: prazdny text knihy")
         return AIBookIdentity()
     try:
         result = extractor(text)
-    except Exception:
+    except Exception as exc:
+        logger.warning("AI extrakce selhala: %s", exc)
         return AIBookIdentity()
     return result if isinstance(result, AIBookIdentity) else AIBookIdentity()
 

@@ -624,6 +624,24 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(ai_signals[0].title, "Hrr na ně")
         self.assertEqual(analysis.preview.title, "Hrr na ně")
 
+    def test_extract_logs_success(self):
+        def fake_requester(url, payload, headers):
+            return json.dumps({"response": json.dumps({"title": "Hrr na ně", "author": "Terry Pratchett", "confidence": 91})})
+        resolver = cme.OllamaAIResolver("dummy", requester=fake_requester)
+        with self.assertLogs("calibre_meta", level="INFO") as captured:
+            resolver.extract("Terry Pratchett\nHRR NA NĚ!")
+        joined = "\n".join(captured.output)
+        self.assertIn("Hrr na ně", joined)
+
+    def test_extract_logs_failure(self):
+        def fake_requester(url, payload, headers):
+            raise RuntimeError("spojeni selhalo")
+        resolver = cme.OllamaAIResolver("dummy", requester=fake_requester)
+        with self.assertLogs("calibre_meta", level="WARNING") as captured:
+            identity = resolver.extract("text")
+        self.assertEqual(identity.title, "")
+        self.assertIn("spojeni selhalo", "\n".join(captured.output))
+
     def test_analyze_no_ai_signal_when_disabled(self):
         meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
         analysis = cme.analyze_book_for_import(

@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import logging
 import os
 import threading
 import webbrowser
@@ -2096,6 +2097,8 @@ def main() -> int:
     """Spusti Qt appku."""
     if not PYSIDE6_AVAILABLE:
         raise RuntimeError("PySide6 neni nainstalovane. Spust: python -m pip install PySide6")
+    # Diagnostika do konzole (hlavne AI import). Spust z konzole pro videni logu.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     os.chdir(APP_DIR)
     app = QApplication([])
     app.setFont(QFont("Segoe UI", 9))
