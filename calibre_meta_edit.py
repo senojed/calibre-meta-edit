@@ -1290,16 +1290,22 @@ def lookup_import_candidates(
     sleep_seconds: float = 0.0,
 ) -> list[ImportCandidate]:
     fetch = fetcher or fetch_text
-    book = _signal_book(signals)
-    candidates: list[ImportCandidate] = []
-    for source in import_lookup_sources(signals):
-        try:
-            candidates.extend(_lookup_import_source(source, book, signals, fetch))
-        except Exception:
-            pass
-        if sleep_seconds:
-            time.sleep(sleep_seconds)
-    return score_import_candidates(signals, candidates)
+    sources = import_lookup_sources(signals)
+    scored: list[ImportCandidate] = []
+    for seed in _import_query_seeds(signals):
+        seed_authors = " & ".join(seed.authors)
+        logger.info("Online hledani: seed nazev=%r autor=%r", seed.title, seed_authors)
+        for source in sources:
+            try:
+                found = _lookup_import_source(source, seed, signals, fetch)
+            except Exception:
+                found = []
+            # Kazdeho kandidata hodnotime proti dotazu, ktery ho nasel.
+            scored.extend(_score_candidate_for(seed.title, seed_authors, signals, item) for item in found)
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+    deduped = _dedupe_candidates_by_url(scored)
+    return sorted(deduped, key=lambda candidate: candidate.score, reverse=True)
 
 
 def metadata_db_path(library: str | Path) -> Path:

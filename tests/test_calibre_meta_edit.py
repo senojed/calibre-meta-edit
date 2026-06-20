@@ -1086,6 +1086,25 @@ class ImportOnlineLookupTests(unittest.TestCase):
         self.assertEqual(candidates[0].title, "Turn Coat")
         self.assertEqual(candidates[0].authors, "Jim Butcher")
 
+    def test_lookup_multi_seed_prefers_strong_online_match(self):
+        # ai-text title is wrong ("Eden"); filename title is right ("Strata").
+        # Both seeds get searched; the strong online match (Strata) must win.
+        signals = [
+            cme.ImportSourceSignal(source="ai-text", title="Eden", authors="Terry Pratchett", confidence=90),
+            cme.ImportSourceSignal(source="filename", title="Strata", authors="Terry Pratchett", confidence=30),
+        ]
+
+        def fetcher(url):
+            if "googleapis" in url:
+                if "Strata" in url:
+                    return json.dumps({"items": [{"id": "strata1", "volumeInfo": {"title": "Strata", "authors": ["Terry Pratchett"]}}]})
+                if "Eden" in url:
+                    return json.dumps({"items": [{"id": "eden1", "volumeInfo": {"title": "Garden of Eden", "authors": ["Terry Pratchett"]}}]})
+            return ""
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
+        self.assertEqual(candidates[0].title, "Strata")
+
     def test_import_candidate_from_databaze_keeps_author_empty_and_uses_evidence(self):
         signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
         raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
