@@ -1689,11 +1689,25 @@ if PYSIDE6_AVAILABLE:
             self.set_status("Import knihy: analyza")
 
             def worker() -> None:
+                # Posbira logy AI extrakce/hledani z teto analyzy a ulozi je,
+                # aby je finish_import_analysis ukazal v Log tabu.
+                captured = io.StringIO()
+                handler = logging.StreamHandler(captured)
+                handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+                ai_logger = logging.getLogger("calibre_meta")
+                previous_level = ai_logger.level
+                ai_logger.addHandler(handler)
+                ai_logger.setLevel(logging.INFO)
                 try:
                     analysis = analyze(epub_path)
+                    self._last_import_log = captured.getvalue().strip()
                     self.bridge.import_ready.emit(analysis, "")
                 except Exception as exc:
+                    self._last_import_log = captured.getvalue().strip()
                     self.bridge.import_ready.emit(None, str(exc))
+                finally:
+                    ai_logger.removeHandler(handler)
+                    ai_logger.setLevel(previous_level)
 
             runner(worker)
 
@@ -1726,13 +1740,15 @@ if PYSIDE6_AVAILABLE:
             """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""
             self.worker_running = False
             self.set_ui_enabled(True)
+            import_log = getattr(self, "_last_import_log", "")
+            log_suffix = f"\n\n{import_log}" if import_log else ""
             if analysis is None or error:
                 message = error or "Analyzu se nepodarilo dokoncit."
-                self.write_output(f"Import knihy: CHYBA\n{message}")
+                self.write_output(f"Import knihy: CHYBA\n{message}{log_suffix}")
                 self.set_status("Import knihy: CHYBA")
                 QMessageBox.warning(self, "Import knihy", message)
                 return
-            self.write_output("Import knihy: nahled pripraven")
+            self.write_output(f"Import knihy: nahled pripraven{log_suffix}")
             self.set_status("Import knihy: nahled pripraven")
             dialog = ImportDialog(analysis, parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
