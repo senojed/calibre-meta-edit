@@ -954,6 +954,37 @@ def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
     return Book(0, title, authors)
 
 
+def _conventional_signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
+    """Dotaz z klasickych zdroju (nazev souboru, metadata) - bez AI extrakce."""
+    conventional = [signal for signal in signals if signal.source != "ai-text"]
+    return _signal_book(conventional)
+
+
+def _ai_signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
+    """Dotaz z AI extrakce; prazdny Book kdyz zadny ai-text signal neni."""
+    ai_signals = [signal for signal in signals if signal.source == "ai-text"]
+    return _signal_book(ai_signals) if ai_signals else Book(0, "", [])
+
+
+def _import_query_seeds(signals: Sequence[ImportSourceSignal]) -> list[Book]:
+    """Postavi seedy pro online hledani: AI dotaz + klasicky dotaz.
+
+    Shodne seedy (po normalizaci) sloucime, at AI ktera souhlasi nestoji navic.
+    Kdyz oba prazdne, vrati jeden fallback z best signalu.
+    """
+    seeds: list[Book] = []
+    seen: set[tuple[str, str]] = set()
+    for book in (_ai_signal_book(signals), _conventional_signal_book(signals)):
+        if not book.title.strip():
+            continue
+        key = (normalize_text(book.title), normalize_text(" ".join(book.authors)))
+        if key in seen:
+            continue
+        seen.add(key)
+        seeds.append(book)
+    return seeds or [_signal_book(signals)]
+
+
 def _word_overlap_score(left: str, right: str) -> int:
     left_words = set(normalize_text(left).split())
     right_words = set(normalize_text(right).split())

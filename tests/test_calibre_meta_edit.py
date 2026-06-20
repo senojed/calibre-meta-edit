@@ -642,6 +642,40 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(identity.title, "")
         self.assertIn("spojeni selhalo", "\n".join(captured.output))
 
+    def test_query_seeds_ai_and_conventional(self):
+        signals = [
+            cme.ImportSourceSignal(source="ai-text", title="Eden", authors="Terry Pratchett", confidence=90),
+            cme.ImportSourceSignal(source="filename", title="Strata", authors="Terry Pratchett", confidence=30),
+        ]
+        seeds = cme._import_query_seeds(signals)
+        titles = [book.title for book in seeds]
+        self.assertIn("Eden", titles)
+        self.assertIn("Strata", titles)
+
+    def test_query_seeds_dedupe_when_ai_matches_conventional(self):
+        signals = [
+            cme.ImportSourceSignal(source="ai-text", title="Strata", authors="Terry Pratchett", confidence=90),
+            cme.ImportSourceSignal(source="filename", title="Strata", authors="Terry Pratchett", confidence=30),
+        ]
+        seeds = cme._import_query_seeds(signals)
+        self.assertEqual(len(seeds), 1)
+
+    def test_query_seeds_without_ai_equals_conventional(self):
+        signals = [
+            cme.ImportSourceSignal(source="filename", title="Strata", authors="Terry Pratchett", confidence=30),
+        ]
+        seeds = cme._import_query_seeds(signals)
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual(seeds[0].title, "Strata")
+
+    def test_conventional_signal_book_ignores_ai_text(self):
+        signals = [
+            cme.ImportSourceSignal(source="ai-text", title="Eden", authors="X", confidence=90),
+            cme.ImportSourceSignal(source="filename", title="Strata", authors="Terry Pratchett", confidence=30),
+        ]
+        book = cme._conventional_signal_book(signals)
+        self.assertEqual(book.title, "Strata")
+
     def test_analyze_no_ai_signal_when_disabled(self):
         meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
         analysis = cme.analyze_book_for_import(
