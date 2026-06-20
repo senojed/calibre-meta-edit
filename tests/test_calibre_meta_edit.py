@@ -542,6 +542,32 @@ class AITextExtractionTests(unittest.TestCase):
         filename_full = cme.ImportSourceSignal(source="filename", title="UZ-20-Mort", authors="Terry Pratchett", confidence=30)
         self.assertGreater(cme._import_selection_key(ai_title_only), cme._import_selection_key(filename_full))
 
+    def test_best_title_prefers_ai_over_junk_filename(self):
+        signals = [
+            cme.ImportSourceSignal(source="filename", title="UZ-20-Hrrr na ne", authors="Terry Pratchett", confidence=30),
+            cme.ImportSourceSignal(source="ai-text", title="Hrr na ně", authors="Terry Pratchett", confidence=90),
+        ]
+        self.assertEqual(cme._best_normalized_title(signals), "Hrr na ně")
+
+    def test_best_title_priority_over_completeness(self):
+        # ai-text recovered only the title; filename has title+author but junk-coded title.
+        # Source priority must beat completeness, so the clean ai title wins.
+        signals = [
+            cme.ImportSourceSignal(source="filename", title="UZ-20-Hrr na ne", authors="Terry Pratchett", confidence=30),
+            cme.ImportSourceSignal(source="ai-text", title="Hrr na ně", authors="", confidence=90),
+        ]
+        self.assertEqual(cme._best_normalized_title(signals), "Hrr na ně")
+
+    def test_preview_prefers_ai_text_signal(self):
+        signals = [
+            cme.ImportSourceSignal(source="ebook-meta", title="_asn_ zem_plocha - 21", authors="Neznámý", confidence=60),
+            cme.ImportSourceSignal(source="filename", title="UZ-20-Hrrr na ne", authors="", confidence=30),
+            cme.ImportSourceSignal(source="ai-text", title="Hrr na ně", authors="Terry Pratchett", confidence=90),
+        ]
+        preview = cme.choose_initial_import_preview(signals)
+        self.assertEqual(preview.title, "Hrr na ně")
+        self.assertEqual(preview.authors, "Terry Pratchett")
+
 
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):

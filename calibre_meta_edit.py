@@ -626,7 +626,7 @@ def signal_preview_quality(signal: ImportSourceSignal) -> tuple[int, int, int, i
 
 
 def choose_initial_import_preview(signals: Sequence[ImportSourceSignal]) -> ImportPreview:
-    preview_signal = max(signals, key=signal_preview_quality) if signals else ImportSourceSignal(source="")
+    preview_signal = max(signals, key=_import_selection_key) if signals else ImportSourceSignal(source="")
     metadata_signal = next((signal for signal in signals if signal.source in METADATA_SIGNAL_SOURCES), None)
     return ImportPreview(
         title=preview_signal.title,
@@ -842,28 +842,34 @@ def _source_priority(signal: ImportSourceSignal) -> int:
     return _SOURCE_PRIORITY.get(signal.source, 0)
 
 
-def _import_selection_key(signal: ImportSourceSignal) -> tuple[int, int, int, int, int]:
+def _import_selection_key(signal: ImportSourceSignal) -> tuple[int, int, int, int, int, int]:
     """Klic pro vyber nejlepsiho signalu.
 
-    Poradi vah: nejdriv ne-junk (junk/prazdny nikdy nevyhraje), pak priorita
-    zdroje (ai-text > metadata > nazev souboru), pak uplnost, cistota, confidence.
+    Poradi vah:
+    1. not_junk - junk/prazdny nazev nikdy nevyhraje (zamcene chovani)
+    2. ai_is_top - AI extrakce z textu je nejjistejsi, prebije i uplnost
+    3. completeness - uplnejsi zaznam (nazev+autor) pred neuplnym
+    4. clean_bonus - cisty text pred mojibake
+    5. source_priority - mezi zbytkem: metadata pred nazvem souboru
+    6. confidence - posledni rozhodci
     """
     not_junk, completeness, clean_bonus, confidence = signal_preview_quality(signal)
-    return (not_junk, _source_priority(signal), completeness, clean_bonus, confidence)
+    ai_is_top = 1 if signal.source == "ai-text" else 0
+    return (not_junk, ai_is_top, completeness, clean_bonus, _source_priority(signal), confidence)
 
 
 def _best_normalized_title(signals: Sequence[ImportSourceSignal]) -> str:
     title_signals = [signal for signal in signals if signal.title.strip()]
     if not title_signals:
         return ""
-    return max(title_signals, key=signal_preview_quality).title
+    return max(title_signals, key=_import_selection_key).title
 
 
 def _best_normalized_authors(signals: Sequence[ImportSourceSignal]) -> str:
     author_signals = [signal for signal in signals if signal.authors.strip()]
     if not author_signals:
         return ""
-    return max(author_signals, key=signal_preview_quality).authors
+    return max(author_signals, key=_import_selection_key).authors
 
 
 def _signal_book(signals: Sequence[ImportSourceSignal]) -> Book:
