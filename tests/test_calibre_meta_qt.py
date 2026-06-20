@@ -127,7 +127,7 @@ class QtHelperTests(unittest.TestCase):
 
         settings = qt.normalize_ai_settings({})
 
-        self.assertEqual(settings, {"provider": "off", "model": "llama3", "text_limit": 5000})
+        self.assertEqual(settings, {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120})
 
     def test_normalize_ai_settings_reads_saved_values(self):
         import calibre_meta_qt as qt

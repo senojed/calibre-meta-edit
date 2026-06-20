@@ -703,13 +703,17 @@ class OllamaAIResolver:
         self,
         model: str = "llama3",
         requester: Callable[[str, bytes, dict[str, str]], str] | None = None,
+        timeout: int = 120,
     ) -> None:
         self.model = model.strip() or "llama3"
         self.requester = requester or self._request
+        # Vyssi default kvuli cold startu: prvni dotaz nacita model do pameti,
+        # u vetsich modelu (14B) to klidne presahne 20 s.
+        self.timeout = timeout
 
     def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
         request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
             return response.read().decode("utf-8", errors="replace")
 
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:

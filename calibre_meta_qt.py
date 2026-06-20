@@ -47,7 +47,7 @@ AUTO_SETTING_DEFAULTS = {
     "auto_link_audit": True,
     "auto_cover_audit": True,
 }
-AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000}
+AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120}
 
 
 def app_title() -> str:
@@ -261,7 +261,16 @@ def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
         text_limit = int(ai_raw.get("text_limit", AI_SETTING_DEFAULTS["text_limit"]))
     except (TypeError, ValueError):
         text_limit = int(AI_SETTING_DEFAULTS["text_limit"])
-    return {"provider": provider, "model": model, "text_limit": max(500, min(text_limit, 50000))}
+    try:
+        timeout = int(ai_raw.get("timeout", AI_SETTING_DEFAULTS["timeout"]))
+    except (TypeError, ValueError):
+        timeout = int(AI_SETTING_DEFAULTS["timeout"])
+    return {
+        "provider": provider,
+        "model": model,
+        "text_limit": max(500, min(text_limit, 50000)),
+        "timeout": max(10, min(timeout, 600)),
+    }
 
 
 def auto_workflow_title(auto_settings: dict[str, bool]) -> str:
@@ -605,6 +614,9 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(QLabel("EPUB text limit"), 7, 0)
             self.ai_text_limit_edit = QLineEdit(str(ai_settings["text_limit"]))
             form.addWidget(self.ai_text_limit_edit, 7, 1, 1, 3)
+            form.addWidget(QLabel("AI timeout (s)"), 8, 0)
+            self.ai_timeout_edit = QLineEdit(str(ai_settings["timeout"]))
+            form.addWidget(self.ai_timeout_edit, 8, 1, 1, 3)
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -653,6 +665,7 @@ if PYSIDE6_AVAILABLE:
                 "provider": self.ai_provider_combo.currentText(),
                 "model": self.ai_model_edit.text(),
                 "text_limit": self.ai_text_limit_edit.text(),
+                "timeout": self.ai_timeout_edit.text(),
             }
             settings["ai"] = normalize_ai_settings({"ai": ai_raw})
             shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1717,7 +1730,10 @@ if PYSIDE6_AVAILABLE:
             ai_settings = normalize_ai_settings(read_app_settings())
             provider = str(ai_settings.get("provider", "off"))
             if provider == "ollama":
-                resolver: object = cme.OllamaAIResolver(str(ai_settings.get("model", "llama3")))
+                resolver: object = cme.OllamaAIResolver(
+                    str(ai_settings.get("model", "llama3")),
+                    timeout=int(ai_settings.get("timeout", 120)),
+                )
             else:
                 resolver = cme.DisabledAIResolver()
             settings = {

@@ -624,6 +624,14 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(ai_signals[0].title, "Hrr na ně")
         self.assertEqual(analysis.preview.title, "Hrr na ně")
 
+    def test_resolver_stores_timeout(self):
+        resolver = cme.OllamaAIResolver("dummy", timeout=99)
+        self.assertEqual(resolver.timeout, 99)
+
+    def test_resolver_default_timeout_tolerates_cold_start(self):
+        # Default must be generous enough for a cold model load, not the old 20s.
+        self.assertGreaterEqual(cme.OllamaAIResolver("dummy").timeout, 60)
+
     def test_extract_json_object_strips_markdown_fences(self):
         raw = "```json\n{\"title\": \"Strata\"}\n```"
         self.assertEqual(cme._extract_json_object(raw), "{\"title\": \"Strata\"}")
