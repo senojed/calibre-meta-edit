@@ -683,6 +683,19 @@ class DisabledAIResolver:
         return AIBookIdentity()
 
 
+def _extract_json_object(raw: str) -> str:
+    """Z odpovedi modelu vytahne cisty JSON objekt.
+
+    Modely casto obali JSON do markdown plotu (```json ... ```) nebo pridaji text.
+    Vezmeme od prvni '{' po posledni '}'.
+    """
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return raw[start:end + 1]
+    return raw
+
+
 class OllamaAIResolver:
     """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi."""
 
@@ -725,7 +738,7 @@ class OllamaAIResolver:
                 {"Content-Type": "application/json"},
             )
             data = json.loads(raw)
-            answer = json.loads(str(data.get("response", "{}")))
+            answer = json.loads(_extract_json_object(str(data.get("response", "{}"))))
             return AIImportChoice(
                 url=str(answer.get("url", "")),
                 confidence=int(answer.get("confidence", 0) or 0),
@@ -748,7 +761,7 @@ class OllamaAIResolver:
                 {"Content-Type": "application/json"},
             )
             data = json.loads(raw)
-            answer = json.loads(str(data.get("response", "{}")))
+            answer = json.loads(_extract_json_object(str(data.get("response", "{}"))))
             identity = AIBookIdentity(
                 title=str(answer.get("title", "")),
                 author=str(answer.get("author", "")),

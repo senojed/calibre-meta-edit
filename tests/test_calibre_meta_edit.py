@@ -624,6 +624,23 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(ai_signals[0].title, "Hrr na ně")
         self.assertEqual(analysis.preview.title, "Hrr na ně")
 
+    def test_extract_json_object_strips_markdown_fences(self):
+        raw = "```json\n{\"title\": \"Strata\"}\n```"
+        self.assertEqual(cme._extract_json_object(raw), "{\"title\": \"Strata\"}")
+
+    def test_extract_json_object_handles_plain_json(self):
+        self.assertEqual(cme._extract_json_object("{\"a\": 1}"), "{\"a\": 1}")
+
+    def test_extract_parses_fenced_json_response(self):
+        def fake_requester(url, payload, headers):
+            fenced = "```json\n" + json.dumps({"title": "Strata", "author": "Terry Pratchett", "confidence": 95}) + "\n```"
+            return json.dumps({"response": fenced})
+        resolver = cme.OllamaAIResolver("dummy", requester=fake_requester)
+        identity = resolver.extract("TERRY PRATCHETT\nSTRATA")
+        self.assertEqual(identity.title, "Strata")
+        self.assertEqual(identity.author, "Terry Pratchett")
+        self.assertEqual(identity.confidence, 95)
+
     def test_extract_logs_success(self):
         def fake_requester(url, payload, headers):
             return json.dumps({"response": json.dumps({"title": "Hrr na ně", "author": "Terry Pratchett", "confidence": 91})})
