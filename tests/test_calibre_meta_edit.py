@@ -693,6 +693,30 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertEqual(by_url["https://dk/jine"], 40)
         self.assertEqual(len(deduped), 2)
 
+    def test_resolver_rejects_low_score_ai_choice(self):
+        # AI picker confidently chooses a weak candidate; guard must reject it
+        # and fall back to the strongest-scoring candidate.
+        class FakeResolver:
+            def resolve(self, signals, candidates):
+                return cme.AIImportChoice(url="https://dk/weak", confidence=95, reason="ai sure")
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata", score=100),
+            cme.ImportCandidate("databazeknih", "Slaby", "", "https://dk/weak", score=11),
+        ]
+        chosen = cme.resolve_import_candidate_with_ai([], candidates, resolver=FakeResolver())
+        self.assertEqual(chosen.url, "https://dk/strata")
+
+    def test_resolver_accepts_high_score_ai_choice(self):
+        class FakeResolver:
+            def resolve(self, signals, candidates):
+                return cme.AIImportChoice(url="https://dk/strata", confidence=95, reason="ai sure")
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata", score=100),
+            cme.ImportCandidate("databazeknih", "Jine", "", "https://dk/jine", score=90),
+        ]
+        chosen = cme.resolve_import_candidate_with_ai([], candidates, resolver=FakeResolver())
+        self.assertEqual(chosen.url, "https://dk/strata")
+
     def test_analyze_no_ai_signal_when_disabled(self):
         meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
         analysis = cme.analyze_book_for_import(

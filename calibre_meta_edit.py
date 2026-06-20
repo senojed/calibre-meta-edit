@@ -786,9 +786,11 @@ def resolve_import_candidate_with_ai(
     candidates: Sequence[ImportCandidate],
     resolver: object | None = None,
     minimum_score: int = 80,
+    ai_override_margin: int = 30,
 ) -> ImportCandidate | None:
     if not candidates:
         return None
+    best_score = max(candidate.score for candidate in candidates)
     ai_resolver = resolver or DisabledAIResolver()
     try:
         choice = ai_resolver.resolve(signals, candidates) if hasattr(ai_resolver, "resolve") else None
@@ -801,7 +803,9 @@ def resolve_import_candidate_with_ai(
     confidence = max(0, min(confidence, 100))
     if choice and confidence >= 80:
         for candidate in candidates:
-            if candidate.url == getattr(choice, "url", ""):
+            # AI smi rozhodnout jen tesny souboj. Kdyz je jeho kandidat o hodne
+            # slabsi nez nejlepsi online shoda (napr. 11 vs 100), nesmi ji prebit.
+            if candidate.url == getattr(choice, "url", "") and (best_score - candidate.score) <= ai_override_margin:
                 reason = f"{candidate.reason};ai={confidence}"
                 choice_reason = str(getattr(choice, "reason", ""))
                 if choice_reason:
