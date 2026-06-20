@@ -148,11 +148,66 @@ suited to extracting prose identity. Recommend an instruct model such as
 `qwen2.5:14b` or `llama3.1:8b`. This is a user settings change, not part of this
 task; noted here only as guidance.
 
+## Revision 2026-06-20: online-arbitrated multi-seed lookup
+
+Manual testing exposed a flaw in the "ai-text always wins" priority. For
+`Strata.pdb` the book text opens with `TERRY PRATCHETT / STRATA`, but a few lines
+down an epigraph quotes a fictional in-world book, `dr. Carl Untermond /
+Přeplněný Eden`. The local `llama3.1:8b` model returned `Přeplněný Eden` as the
+title - a real string from the text, but the epigraph, not the heading. Because
+`ai-text` had top priority it overrode the correct `filename: Strata` and
+`ebook-meta: Strata`, making the result worse than with AI disabled (plain
+filename "Strata" finds the book).
+
+Conclusion: a local 8B model is not reliable enough to be trusted
+unconditionally over agreeing conventional sources. A fixed priority is the
+wrong arbiter.
+
+New approach: let the online database arbitrate.
+
+- Build multiple query seeds: a conventional seed (best non-junk title/author
+  ignoring `ai-text`) and an AI seed (the `ai-text` title/author). Deduplicate
+  identical seeds so an agreeing AI costs no extra lookup.
+- Run the online lookup for each seed.
+- Score each returned candidate against the seed that produced it (a query that
+  finds an exact DB match scores high; a wrong query that finds only loose
+  matches scores low - the DB decides what actually exists).
+- Deduplicate candidates by URL, keeping the highest score, and pick the best.
+- The final preview title/author/URL come from the winning DB candidate, not
+  from a possibly-wrong seed.
+
+Worked examples:
+- `Strata`: conventional "Strata" -> exact DB match (high). AI "Přeplněný Eden"
+  -> only ~11% loose matches. Strata wins. Correct.
+- `UZ-20-Hrrr_na_ne`: conventional "UZ-20-Hrrr na ne" -> weak. AI "Hrr na ně"
+  -> strong DB match. AI wins. Correct.
+
+Residual edge case (accepted): if a wrong AI title happens to be a real, indexed
+book, its candidate could score high. Rare; deferred.
+
+Candidate-resolver guard: the existing `resolve_import_candidate_with_ai` could
+still let the AI candidate-picker choose a low-scoring candidate. Add a guard so
+an AI-chosen candidate is only accepted when its own score meets the minimum
+(same threshold used for the score-based fallback). This stops the AI picker
+from selecting an 11% candidate over a 100% one.
+
+Role of the earlier source-priority work (Tasks 1-2): retained, but now only
+governs the fallback preview used when the online lookup returns nothing for any
+seed. When the DB returns matches, online score arbitrates and overrides the
+fixed priority.
+
+Diagnostics: route the `calibre_meta` logger output produced during an import
+analysis into the app's "Log" tab, so AI extraction steps and failures are
+visible in the app (not only on a console the app may not have).
+
 ## Out of scope
 
 - Changing the default Ollama model in code.
 - Folder author hint walk-up for `Author/Series/file` layouts (separate finding).
 - Stripping series codes by regex (the reason we chose AI extraction instead).
+- Smarter prompt engineering to skip epigraphs (the online arbitration makes a
+  perfect extraction unnecessary; a wrong AI title simply loses to a better
+  online match).
 
 ## Success criteria
 
