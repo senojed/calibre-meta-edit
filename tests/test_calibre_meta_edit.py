@@ -676,6 +676,23 @@ class AITextExtractionTests(unittest.TestCase):
         book = cme._conventional_signal_book(signals)
         self.assertEqual(book.title, "Strata")
 
+    def test_score_candidate_for_scores_against_given_title(self):
+        signals = [cme.ImportSourceSignal(source="filename", title="Eden", authors="Terry Pratchett")]
+        candidate = cme.ImportCandidate("googlebooks", "Strata", "Terry Pratchett", "https://g/strata")
+        against_strata = cme._score_candidate_for("Strata", "Terry Pratchett", signals, candidate)
+        against_eden = cme._score_candidate_for("Eden", "Terry Pratchett", signals, candidate)
+        self.assertGreater(against_strata.score, against_eden.score)
+
+    def test_dedupe_candidates_by_url_keeps_highest_score(self):
+        low = cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata", score=10)
+        high = cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata", score=95)
+        other = cme.ImportCandidate("databazeknih", "Jine", "", "https://dk/jine", score=40)
+        deduped = cme._dedupe_candidates_by_url([low, high, other])
+        by_url = {c.url: c.score for c in deduped}
+        self.assertEqual(by_url["https://dk/strata"], 95)
+        self.assertEqual(by_url["https://dk/jine"], 40)
+        self.assertEqual(len(deduped), 2)
+
     def test_analyze_no_ai_signal_when_disabled(self):
         meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
         analysis = cme.analyze_book_for_import(

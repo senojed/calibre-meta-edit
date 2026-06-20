@@ -1179,14 +1179,41 @@ def _author_similarity_score(signals_author: str, candidate: ImportCandidate) ->
     return 0
 
 
-def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: ImportCandidate) -> ImportCandidate:
-    title = _best_normalized_title(signals)
-    authors = _best_normalized_authors(signals)
+def _score_candidate_for(
+    title: str,
+    authors: str,
+    signals: Sequence[ImportSourceSignal],
+    candidate: ImportCandidate,
+) -> ImportCandidate:
+    """Ohodnoti kandidata proti danemu dotazu (nazev+autor), ne proti vsem signalum."""
     title_score = _title_similarity_score(title, candidate.title)
     author_score = _author_similarity_score(authors, candidate)
     score = title_score + author_score
     reason = f"title={title_score};author={author_score}"
     return replace(candidate, score=score, reason=reason)
+
+
+def score_import_candidate(signals: Sequence[ImportSourceSignal], candidate: ImportCandidate) -> ImportCandidate:
+    return _score_candidate_for(
+        _best_normalized_title(signals),
+        _best_normalized_authors(signals),
+        signals,
+        candidate,
+    )
+
+
+def _dedupe_candidates_by_url(candidates: Sequence[ImportCandidate]) -> list[ImportCandidate]:
+    """Slouci kandidaty se stejnym URL, nechá ten s nejvyssim skore. Zachova poradi."""
+    best: dict[str, ImportCandidate] = {}
+    order: list[str] = []
+    for candidate in candidates:
+        key = candidate.url
+        if key not in best:
+            best[key] = candidate
+            order.append(key)
+        elif candidate.score > best[key].score:
+            best[key] = candidate
+    return [best[key] for key in order]
 
 
 def score_import_candidates(signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> list[ImportCandidate]:
