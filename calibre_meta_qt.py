@@ -607,6 +607,8 @@ if PYSIDE6_AVAILABLE:
                 updates["tags"] = ", ".join(detail.tags)
             if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
                 updates["comment"] = cme.format_enriched_comment(written_url, detail)
+            if detail.cover_url:
+                updates["selected_cover_url"] = detail.cover_url
             self.current_preview = replace(self.current_preview, **updates)
             # Nazev a autora opravime podle katalogu, kdyz je odkaz vrati.
             if title.strip():
@@ -659,6 +661,8 @@ if PYSIDE6_AVAILABLE:
                     updates["tags"] = ", ".join(detail.tags)
                 if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
                     updates["comment"] = cme.format_enriched_comment(candidate.url, detail)
+                if detail.cover_url:
+                    updates["selected_cover_url"] = detail.cover_url
                 if updates:
                     enriched = replace(enriched, **updates)
             self.current_preview = enriched

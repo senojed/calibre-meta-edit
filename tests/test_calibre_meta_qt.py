@@ -644,7 +644,7 @@ class QtImportTests(unittest.TestCase):
             preview=cme.ImportPreview(title="Strata", authors="Terry Pratchett"),
             messages=[],
         )
-        detail = cme.BookDetailMetadata(published_year="1981", publisher="Talpress", tags=["fantasy"], about_text="popis")
+        detail = cme.BookDetailMetadata(published_year="1981", publisher="Talpress", tags=["fantasy"], about_text="popis", cover_url="https://dk/cover.jpg")
         url = "https://www.databazeknih.cz/knihy/strata-17178"
         dialog = qt.ImportDialog(
             analysis,
@@ -662,6 +662,7 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(result.publisher, "Talpress")
         self.assertEqual(result.url, url)
         self.assertIn("fantasy", result.tags)
+        self.assertEqual(result.selected_cover_url, "https://dk/cover.jpg")
         app.processEvents()
 
     def test_import_dialog_use_link_fixes_title_and_author_from_catalog(self):
