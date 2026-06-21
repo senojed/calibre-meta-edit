@@ -257,6 +257,11 @@ class AuthorDisplayNameTests(unittest.TestCase):
     def test_keeps_already_display_name_unchanged(self):
         self.assertEqual(cme.normalize_author_display_name("Jules Verne"), "Jules Verne")
 
+    def test_all_caps_author_to_title_case(self):
+        self.assertEqual(cme.normalize_author_display_name("JULES VERNE"), "Jules Verne")
+        self.assertEqual(cme.normalize_author_display_name("VERNE, JULES"), "Jules Verne")
+        self.assertEqual(cme.normalize_author_display_names("JULES VERNE & KAREL ČAPEK"), "Jules Verne & Karel Čapek")
+
     def test_keeps_empty_author_safe(self):
         self.assertEqual(cme.normalize_author_display_name(""), "")
         self.assertEqual(cme.normalize_author_display_names(""), "")
@@ -583,6 +588,18 @@ class AITextExtractionTests(unittest.TestCase):
     def test_ai_signal_confidence_clamped(self):
         signal = cme.import_signal_from_ai_extraction(cme.AIBookIdentity(title="T", confidence=999))
         self.assertEqual(signal.confidence, 100)
+
+    def test_ai_signal_normalizes_all_caps(self):
+        signal = cme.import_signal_from_ai_extraction(
+            cme.AIBookIdentity(title="DEN AMERICKÉHO NOVINÁŘE ROKU 2889", author="JULES VERNE")
+        )
+        self.assertEqual(signal.title, "Den amerického novináře roku 2889")
+        self.assertEqual(signal.authors, "Jules Verne")
+
+    def test_ai_signal_keeps_mixed_case_title(self):
+        signal = cme.import_signal_from_ai_extraction(cme.AIBookIdentity(title="Mort", author="Terry Pratchett"))
+        self.assertEqual(signal.title, "Mort")
+        self.assertEqual(signal.authors, "Terry Pratchett")
 
     def test_disabled_resolver_extract_returns_empty(self):
         identity = cme.DisabledAIResolver().extract("Terry Pratchett\nHRR NA NĚ!")

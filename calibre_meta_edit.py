@@ -571,8 +571,8 @@ def import_signal_from_ai_extraction(identity: AIBookIdentity) -> ImportSourceSi
         return None
     return ImportSourceSignal(
         source="ai-text",
-        title=identity.title.strip(),
-        authors=identity.author.strip(),
+        title=_sentence_case_if_all_caps(identity.title.strip()),
+        authors=normalize_author_display_names(identity.author.strip()),
         confidence=max(0, min(identity.confidence, 100)),
     )
 
@@ -604,13 +604,34 @@ def _looks_like_organization(text: str) -> bool:
     return bool(tokens & _AUTHOR_ORG_KEYWORDS)
 
 
+def _is_all_caps(text: str) -> bool:
+    """Pozna text psany jen velkymi pismeny (ma pismena, zadne male)."""
+    return any(char.isalpha() for char in text) and not any(char.islower() for char in text)
+
+
+def _fix_all_caps_name(name: str) -> str:
+    """Cele velkymi psane osobni jmeno prevede na 'Jmeno Prijmeni'. Firmy necha."""
+    if _is_all_caps(name) and not _looks_like_organization(name):
+        return name.title()
+    return name
+
+
+def _sentence_case_if_all_caps(title: str) -> str:
+    """Cele velkymi psany nazev prevede na vetnou podobu (jen prvni pismeno velke)."""
+    if not _is_all_caps(title):
+        return title
+    lowered = title.lower()
+    return lowered[:1].upper() + lowered[1:]
+
+
 def normalize_author_display_name(name: str) -> str:
     """Prevede jednoho autora z razeneho tvaru 'Prijmeni, Jmeno' na 'Jmeno Prijmeni'.
 
     Konzervativni: prehodi jen jednoznacne osobni jmeno s prave jednou carkou.
     Nejasne pripady (vic carek, pripona za carkou, firma, prazdne) necha beze zmeny.
+    Cele velkymi psane jmeno navic prevede na spravne psani (JULES VERNE -> Jules Verne).
     """
-    stripped = name.strip()
+    stripped = _fix_all_caps_name(name.strip())
     if stripped.count(",") != 1:
         return stripped
     last, first = (part.strip() for part in stripped.split(","))
