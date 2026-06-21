@@ -1329,6 +1329,17 @@ def lookup_import_candidates(
     return sorted(deduped, key=lambda candidate: candidate.score, reverse=True)
 
 
+def lookup_import_candidates_for_query(
+    title: str,
+    authors: str,
+    fetcher: Callable[[str], str] | None = None,
+    sleep_seconds: float = 0.0,
+) -> list[ImportCandidate]:
+    """Online hledani podle rucne zadaneho nazvu a autora (pro 'Hledat znovu')."""
+    signal = ImportSourceSignal(source="manual", title=title, authors=authors)
+    return lookup_import_candidates([signal], fetcher=fetcher, sleep_seconds=sleep_seconds)
+
+
 def metadata_db_path(library: str | Path) -> Path:
     return Path(library) / "metadata.db"
 

@@ -1154,6 +1154,14 @@ class ImportOnlineLookupTests(unittest.TestCase):
         candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
         self.assertEqual(candidates[0].title, "Strata")
 
+    def test_lookup_for_query_searches_explicit_title(self):
+        def fetcher(url):
+            if "googleapis" in url and "Hrrr" in url:
+                return json.dumps({"items": [{"id": "x", "volumeInfo": {"title": "Hrrr na ně!", "authors": ["Terry Pratchett"]}}]})
+            return ""
+        cands = cme.lookup_import_candidates_for_query("Hrrr na ně!", "Terry Pratchett", fetcher=fetcher)
+        self.assertTrue(any("Hrrr" in c.title for c in cands))
+
     def test_import_candidate_from_databaze_keeps_author_empty_and_uses_evidence(self):
         signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]
         raw = cme.Candidate("Kniha", "volny text bez strukturovaneho autora", "https://dk/kniha")
