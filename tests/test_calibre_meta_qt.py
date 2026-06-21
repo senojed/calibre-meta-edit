@@ -19,8 +19,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.1")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.1")
+        self.assertEqual(qt.APP_VERSION, "0.4.2")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.2")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -67,7 +67,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.1")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.2")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
