@@ -1215,6 +1215,69 @@ class PreferencesDialogAITests(unittest.TestCase):
             SETTINGS_PATH=tmp_path,
         )
 
+    def test_preferences_dialog_has_key_status_label(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                self.assertTrue(hasattr(dialog, "ai_key_status_label"))
+        app.processEvents()
+
+    def test_changing_provider_switches_model_to_default(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                dialog.ai_provider_combo.setCurrentText("anthropic")
+                self.assertEqual(dialog.ai_model_edit.text(), "claude-sonnet-4-6")
+                dialog.ai_provider_combo.setCurrentText("openai")
+                self.assertEqual(dialog.ai_model_edit.text(), "gpt-4o")
+        app.processEvents()
+
+    def test_key_status_label_reflects_missing_key(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                with patch.object(qt.cme, "read_api_key", return_value=""):
+                    window = qt.CalibreMetaQtWindow()
+                    dialog = self._open_dialog(qt, window)
+                    dialog.ai_provider_combo.setCurrentText("anthropic")
+                    self.assertIn("CHYB", dialog.ai_key_status_label.text().upper())
+        app.processEvents()
+
+    def test_key_status_label_reflects_found_key(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                with patch.object(qt.cme, "read_api_key", return_value="sk-found"):
+                    window = qt.CalibreMetaQtWindow()
+                    dialog = self._open_dialog(qt, window)
+                    dialog.ai_provider_combo.setCurrentText("openai")
+                    self.assertIn("NALEZEN", dialog.ai_key_status_label.text().upper())
+        app.processEvents()
+
     def test_preferences_dialog_exposes_ai_import_widgets(self):
         from PySide6.QtWidgets import QApplication
         import sys

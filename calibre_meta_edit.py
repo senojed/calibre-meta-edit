@@ -989,6 +989,28 @@ def read_api_key(
     return _parse_env_file(env_path).get(env_name, "").strip()
 
 
+def build_ai_resolver(
+    provider: str,
+    model: str = "",
+    timeout: int = 120,
+    api_key: str | None = None,
+    key_reader: Callable[[str], str] | None = None,
+) -> object:
+    """Podle nazvu providera slozi odpovidajici resolver.
+
+    Pro cloud providery vezme klic z api_key, nebo (kdyz je None) ho precte
+    pres key_reader (default read_api_key). Neznamy/vypnuty provider -> Disabled.
+    """
+    if provider == "ollama":
+        return OllamaAIResolver(model, timeout=timeout)
+    if provider in ("anthropic", "openai"):
+        reader = key_reader or read_api_key
+        key = reader(provider) if api_key is None else api_key
+        cls = AnthropicAIResolver if provider == "anthropic" else OpenAIAIResolver
+        return cls(model, api_key=key, timeout=timeout)
+    return DisabledAIResolver()
+
+
 def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
     """Bezpecne zavola AI extraktor; pri vypnute AI nebo chybe vrati prazdny vysledek."""
     extractor = getattr(resolver, "extract", None) if resolver else None

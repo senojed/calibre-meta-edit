@@ -761,7 +761,7 @@ if PYSIDE6_AVAILABLE:
             self.ai_provider_combo.addItems(AI_PROVIDER_VALUES)
             self.ai_provider_combo.setCurrentText(str(ai_settings["provider"]))
             form.addWidget(self.ai_provider_combo, 5, 1, 1, 3)
-            form.addWidget(QLabel("Ollama model"), 6, 0)
+            form.addWidget(QLabel("Model"), 6, 0)
             self.ai_model_edit = QLineEdit(str(ai_settings["model"]))
             form.addWidget(self.ai_model_edit, 6, 1, 1, 3)
             form.addWidget(QLabel("EPUB text limit"), 7, 0)
@@ -770,6 +770,13 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(QLabel("AI timeout (s)"), 8, 0)
             self.ai_timeout_edit = QLineEdit(str(ai_settings["timeout"]))
             form.addWidget(self.ai_timeout_edit, 8, 1, 1, 3)
+            # Status klice pro cloud providery: rekne jestli appka nasla API klic.
+            self.ai_key_status_label = QLabel()
+            form.addWidget(QLabel("API klic"), 9, 0)
+            form.addWidget(self.ai_key_status_label, 9, 1, 1, 3)
+            # Signal az po nastaveni hodnot, jinak by init prepsal ulozeny model defaultem.
+            self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_changed)
+            self._update_ai_key_status()
             layout.addLayout(form)
 
             buttons = QHBoxLayout()
@@ -791,6 +798,20 @@ if PYSIDE6_AVAILABLE:
             buttons.addWidget(save)
             buttons.addWidget(close)
             layout.addLayout(buttons)
+
+        def _on_ai_provider_changed(self, provider: str) -> None:
+            """Pri zmene providera prepne model na jeho default a obnovi status klice."""
+            self.ai_model_edit.setText(AI_PROVIDER_DEFAULT_MODELS.get(provider, ""))
+            self._update_ai_key_status()
+
+        def _update_ai_key_status(self) -> None:
+            """Ukaze, jestli appka nasla API klic pro vybraneho cloud providera."""
+            provider = self.ai_provider_combo.currentText()
+            if provider in ("anthropic", "openai"):
+                found = bool(cme.read_api_key(provider))
+                self.ai_key_status_label.setText("nalezen" if found else "CHYBI (nastav v .env)")
+            else:
+                self.ai_key_status_label.setText("nepouziva se")
 
         def choose_library(self) -> None:
             selected = QFileDialog.getExistingDirectory(self, "Vyber Calibre knihovnu", self.library_edit.text())
@@ -1910,13 +1931,11 @@ if PYSIDE6_AVAILABLE:
             library = self.library_path
             ai_settings = normalize_ai_settings(read_app_settings())
             provider = str(ai_settings.get("provider", "off"))
-            if provider == "ollama":
-                resolver: object = cme.OllamaAIResolver(
-                    str(ai_settings.get("model", "llama3")),
-                    timeout=int(ai_settings.get("timeout", 120)),
-                )
-            else:
-                resolver = cme.DisabledAIResolver()
+            resolver: object = cme.build_ai_resolver(
+                provider,
+                str(ai_settings.get("model", "")),
+                timeout=int(ai_settings.get("timeout", 120)),
+            )
             settings = {
                 "epub_text_limit": ai_settings.get("text_limit", 5000),
                 "ebook_meta_path": cme.find_ebook_tool("ebook-meta") or "ebook-meta",

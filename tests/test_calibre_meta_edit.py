@@ -890,6 +890,38 @@ class ApiKeyTests(unittest.TestCase):
             self.assertEqual(key, "sk-quoted")
 
 
+class BuildAiResolverTests(unittest.TestCase):
+    def test_off_builds_disabled(self):
+        self.assertIsInstance(cme.build_ai_resolver("off"), cme.DisabledAIResolver)
+
+    def test_unknown_builds_disabled(self):
+        self.assertIsInstance(cme.build_ai_resolver("nonsense"), cme.DisabledAIResolver)
+
+    def test_ollama_builds_ollama(self):
+        resolver = cme.build_ai_resolver("ollama", model="mistral", timeout=33)
+        self.assertIsInstance(resolver, cme.OllamaAIResolver)
+        self.assertEqual(resolver.model, "mistral")
+        self.assertEqual(resolver.timeout, 33)
+
+    def test_anthropic_builds_anthropic_with_key(self):
+        resolver = cme.build_ai_resolver("anthropic", model="claude-opus-4-8", api_key="sk-a")
+        self.assertIsInstance(resolver, cme.AnthropicAIResolver)
+        self.assertEqual(resolver.model, "claude-opus-4-8")
+        self.assertEqual(resolver.api_key, "sk-a")
+
+    def test_openai_builds_openai_with_key(self):
+        resolver = cme.build_ai_resolver("openai", model="gpt-4o", api_key="sk-o")
+        self.assertIsInstance(resolver, cme.OpenAIAIResolver)
+        self.assertEqual(resolver.api_key, "sk-o")
+
+    def test_cloud_reads_key_when_not_given(self):
+        resolver = cme.build_ai_resolver(
+            "anthropic", api_key=None,
+            key_reader=lambda provider: "sk-from-reader",
+        )
+        self.assertEqual(resolver.api_key, "sk-from-reader")
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [
