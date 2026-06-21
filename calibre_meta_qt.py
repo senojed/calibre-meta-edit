@@ -2076,6 +2076,20 @@ if PYSIDE6_AVAILABLE:
             self.set_status("Import knihy: OK")
             self.show_import_review_filter()
             self.load_csv(show_message=False)
+            self._auto_fetch_cover_after_import(book_id)
+
+        def _auto_fetch_cover_after_import(self, book_id: int) -> None:
+            """Po importu automaticky stahne obalku pro novou knihu (cover audit).
+
+            Stejny mechanismus jako tlacitko Obalky, jen cileny na nove book_id.
+            Pri vice obalkach zustane kniha v review (rucni vyber), pri chybe se
+            jen zaloguje a import zustane platny.
+            """
+            if book_id <= 0:
+                return
+            args = shared.make_cover_args(self.library_path, {book_id})
+            action = shared.make_cover_audit_action(args=args, matches_path=self.matches_path)
+            self.run_background("Import: stahuji obalku", action, reload_after=True)
 
         def show_import_review_filter(self) -> None:
             """Po importu ukaze nove review radky a schova skip. Approve nemeni."""

@@ -1964,6 +1964,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "load_csv") as load_csv,
+            patch.object(window, "run_background"),
             patch.object(qt.QMessageBox, "information") as info,
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
@@ -1983,6 +1984,63 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertTrue(window.status_checks["review"].isChecked())
         self.assertFalse(window.status_checks["skip"].isChecked())
         self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_success_triggers_cover_audit_for_book(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=99, status="updated", error="", backup_path="C:/back.db")
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "load_csv"),
+            patch.object(window, "run_background") as run_bg,
+            patch.object(qt.shared, "make_cover_args") as mk_args,
+            patch.object(qt.shared, "make_cover_audit_action"),
+            patch.object(qt.QMessageBox, "information"),
+        ):
+            window.run_import_apply(preview, Path("kniha.epub"), apply_func=fake_apply, runner=fake_runner)
+            app.processEvents()
+
+        mk_args.assert_called_once()
+        self.assertIn(99, mk_args.call_args.args[1])
+        run_bg.assert_called_once()
+        app.processEvents()
+
+    def test_run_import_apply_failed_does_not_trigger_cover_audit(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=0, status="failed", error="boom", backup_path="")
+
+        def fake_apply(prev, ep):
+            return result
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(window, "run_background") as run_bg,
+            patch.object(qt.QMessageBox, "warning"),
+        ):
+            window.run_import_apply(preview, Path("kniha.epub"), apply_func=fake_apply, runner=fake_runner)
+            app.processEvents()
+
+        run_bg.assert_not_called()
         app.processEvents()
 
     def test_run_import_apply_success_reload_shows_imported_review_row(self):
@@ -2084,6 +2142,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "load_csv") as load_csv,
+            patch.object(window, "run_background"),
             patch.object(qt.QMessageBox, "information") as info,
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
@@ -2123,6 +2182,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "load_csv") as load_csv,
+            patch.object(window, "run_background"),
             patch.object(qt.QMessageBox, "information") as info,
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
@@ -2186,6 +2246,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "load_csv") as load_csv,
+            patch.object(window, "run_background"),
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
             window.run_import_apply(
@@ -2224,6 +2285,7 @@ class QtImportWiringTests(unittest.TestCase):
             patch.object(cme, "apply_import_preview", side_effect=fake_apply_import_preview),
             patch.object(cme, "find_calibredb", return_value="C:/Calibre2/calibredb.exe"),
             patch.object(window, "load_csv"),
+            patch.object(window, "run_background"),
             patch.object(qt.QMessageBox, "information"),
         ):
             window.run_import_apply(
