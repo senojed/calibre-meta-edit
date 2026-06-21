@@ -802,6 +802,146 @@ class OllamaAIResolver:
             return AIBookIdentity()
 
 
+class _CloudAIResolver:
+    """Spolecny zaklad pro cloudove AI (Anthropic, OpenAI).
+
+    Stejne prompty a stejne zpracovani odpovedi jako Ollama, jen jiny transport.
+    Podtrida dodava default_model, endpoint, hlavicky a zpusob slozeni payloadu
+    pres metodu _complete(): ta posle prompt a vrati cisty text odpovedi modelu.
+
+    Bez API klice nikdy nevola sit: extract vrati prazdny vysledek, resolve None.
+    Pri jakekoli chybe tise ustoupi (jako Ollama), aby import nespadl.
+    """
+
+    default_model = ""
+
+    def __init__(
+        self,
+        model: str = "",
+        api_key: str = "",
+        requester: Callable[[str, bytes, dict[str, str]], str] | None = None,
+        timeout: int = 120,
+    ) -> None:
+        self.model = model.strip() or self.default_model
+        self.api_key = (api_key or "").strip()
+        self.requester = requester or self._request
+        self.timeout = timeout
+
+    def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    def _complete(self, prompt: dict) -> str:
+        """Podtrida: posle prompt na cloud a vrati cisty text odpovedi modelu."""
+        raise NotImplementedError
+
+    def extract(self, text: str) -> AIBookIdentity:
+        """Z textu zacatku knihy vytahne nazev a autora. Pri chybe/bez klice prazdny."""
+        if not self.api_key:
+            logger.warning("AI extrakce preskocena: chybi API klic pro %s", type(self).__name__)
+            return AIBookIdentity()
+        prompt = {
+            "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. If the title looks garbled, correct it using the author's known bibliography. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
+            "text": text[:4000],
+        }
+        logger.info("AI extrakce: model=%s, delka textu=%d znaku", self.model, len(text))
+        try:
+            answer = json.loads(_extract_json_object(self._complete(prompt)))
+            identity = AIBookIdentity(
+                title=str(answer.get("title", "")),
+                author=str(answer.get("author", "")),
+                confidence=int(answer.get("confidence", 0) or 0),
+            )
+            logger.info(
+                "AI extrakce vysledek: nazev=%r autor=%r confidence=%d",
+                identity.title, identity.author, identity.confidence,
+            )
+            return identity
+        except Exception as exc:
+            logger.warning("AI extrakce selhala: %s", exc)
+            return AIBookIdentity()
+
+    def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
+        if not self.api_key:
+            return None
+        compact_candidates = [
+            {
+                "source": candidate.source,
+                "title": candidate.title,
+                "authors": candidate.authors,
+                "url": candidate.url,
+                "score": candidate.score,
+                "reason": candidate.reason,
+                "work_type": candidate.work_type,
+                "evidence_text": candidate.evidence_text[:500],
+            }
+            for candidate in candidates[:5]
+        ]
+        prompt = {
+            "task": "Choose the correct book candidate. Return JSON only: {\"url\":\"...\",\"confidence\":0-100,\"reason\":\"...\"}.",
+            "signals": [signal.__dict__ for signal in signals],
+            "candidates": compact_candidates,
+        }
+        try:
+            answer = json.loads(_extract_json_object(self._complete(prompt)))
+            return AIImportChoice(
+                url=str(answer.get("url", "")),
+                confidence=int(answer.get("confidence", 0) or 0),
+                reason=str(answer.get("reason", "")),
+            )
+        except Exception:
+            return None
+
+
+class AnthropicAIResolver(_CloudAIResolver):
+    """Cloud AI pres Anthropic Messages API (Claude)."""
+
+    default_model = "claude-sonnet-4-6"
+
+    def _complete(self, prompt: dict) -> str:
+        payload = json.dumps({
+            "model": self.model,
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
+        }).encode("utf-8")
+        raw = self.requester(
+            "https://api.anthropic.com/v1/messages",
+            payload,
+            {
+                "content-type": "application/json",
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+            },
+        )
+        data = json.loads(raw)
+        blocks = data.get("content", []) if isinstance(data, dict) else []
+        return "".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+
+
+class OpenAIAIResolver(_CloudAIResolver):
+    """Cloud AI pres OpenAI Chat Completions API (GPT)."""
+
+    default_model = "gpt-4o"
+
+    def _complete(self, prompt: dict) -> str:
+        payload = json.dumps({
+            "model": self.model,
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
+        }).encode("utf-8")
+        raw = self.requester(
+            "https://api.openai.com/v1/chat/completions",
+            payload,
+            {
+                "content-type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+        data = json.loads(raw)
+        return str(data["choices"][0]["message"]["content"])
+
+
 def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
     """Bezpecne zavola AI extraktor; pri vypnute AI nebo chybe vrati prazdny vysledek."""
     extractor = getattr(resolver, "extract", None) if resolver else None

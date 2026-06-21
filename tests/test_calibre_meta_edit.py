@@ -759,6 +759,84 @@ class AITextExtractionTests(unittest.TestCase):
         chosen = cme.resolve_import_candidate_with_ai([], candidates, resolver=FakeResolver())
         self.assertEqual(chosen.url, "https://dk/strata")
 
+    def test_anthropic_resolver_extract_parses_messages_response(self):
+        def fake_requester(url, payload, headers):
+            self.assertEqual(url, "https://api.anthropic.com/v1/messages")
+            self.assertEqual(headers["x-api-key"], "sk-key")
+            self.assertEqual(headers["anthropic-version"], "2023-06-01")
+            answer = json.dumps({"title": "Strata", "author": "Terry Pratchett", "confidence": 95})
+            return json.dumps({"content": [{"type": "text", "text": answer}]})
+        resolver = cme.AnthropicAIResolver("claude-sonnet-4-6", api_key="sk-key", requester=fake_requester)
+        identity = resolver.extract("TERRY PRATCHETT\nSTRATA")
+        self.assertEqual(identity.title, "Strata")
+        self.assertEqual(identity.author, "Terry Pratchett")
+        self.assertEqual(identity.confidence, 95)
+
+    def test_anthropic_resolver_extract_empty_key_skips_call(self):
+        def fail_requester(url, payload, headers):
+            raise AssertionError("requester nesmi byt volan bez klice")
+        resolver = cme.AnthropicAIResolver("claude-sonnet-4-6", api_key="", requester=fail_requester)
+        with self.assertLogs("calibre_meta", level="WARNING"):
+            identity = resolver.extract("text")
+        self.assertEqual(identity.title, "")
+
+    def test_anthropic_resolver_extract_handles_bad_json(self):
+        def fake_requester(url, payload, headers):
+            return "not json"
+        identity = cme.AnthropicAIResolver("x", api_key="sk-key", requester=fake_requester).extract("text")
+        self.assertEqual(identity.title, "")
+
+    def test_anthropic_resolver_resolve_parses_choice(self):
+        def fake_requester(url, payload, headers):
+            answer = json.dumps({"url": "https://dk/strata", "confidence": 88, "reason": "ai"})
+            return json.dumps({"content": [{"type": "text", "text": answer}]})
+        resolver = cme.AnthropicAIResolver("x", api_key="sk-key", requester=fake_requester)
+        choice = resolver.resolve([], [cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata")])
+        self.assertEqual(choice.url, "https://dk/strata")
+        self.assertEqual(choice.confidence, 88)
+
+    def test_anthropic_resolver_resolve_empty_key_returns_none(self):
+        resolver = cme.AnthropicAIResolver("x", api_key="", requester=lambda *a: "")
+        self.assertIsNone(resolver.resolve([], [cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/s")]))
+
+    def test_anthropic_resolver_default_model_when_blank(self):
+        self.assertEqual(cme.AnthropicAIResolver("", api_key="sk-key").model, "claude-sonnet-4-6")
+
+    def test_openai_resolver_extract_parses_chat_response(self):
+        def fake_requester(url, payload, headers):
+            self.assertEqual(url, "https://api.openai.com/v1/chat/completions")
+            self.assertEqual(headers["Authorization"], "Bearer sk-key")
+            answer = json.dumps({"title": "Strata", "author": "Terry Pratchett", "confidence": 90})
+            return json.dumps({"choices": [{"message": {"content": answer}}]})
+        resolver = cme.OpenAIAIResolver("gpt-4o", api_key="sk-key", requester=fake_requester)
+        identity = resolver.extract("TERRY PRATCHETT\nSTRATA")
+        self.assertEqual(identity.title, "Strata")
+        self.assertEqual(identity.author, "Terry Pratchett")
+        self.assertEqual(identity.confidence, 90)
+
+    def test_openai_resolver_extract_empty_key_skips_call(self):
+        def fail_requester(url, payload, headers):
+            raise AssertionError("requester nesmi byt volan bez klice")
+        resolver = cme.OpenAIAIResolver("gpt-4o", api_key="", requester=fail_requester)
+        with self.assertLogs("calibre_meta", level="WARNING"):
+            identity = resolver.extract("text")
+        self.assertEqual(identity.title, "")
+
+    def test_openai_resolver_resolve_parses_choice(self):
+        def fake_requester(url, payload, headers):
+            answer = json.dumps({"url": "https://dk/strata", "confidence": 77, "reason": "ai"})
+            return json.dumps({"choices": [{"message": {"content": answer}}]})
+        resolver = cme.OpenAIAIResolver("gpt-4o", api_key="sk-key", requester=fake_requester)
+        choice = resolver.resolve([], [cme.ImportCandidate("databazeknih", "Strata", "", "https://dk/strata")])
+        self.assertEqual(choice.url, "https://dk/strata")
+        self.assertEqual(choice.confidence, 77)
+
+    def test_openai_resolver_default_model_when_blank(self):
+        self.assertEqual(cme.OpenAIAIResolver("", api_key="sk-key").model, "gpt-4o")
+
+    def test_cloud_resolver_stores_timeout(self):
+        self.assertEqual(cme.AnthropicAIResolver("x", api_key="k", timeout=42).timeout, 42)
+
     def test_analyze_no_ai_signal_when_disabled(self):
         meta = cme.EpubMetadata(title="Mort", authors="Terry Pratchett")
         analysis = cme.analyze_book_for_import(
