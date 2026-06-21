@@ -138,6 +138,31 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(settings["model"], "mistral")
         self.assertEqual(settings["text_limit"], 2000)
 
+    def test_normalize_ai_settings_accepts_cloud_providers(self):
+        import calibre_meta_qt as qt
+
+        self.assertIn("anthropic", qt.AI_PROVIDER_VALUES)
+        self.assertIn("openai", qt.AI_PROVIDER_VALUES)
+
+    def test_normalize_ai_settings_anthropic_default_model(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_ai_settings({"ai": {"provider": "anthropic", "model": ""}})
+        self.assertEqual(settings["provider"], "anthropic")
+        self.assertEqual(settings["model"], "claude-sonnet-4-6")
+
+    def test_normalize_ai_settings_openai_default_model(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_ai_settings({"ai": {"provider": "openai", "model": ""}})
+        self.assertEqual(settings["model"], "gpt-4o")
+
+    def test_normalize_ai_settings_keeps_custom_cloud_model(self):
+        import calibre_meta_qt as qt
+
+        settings = qt.normalize_ai_settings({"ai": {"provider": "anthropic", "model": "claude-opus-4-8"}})
+        self.assertEqual(settings["model"], "claude-opus-4-8")
+
     def test_auto_workflow_title_reflects_enabled_steps(self):
         import calibre_meta_qt as qt
 

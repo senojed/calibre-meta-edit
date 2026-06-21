@@ -32,7 +32,7 @@ DEFAULT_STATUS_FILTER_VALUES = {"approve", "review"}
 SOURCE_FILTER_VALUES = ("databazeknih", "legie", "googlebooks", "openlibrary")
 TYPE_FILTER_VALUES = ("", "povidka")
 THEME_VALUES = ("system", "light", "dark")
-AI_PROVIDER_VALUES = ("off", "ollama")
+AI_PROVIDER_VALUES = ("off", "ollama", "anthropic", "openai")
 REVIEW_EDITABLE_FIELDS = (
     "Rok vydani",
     "Vydavatel",
@@ -48,6 +48,13 @@ AUTO_SETTING_DEFAULTS = {
     "auto_cover_audit": True,
 }
 AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120}
+# Default model pro kazdeho providera; pouzije se, kdyz uzivatel nechal pole prazdne.
+AI_PROVIDER_DEFAULT_MODELS = {
+    "off": "llama3",
+    "ollama": "llama3",
+    "anthropic": "claude-sonnet-4-6",
+    "openai": "gpt-4o",
+}
 
 
 def app_title() -> str:
@@ -256,7 +263,8 @@ def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
     provider = str(ai_raw.get("provider", AI_SETTING_DEFAULTS["provider"])).strip().casefold()
     if provider not in AI_PROVIDER_VALUES:
         provider = str(AI_SETTING_DEFAULTS["provider"])
-    model = str(ai_raw.get("model", AI_SETTING_DEFAULTS["model"])).strip() or str(AI_SETTING_DEFAULTS["model"])
+    default_model = AI_PROVIDER_DEFAULT_MODELS.get(provider, str(AI_SETTING_DEFAULTS["model"]))
+    model = str(ai_raw.get("model", default_model)).strip() or default_model
     try:
         text_limit = int(ai_raw.get("text_limit", AI_SETTING_DEFAULTS["text_limit"]))
     except (TypeError, ValueError):
