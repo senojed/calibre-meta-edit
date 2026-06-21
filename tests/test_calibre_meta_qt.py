@@ -728,6 +728,50 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(called["n"], 0)
         app.processEvents()
 
+    def test_import_dialog_allow_duplicate_checkbox_sets_preview_flag(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dup = cme.DuplicateCandidate(book_id=1, title="Kniha", authors="Autor", score=100)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[dup],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        # S duplicitou je zatrzitko aktivni; bez nej preview.allow_strong_duplicate False.
+        self.assertTrue(dialog.allow_duplicate_check.isEnabled())
+        self.assertFalse(dialog.preview().allow_strong_duplicate)
+        dialog.allow_duplicate_check.setChecked(True)
+        self.assertTrue(dialog.preview().allow_strong_duplicate)
+        app.processEvents()
+
+    def test_import_dialog_allow_duplicate_disabled_without_duplicates(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        self.assertFalse(dialog.allow_duplicate_check.isEnabled())
+        app.processEvents()
+
     def test_import_dialog_research_skips_when_title_empty(self):
         from PySide6.QtWidgets import QApplication
         import sys

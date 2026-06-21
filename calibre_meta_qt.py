@@ -470,8 +470,10 @@ if PYSIDE6_AVAILABLE:
 
             left.addWidget(QLabel("Duplicity"))
             self.duplicates_list = QListWidget()
-            self.populate_duplicates(analysis.duplicates)
             left.addWidget(self.duplicates_list, stretch=1)
+            self.allow_duplicate_check = QCheckBox("Importovat i pres duplicitu")
+            left.addWidget(self.allow_duplicate_check)
+            self.populate_duplicates(analysis.duplicates)
 
             # Dialog je rozhodovaci/potvrzovaci, ne plny editor metadat.
             # Importovane radky jdou na review a doladi se pozdeji v hlavni tabulce,
@@ -545,6 +547,11 @@ if PYSIDE6_AVAILABLE:
             self.duplicates_list.clear()
             for duplicate in duplicates:
                 self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
+            # Zatrzitko "importovat i pres duplicitu" ma smysl jen kdyz duplicita je.
+            has_duplicates = bool(duplicates)
+            self.allow_duplicate_check.setEnabled(has_duplicates)
+            if not has_duplicates:
+                self.allow_duplicate_check.setChecked(False)
 
         def refresh_duplicates(self) -> None:
             """Prepocita duplicity podle aktualniho nazvu/autora; pri chybe nechá puvodni."""
@@ -697,6 +704,7 @@ if PYSIDE6_AVAILABLE:
                 title=self.title_edit.text(),
                 authors=self.authors_edit.text(),
                 url=self.current_url(),
+                allow_strong_duplicate=self.allow_duplicate_check.isChecked(),
             )
 
 
