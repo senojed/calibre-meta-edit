@@ -87,12 +87,18 @@ class TextAndUrlTests(unittest.TestCase):
             )
         )
 
-    def test_build_search_url_uses_quote_plus_for_all_authors(self):
+    def test_build_search_url_puts_authors_before_title(self):
+        # Databazeknih fulltext je citlivy na poradi: 'autor nazev' vraci spravny
+        # zaznam, 'nazev autor' ho casto vynecha. Proto autori jdou prvni.
         url = cme.build_search_url("Loď osudu", ["Robin Hobb", "Megan Lindholm"])
         self.assertEqual(
             url,
-            "https://www.databazeknih.cz/vyhledavani/knihy?q=Lo%C4%8F+osudu+Robin+Hobb+Megan+Lindholm",
+            "https://www.databazeknih.cz/vyhledavani/knihy?q=Robin+Hobb+Megan+Lindholm+Lo%C4%8F+osudu",
         )
+
+    def test_build_search_url_without_authors_uses_title_only(self):
+        url = cme.build_search_url("Nohy z jílu", [])
+        self.assertEqual(url, "https://www.databazeknih.cz/vyhledavani/knihy?q=Nohy+z+j%C3%ADlu")
 
     def test_search_variants_add_plain_ascii_fallback(self):
         variants = cme.search_variants("Stráže! Stráže!", ["Terry Pratchett"])
@@ -2332,7 +2338,7 @@ class ParserAndMatchingTests(unittest.TestCase):
 
         def fetcher(url: str) -> str:
             fetched_urls.append(url)
-            return db_html if "straze+straze+terry+pratchett" in url else ""
+            return db_html if "terry+pratchett+straze+straze" in url else ""
 
         updated = cme.audit_legie_rows(
             [row],

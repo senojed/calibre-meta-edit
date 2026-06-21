@@ -1493,7 +1493,9 @@ def databaze_more_info_url(book_id: str) -> str:
 
 
 def build_search_url(title: str, authors: Sequence[str]) -> str:
-    query = title + " " + " ".join(authors)
+    # Autor pred nazvem: databazeknih fulltext je citlivy na poradi a 'autor nazev'
+    # vraci spravny hlavni zaznam, ktery 'nazev autor' casto vynecha.
+    query = " ".join(authors) + " " + title
     return SEARCH_URL + urllib.parse.quote_plus(query.strip())
 
 
