@@ -842,7 +842,7 @@ class _CloudAIResolver:
             logger.warning("AI extrakce preskocena: chybi API klic pro %s", type(self).__name__)
             return AIBookIdentity()
         prompt = {
-            "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. If the title looks garbled, correct it using the author's known bibliography. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
+            "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. Keep the title in the SAME LANGUAGE as the text - do NOT translate it and do NOT replace a translated work's title with its original-language title. Only fix garbling, OCR errors, and capitalization, using the author's bibliography to recognize the correct spelling of that same title. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
             "text": text[:4000],
         }
         logger.info("AI extrakce: model=%s, delka textu=%d znaku", self.model, len(text))
