@@ -3,6 +3,7 @@
 matches.csv
 matches.bak
 settings.json
+.env
 
 backups/
 apply-results/
