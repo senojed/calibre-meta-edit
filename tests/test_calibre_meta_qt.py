@@ -1095,45 +1095,62 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(window.table.rowCount(), 0)
         app.processEvents()
 
-    def test_delete_selected_rows_removes_from_working_data(self):
+    def test_delete_selected_rows_confirmed_runs_calibre_delete(self):
         from PySide6.QtWidgets import QApplication, QMessageBox
         import sys
         import calibre_meta_qt as qt
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
-        window.rows = [
-            cme.MatchRow(1, "A", "Autor", "review", "", "", "none", "x"),
-            cme.MatchRow(2, "B", "Autor", "review", "", "", "none", "x"),
-        ]
+        bg = []
         with (
-            patch.object(window, "selected_book_ids", return_value={1}),
-            patch.object(window, "save_csv", return_value=True) as save_stub,
+            patch.object(window, "selected_book_ids", return_value={1, 2}),
             patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+            patch.object(qt.cme, "find_calibredb", return_value="calibredb.exe"),
+            patch.object(window, "run_background", side_effect=lambda title, action, reload_after: bg.append((title, action, reload_after))),
         ):
             window.delete_selected_rows()
 
-        self.assertEqual([row.book_id for row in window.rows], [2])
-        save_stub.assert_called_once()
+        self.assertEqual(len(bg), 1)
+        self.assertEqual(bg[0][0], "Smazat z Calibre")
+        self.assertTrue(bg[0][2])
         app.processEvents()
 
-    def test_delete_selected_rows_cancelled_keeps_rows(self):
+    def test_delete_selected_rows_cancelled_does_nothing(self):
         from PySide6.QtWidgets import QApplication, QMessageBox
         import sys
         import calibre_meta_qt as qt
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
-        window.rows = [cme.MatchRow(1, "A", "Autor", "review", "", "", "none", "x")]
         with (
             patch.object(window, "selected_book_ids", return_value={1}),
-            patch.object(window, "save_csv", return_value=True) as save_stub,
             patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.No),
+            patch.object(window, "run_background") as bg,
         ):
             window.delete_selected_rows()
 
-        self.assertEqual([row.book_id for row in window.rows], [1])
-        save_stub.assert_not_called()
+        bg.assert_not_called()
+        app.processEvents()
+
+    def test_delete_selected_rows_without_calibredb_warns(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with (
+            patch.object(window, "selected_book_ids", return_value={1}),
+            patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+            patch.object(qt.cme, "find_calibredb", return_value=""),
+            patch.object(qt.QMessageBox, "warning") as warning,
+            patch.object(window, "run_background") as bg,
+        ):
+            window.delete_selected_rows()
+
+        warning.assert_called_once()
+        bg.assert_not_called()
         app.processEvents()
 
     def test_run_covers_uses_cover_audit_without_direct_write(self):

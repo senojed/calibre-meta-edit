@@ -272,11 +272,6 @@ def update_rows_url(rows: Sequence[cme.MatchRow], book_ids: set[int], chosen_url
     return [update_row(row, row.status, chosen_url) if row.book_id in book_ids else row for row in rows]
 
 
-def remove_match_rows(rows: Sequence[cme.MatchRow], book_ids: set[int]) -> list[cme.MatchRow]:
-    """Vrati radky bez vybranych (mazani jen z pracovnich dat, kniha v Calibre zustava)."""
-    return [row for row in rows if row.book_id not in book_ids]
-
-
 def cover_urls_from_row(row: cme.MatchRow) -> list[str]:
     """Vrati ulozene kandidatni obalky z jednoho CSV radku."""
     return [url.strip() for url in row.cover_urls.split("|") if url.strip()]

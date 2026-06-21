@@ -139,7 +139,7 @@ Do not commit `review.diff`.
 
   * left group: load, save, preferences
   * stretch / large spacer
-  * right group: load from Calibre, audit/link, covers, import
+  * right group: load from Calibre, audit/link, covers, import, delete from Calibre
   * small gap
   * final right button: write to Calibre
 

@@ -807,6 +807,44 @@ class ImportDuplicateTests(unittest.TestCase):
 
 
 class ImportApplyTests(unittest.TestCase):
+    def test_delete_books_from_calibre_removes_and_cleans_working_data(self):
+        commands = []
+        written = {}
+
+        def runner(args):
+            commands.append(args)
+            return cme.CommandResult(0, "", "")
+
+        rows = [
+            cme.MatchRow(1, "A", "Autor", "review", "", "", "none", "x"),
+            cme.MatchRow(2, "B", "Autor", "review", "", "", "none", "x"),
+        ]
+        result = cme.delete_books_from_calibre(
+            "B:/", {1}, "calibredb.exe",
+            matches_path=Path("m.db"),
+            runner=runner,
+            read_rows=lambda path: rows,
+            write_rows=lambda path, kept, overwrite: written.update({"kept": list(kept)}),
+            storage_exists=lambda path: True,
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("remove", commands[0])
+        self.assertIn("1", commands[0])
+        self.assertEqual([row.book_id for row in written["kept"]], [2])
+
+    def test_delete_books_from_calibre_returns_error_and_keeps_data(self):
+        written = {"called": False}
+        result = cme.delete_books_from_calibre(
+            "B:/", {1}, "calibredb.exe",
+            matches_path=Path("m.db"),
+            runner=lambda args: cme.CommandResult(1, "", "boom"),
+            read_rows=lambda path: [],
+            write_rows=lambda path, kept, overwrite: written.update({"called": True}),
+            storage_exists=lambda path: True,
+        )
+        self.assertEqual(result, 1)
+        self.assertFalse(written["called"])
+
     def test_parse_calibredb_add_book_ids_reads_single_id(self):
         self.assertEqual(cme.parse_calibredb_add_book_ids("Added book ids: 123"), [123])
 

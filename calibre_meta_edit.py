@@ -1203,6 +1203,39 @@ def apply_import_preview(
     return ImportApplyResult(book_id, "updated", "", str(backup_path))
 
 
+def delete_books_from_calibre(
+    library: str | Path,
+    book_ids: set[int],
+    calibredb_path: str,
+    matches_path: Path = MATCHES_PATH,
+    runner: Callable[[Sequence[str]], CommandResult] | None = None,
+    read_rows: Callable[[Path], list[MatchRow]] | None = None,
+    write_rows: Callable[[Path, Sequence[MatchRow], bool], object] | None = None,
+    storage_exists: Callable[[Path], bool] | None = None,
+) -> int:
+    """Trvale smaze knihy z Calibre (calibredb remove) a vyhodi je z pracovnich dat.
+
+    Vraci 0 pri uspechu, jinak navratovy kod calibredb. Soubory knih jsou pryc
+    natrvalo - tohle neni vratitelne pres rollback metadata.db.
+    """
+    runner = runner or run_command
+    read_rows = read_rows or read_matches_csv
+    write_rows = write_rows or write_matches_csv
+    storage_exists = storage_exists or matches_storage_exists
+    ids = sorted({int(book_id) for book_id in book_ids})
+    if not ids:
+        return 0
+    result = runner([calibredb_path, "remove", ",".join(str(i) for i in ids), "--with-library", str(library)])
+    if result.returncode != 0:
+        print((result.stderr or result.stdout or "calibredb remove selhalo").strip())
+        return result.returncode
+    rows = read_rows(matches_path) if storage_exists(matches_path) else []
+    id_set = set(ids)
+    write_rows(matches_path, [row for row in rows if row.book_id not in id_set], True)
+    print(f"Smazano z Calibre: {len(ids)} knih")
+    return 0
+
+
 def _title_similarity_score(left: str, right: str) -> int:
     if normalize_text(left) == normalize_text(right) and left:
         return 70
