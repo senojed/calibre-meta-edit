@@ -385,7 +385,8 @@ class QtImportTests(unittest.TestCase):
         )
         dialog = qt.ImportDialog(analysis)
 
-        for removed in ("series_edit", "series_index_edit", "year_edit", "publisher_edit", "tags_edit", "url_edit", "comment_edit"):
+        # url_edit je ZAMERNE editovatelne (rucni vlozeni odkazu) - neni v seznamu.
+        for removed in ("series_edit", "series_index_edit", "year_edit", "publisher_edit", "tags_edit", "comment_edit"):
             self.assertFalse(hasattr(dialog, removed), f"{removed} ma byt odstraneno")
         app.processEvents()
 
@@ -434,8 +435,8 @@ class QtImportTests(unittest.TestCase):
         # Nazev/autor se promitnou do editovatelnych poli.
         self.assertEqual(dialog.title_edit.text(), "Kandidat")
         self.assertEqual(dialog.authors_edit.text(), "Autor")
-        # URL se zobrazi jen jako read-only label.
-        self.assertEqual(dialog.url_label.text(), "https://x")
+        # URL se promitne do editovatelneho pole.
+        self.assertEqual(dialog.url_edit.text(), "https://x")
         # Obohacena metadata (rok, vydavatel, tagy) jdou interne do preview().
         preview = dialog.preview()
         self.assertEqual(preview.url, "https://x")
@@ -468,7 +469,7 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(dialog.title_edit.text(), "Manual")
         self.assertEqual(dialog.authors_edit.text(), "Autor")
-        self.assertEqual(dialog.url_label.text(), "https://manual")
+        self.assertEqual(dialog.url_edit.text(), "https://manual")
         self.assertEqual(dialog.preview().url, "https://manual")
         app.processEvents()
 
@@ -496,7 +497,7 @@ class QtImportTests(unittest.TestCase):
         dialog.use_candidate_button.click()
 
         self.assertEqual(dialog.title_edit.text(), "Manual")
-        self.assertEqual(dialog.url_label.text(), "https://manual")
+        self.assertEqual(dialog.url_edit.text(), "https://manual")
         self.assertEqual(dialog.preview().url, "https://manual")
         app.processEvents()
 
@@ -572,6 +573,88 @@ class QtImportTests(unittest.TestCase):
             dialog.open_current_url()
 
         open_url.assert_not_called()
+        app.processEvents()
+
+    def test_import_dialog_manual_url_flows_into_preview(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Hrr na ne", authors="Terry Pratchett"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+
+        dialog.url_edit.setText("https://www.databazeknih.cz/knihy/x")
+        self.assertEqual(dialog.preview().url, "https://www.databazeknih.cz/knihy/x")
+        self.assertTrue(dialog.open_link_button.isEnabled())
+        app.processEvents()
+
+    def test_import_dialog_research_repopulates_candidates(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Hrr", authors="Terry Pratchett"),
+            messages=[],
+        )
+        found = [cme.ImportCandidate("databazeknih", "Hrrr na ně!", "", "https://dk/x", score=100)]
+        captured = {}
+
+        def fake_search(title, authors):
+            captured["title"] = title
+            captured["authors"] = authors
+            return found
+
+        dialog = qt.ImportDialog(analysis, search_func=fake_search, runner=lambda target: target())
+        dialog.title_edit.setText("Hrrr na ně!")
+        dialog.start_research()
+
+        self.assertEqual(captured["title"], "Hrrr na ně!")
+        self.assertEqual(dialog.candidates_list.count(), 1)
+        self.assertIn("Hrrr na ně!", dialog.candidates_list.item(0).text())
+        app.processEvents()
+
+    def test_import_dialog_research_skips_when_title_empty(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="", authors=""),
+            messages=[],
+        )
+        called = {"n": 0}
+
+        def fake_search(title, authors):
+            called["n"] += 1
+            return []
+
+        dialog = qt.ImportDialog(analysis, search_func=fake_search, runner=lambda target: target())
+        dialog.title_edit.setText("   ")
+        dialog.start_research()
+
+        self.assertEqual(called["n"], 0)
         app.processEvents()
 
     def test_import_dialog_using_candidate_does_not_accept_or_apply(self):

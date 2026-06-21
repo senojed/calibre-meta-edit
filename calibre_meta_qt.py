@@ -405,9 +405,20 @@ if PYSIDE6_AVAILABLE:
     class ImportDialog(QDialog):
         """Modalni okno pro kontrolu jednoho EPUB importu pred zapisem."""
 
-        def __init__(self, analysis: cme.ImportAnalysis, parent: QWidget | None = None) -> None:
+        # Vysledek vlakna "Hledat znovu": (kandidati|None, chyba).
+        research_done = Signal(object, str)
+
+        def __init__(
+            self,
+            analysis: cme.ImportAnalysis,
+            parent: QWidget | None = None,
+            search_func: Callable[[str, str], list[cme.ImportCandidate]] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+        ) -> None:
             super().__init__(parent)
             self.analysis = analysis
+            self.search_func = search_func or (lambda title, authors: cme.lookup_import_candidates_for_query(title, authors))
+            self.research_runner = runner or (lambda target: threading.Thread(target=target, daemon=True).start())
             self.setWindowTitle("Import knihy")
             self.resize(1180, 720)
             root = QVBoxLayout(self)
@@ -429,10 +440,7 @@ if PYSIDE6_AVAILABLE:
 
             left.addWidget(QLabel("Kandidati"))
             self.candidates_list = QListWidget()
-            for candidate in analysis.candidates:
-                item = QListWidgetItem(self.candidate_display_text(candidate))
-                item.setData(Qt.ItemDataRole.UserRole, candidate)
-                self.candidates_list.addItem(item)
+            self.populate_candidates(analysis.candidates)
             left.addWidget(self.candidates_list, stretch=1)
             self.use_candidate_button = QPushButton("Pouzit kandidata")
             self.use_candidate_button.setEnabled(False)
@@ -470,14 +478,17 @@ if PYSIDE6_AVAILABLE:
             self.source_label.setWordWrap(True)
             form.addRow("Zdroj", self.source_label)
             link_row = QHBoxLayout()
-            self.url_label = QLabel()
-            self.url_label.setWordWrap(True)
-            self.url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            link_row.addWidget(self.url_label, stretch=1)
+            self.url_edit = QLineEdit()
+            self.url_edit.setPlaceholderText("nenacteno - muzes vlozit odkaz rucne")
+            link_row.addWidget(self.url_edit, stretch=1)
             self.open_link_button = QPushButton("Otevrit odkaz")
             self.open_link_button.clicked.connect(self.open_current_url)
             link_row.addWidget(self.open_link_button)
             form.addRow("Odkaz", link_row)
+            self.url_edit.textChanged.connect(lambda _text: self.open_link_button.setEnabled(bool(self.current_url())))
+            self.research_button = QPushButton("Hledat znovu")
+            self.research_button.clicked.connect(self.start_research)
+            right.addWidget(self.research_button)
             right.addStretch(1)
 
             buttons = QHBoxLayout()
@@ -491,12 +502,49 @@ if PYSIDE6_AVAILABLE:
             self.import_button.clicked.connect(self.accept)
             self.title_edit.textChanged.connect(self.update_import_enabled)
             self.authors_edit.textChanged.connect(self.update_import_enabled)
+            self.research_done.connect(self.finish_research)
             self.update_candidate_button_enabled()
             self.refresh_preview_labels()
             self.update_import_enabled()
 
         def candidate_display_text(self, candidate: cme.ImportCandidate) -> str:
             return f"{candidate.score}% {candidate.source}: {candidate.title} / {candidate.authors}"
+
+        def populate_candidates(self, candidates: Sequence[cme.ImportCandidate]) -> None:
+            """Naplni seznam kandidatu (pri startu i po 'Hledat znovu')."""
+            self.candidates_list.clear()
+            for candidate in candidates:
+                item = QListWidgetItem(self.candidate_display_text(candidate))
+                item.setData(Qt.ItemDataRole.UserRole, candidate)
+                self.candidates_list.addItem(item)
+
+        def start_research(self) -> None:
+            """Spusti online hledani znovu podle rucne upraveneho nazvu/autora."""
+            title = self.title_edit.text().strip()
+            authors = self.authors_edit.text().strip()
+            if not title:
+                return
+            self.research_button.setEnabled(False)
+            self.research_button.setText("Hledam...")
+
+            def worker() -> None:
+                try:
+                    candidates = self.search_func(title, authors)
+                    self.research_done.emit(candidates, "")
+                except Exception as exc:
+                    self.research_done.emit(None, str(exc))
+
+            self.research_runner(worker)
+
+        def finish_research(self, candidates: object, error: str) -> None:
+            """Zpracuje vysledek vlakna 'Hledat znovu' na UI threadu."""
+            self.research_button.setEnabled(True)
+            self.research_button.setText("Hledat znovu")
+            if error or candidates is None:
+                QMessageBox.warning(self, "Hledat znovu", error or "Hledani se nezdarilo.")
+                return
+            self.populate_candidates(candidates)
+            self.update_candidate_button_enabled()
 
         def selected_candidate(self) -> cme.ImportCandidate | None:
             item = self.candidates_list.currentItem()
@@ -507,12 +555,12 @@ if PYSIDE6_AVAILABLE:
             self.use_candidate_button.setEnabled(self.selected_candidate() is not None)
 
         def current_url(self) -> str:
-            return (self.current_preview.url or "").strip()
+            return (self.url_edit.text() or "").strip()
 
         def refresh_preview_labels(self) -> None:
-            """Aktualizuje read-only nahled zdroje a odkazu podle current_preview."""
+            """Aktualizuje nahled zdroje a pole s odkazem podle current_preview."""
             self.source_label.setText(self.current_preview.source or "nenacteno")
-            self.url_label.setText(self.current_url() or "nenacteno")
+            self.url_edit.setText((self.current_preview.url or "").strip())
             self.open_link_button.setEnabled(bool(self.current_url()))
 
         def open_current_url(self) -> None:
@@ -553,12 +601,13 @@ if PYSIDE6_AVAILABLE:
             self.import_button.setEnabled(bool(self.title_edit.text().strip() and self.authors_edit.text().strip()))
 
         def preview(self) -> cme.ImportPreview:
-            # Uzivatel edituje jen nazev a autora; zbytek bere z current_preview
+            # Uzivatel edituje nazev, autora a odkaz; zbytek bere z current_preview
             # (pocatecni fallback nebo aplikovany kandidat).
             return replace(
                 self.current_preview,
                 title=self.title_edit.text(),
                 authors=self.authors_edit.text(),
+                url=self.current_url(),
             )
 
 
