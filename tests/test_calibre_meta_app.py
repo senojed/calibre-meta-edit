@@ -386,6 +386,21 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual([row.status for row in updated], ["approve", "review", "approve"])
         self.assertEqual([row.chosen_url for row in updated], ["url-a", "url-b", "url-c"])
 
+    def test_remove_match_rows_drops_selected(self):
+        rows = [
+            cme.MatchRow(1, "A", "Autor", "review", "url-a", "", "none", "x"),
+            cme.MatchRow(2, "B", "Autor", "review", "url-b", "", "none", "x"),
+            cme.MatchRow(3, "C", "Autor", "review", "url-c", "", "none", "x"),
+        ]
+
+        kept = app.remove_match_rows(rows, {1, 3})
+
+        self.assertEqual([row.book_id for row in kept], [2])
+
+    def test_remove_match_rows_empty_selection_keeps_all(self):
+        rows = [cme.MatchRow(1, "A", "Autor", "review", "url-a", "", "none", "x")]
+        self.assertEqual(app.remove_match_rows(rows, set()), rows)
+
     def test_update_rows_url_changes_multiple_selected_rows(self):
         rows = [
             cme.MatchRow(1, "A", "Autor", "review", "url-a", "", "none", "x"),

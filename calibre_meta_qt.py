@@ -898,6 +898,7 @@ if PYSIDE6_AVAILABLE:
             # Leva skupina: nacist, ulozit - maly odstup - preferences.
             self._add_button(toolbar, "Nacist data", self.load_csv, "neutralButton", "load", show_text=False)
             self._add_button(toolbar, "Ulozit data", self.save_csv, "neutralButton", "save", show_text=False)
+            self._add_button(toolbar, "Smazat radek", self.delete_selected_rows, "dangerButton", "delete", show_text=False)
             toolbar.addSpacing(10)
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "preferences", show_text=False)
             # Velky odstup deli levou skupinu (u leveho okraje) od prave (u praveho okraje).
@@ -1711,6 +1712,24 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.information(self, "Vyber radek", "Nejdriv vyber knihu v tabulce.")
                 return
             self.rows = shared.mark_rows_as_story(self.rows, selected)
+            self.refresh_table()
+            self.set_status(shared.status_summary(self.rows))
+
+        def delete_selected_rows(self) -> None:
+            """Smaze vybrane radky jen z pracovnich dat. Kniha v Calibre zustava."""
+            selected = self.selected_book_ids()
+            if not selected:
+                QMessageBox.information(self, "Smazat radek", "Nejdriv vyber radek v tabulce.")
+                return
+            answer = QMessageBox.question(
+                self,
+                "Smazat radek",
+                f"Smazat {len(selected)} radku z pracovnich dat?\nKniha v Calibre zustane (rebuild je nacte zpet).",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self.rows = shared.remove_match_rows(self.rows, selected)
+            self.save_csv(show_message=False)
             self.refresh_table()
             self.set_status(shared.status_summary(self.rows))
 
