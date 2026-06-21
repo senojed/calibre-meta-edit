@@ -851,6 +851,45 @@ class AITextExtractionTests(unittest.TestCase):
         self.assertFalse(any(s.source == "ai-text" for s in analysis.signals))
 
 
+class ApiKeyTests(unittest.TestCase):
+    def test_read_api_key_from_environ(self):
+        key = cme.read_api_key("anthropic", environ={"ANTHROPIC_API_KEY": "sk-env"}, env_path=Path("nope.env"))
+        self.assertEqual(key, "sk-env")
+
+    def test_read_api_key_openai_environ(self):
+        key = cme.read_api_key("openai", environ={"OPENAI_API_KEY": "sk-oai"}, env_path=Path("nope.env"))
+        self.assertEqual(key, "sk-oai")
+
+    def test_read_api_key_from_env_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text("# komentar\nANTHROPIC_API_KEY=sk-file\nOPENAI_API_KEY=sk-other\n", encoding="utf-8")
+            key = cme.read_api_key("anthropic", environ={}, env_path=env_path)
+            self.assertEqual(key, "sk-file")
+
+    def test_read_api_key_environ_wins_over_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text("ANTHROPIC_API_KEY=sk-file\n", encoding="utf-8")
+            key = cme.read_api_key("anthropic", environ={"ANTHROPIC_API_KEY": "sk-env"}, env_path=env_path)
+            self.assertEqual(key, "sk-env")
+
+    def test_read_api_key_missing_returns_empty(self):
+        key = cme.read_api_key("anthropic", environ={}, env_path=Path("nope.env"))
+        self.assertEqual(key, "")
+
+    def test_read_api_key_unknown_provider_returns_empty(self):
+        key = cme.read_api_key("ollama", environ={"ANTHROPIC_API_KEY": "x"}, env_path=Path("nope.env"))
+        self.assertEqual(key, "")
+
+    def test_read_api_key_ignores_quotes_and_whitespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text('ANTHROPIC_API_KEY = "sk-quoted"  \n', encoding="utf-8")
+            key = cme.read_api_key("anthropic", environ={}, env_path=env_path)
+            self.assertEqual(key, "sk-quoted")
+
+
 class ImportDuplicateTests(unittest.TestCase):
     def test_find_import_duplicates_strong_match_title_and_author(self):
         books = [

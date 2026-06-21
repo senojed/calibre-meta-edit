@@ -942,6 +942,53 @@ class OpenAIAIResolver(_CloudAIResolver):
         return str(data["choices"][0]["message"]["content"])
 
 
+# Mapa provideru na jmeno promenne prostredi, kde hledame jeho API klic.
+AI_PROVIDER_ENV_VARS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def _parse_env_file(env_path: Path) -> dict[str, str]:
+    """Precte jednoduchy .env soubor (KEY=VALUE na radek). Chybejici soubor = prazdno.
+
+    Ignoruje prazdne radky a komentare (#). Hodnotu zbavi mezer a uvozovek.
+    """
+    values: dict[str, str] = {}
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'").strip()
+    return values
+
+
+def read_api_key(
+    provider: str,
+    environ: dict[str, str] | None = None,
+    env_path: Path | None = None,
+) -> str:
+    """Vrati API klic pro daneho cloud providera.
+
+    Priorita: promenna prostredi > soubor .env v korenu projektu. Kdyz nic, "".
+    Klic se zamerne necte ze settings.json, aby neskoncil v souboru nastaveni.
+    """
+    env_name = AI_PROVIDER_ENV_VARS.get(provider)
+    if not env_name:
+        return ""
+    environ = os.environ if environ is None else environ
+    from_env = (environ.get(env_name) or "").strip()
+    if from_env:
+        return from_env
+    env_path = env_path if env_path is not None else Path(__file__).resolve().parent / ".env"
+    return _parse_env_file(env_path).get(env_name, "").strip()
+
+
 def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
     """Bezpecne zavola AI extraktor; pri vypnute AI nebo chybe vrati prazdny vysledek."""
     extractor = getattr(resolver, "extract", None) if resolver else None
