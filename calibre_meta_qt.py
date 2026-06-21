@@ -417,12 +417,14 @@ if PYSIDE6_AVAILABLE:
             search_func: Callable[[str, str], list[cme.ImportCandidate]] | None = None,
             runner: Callable[[Callable[[], None]], None] | None = None,
             link_data_func: Callable[[str], tuple[str, str, str, cme.BookDetailMetadata]] | None = None,
+            duplicate_func: Callable[[cme.ImportPreview], list[cme.DuplicateCandidate]] | None = None,
         ) -> None:
             super().__init__(parent)
             self.analysis = analysis
             self.search_func = search_func or (lambda title, authors: cme.lookup_import_candidates_for_query(title, authors))
             self.research_runner = runner or (lambda target: threading.Thread(target=target, daemon=True).start())
             self.link_data_func = link_data_func or (lambda url: cme.fetch_import_link_data(url))
+            self.duplicate_func = duplicate_func
             self.setWindowTitle("Import knihy")
             self.resize(1180, 720)
             root = QVBoxLayout(self)
@@ -455,8 +457,7 @@ if PYSIDE6_AVAILABLE:
 
             left.addWidget(QLabel("Duplicity"))
             self.duplicates_list = QListWidget()
-            for duplicate in analysis.duplicates:
-                self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
+            self.populate_duplicates(analysis.duplicates)
             left.addWidget(self.duplicates_list, stretch=1)
 
             # Dialog je rozhodovaci/potvrzovaci, ne plny editor metadat.
@@ -526,6 +527,22 @@ if PYSIDE6_AVAILABLE:
                 item.setData(Qt.ItemDataRole.UserRole, candidate)
                 self.candidates_list.addItem(item)
 
+        def populate_duplicates(self, duplicates: Sequence[cme.DuplicateCandidate]) -> None:
+            """Naplni seznam duplicit (pri startu i po prepoctu podle noveho nazvu/autora)."""
+            self.duplicates_list.clear()
+            for duplicate in duplicates:
+                self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
+
+        def refresh_duplicates(self) -> None:
+            """Prepocita duplicity podle aktualniho nazvu/autora; pri chybe nechá puvodni."""
+            if self.duplicate_func is None:
+                return
+            try:
+                duplicates = self.duplicate_func(self.preview())
+            except Exception:
+                return
+            self.populate_duplicates(duplicates)
+
         def start_research(self) -> None:
             """Spusti online hledani znovu podle rucne upraveneho nazvu/autora."""
             title = self.title_edit.text().strip()
@@ -553,6 +570,7 @@ if PYSIDE6_AVAILABLE:
                 return
             self.populate_candidates(candidates)
             self.update_candidate_button_enabled()
+            self.refresh_duplicates()
 
         def start_use_link(self) -> None:
             """Stahne detail metadat z rucne vlozeneho odkazu (jako 'Pouzit kandidata')."""
@@ -597,6 +615,8 @@ if PYSIDE6_AVAILABLE:
                 self.authors_edit.setText(authors.strip())
             self.refresh_preview_labels()
             self.update_import_enabled()
+            # Po opraveni nazvu/autora automaticky prehledame (kandidati + duplicity).
+            self.start_research()
 
         def selected_candidate(self) -> cme.ImportCandidate | None:
             item = self.candidates_list.currentItem()
@@ -1867,7 +1887,12 @@ if PYSIDE6_AVAILABLE:
                 return
             self.write_output(f"Import knihy: nahled pripraven{log_suffix}")
             self.set_status("Import knihy: nahled pripraven")
-            dialog = ImportDialog(analysis, parent=self)
+            library = self.library_path
+            dialog = ImportDialog(
+                analysis,
+                parent=self,
+                duplicate_func=lambda preview: cme.find_calibre_import_duplicates(library, preview),
+            )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
 

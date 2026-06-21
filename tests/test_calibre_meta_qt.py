@@ -650,6 +650,7 @@ class QtImportTests(unittest.TestCase):
             analysis,
             runner=lambda target: target(),
             link_data_func=lambda u: ("Strata", "Terry Pratchett", url, detail),
+            search_func=lambda title, authors: [],
         )
         dialog.url_edit.setText(url)
         dialog.start_use_link()
@@ -679,16 +680,23 @@ class QtImportTests(unittest.TestCase):
             messages=[],
         )
         url = "https://www.databazeknih.cz/knihy/hrrr-na-ne-471"
+        found = [cme.ImportCandidate("databazeknih", "Hrrr na ně!", "", "https://dk/hrrr", score=100)]
+        dups = [cme.DuplicateCandidate(book_id=471, title="Hrrr na ně!", authors="Terry Pratchett", score=100)]
         dialog = qt.ImportDialog(
             analysis,
             runner=lambda target: target(),
             link_data_func=lambda u: ("Hrrr na ně!", "Terry Pratchett", url, cme.BookDetailMetadata()),
+            search_func=lambda title, authors: found,
+            duplicate_func=lambda preview: dups,
         )
         dialog.url_edit.setText(url)
         dialog.start_use_link()
 
         self.assertEqual(dialog.title_edit.text(), "Hrrr na ně!")
         self.assertEqual(dialog.authors_edit.text(), "Terry Pratchett")
+        # Po opraveni se automaticky prehledalo: kandidati i duplicity.
+        self.assertEqual(dialog.candidates_list.count(), 1)
+        self.assertEqual(dialog.duplicates_list.count(), 1)
         app.processEvents()
 
     def test_import_dialog_use_link_skips_when_url_empty(self):
@@ -1417,7 +1425,7 @@ class QtImportWiringTests(unittest.TestCase):
         captured = {}
 
         class FakeDialog:
-            def __init__(self, passed_analysis, parent=None):
+            def __init__(self, passed_analysis, parent=None, **kwargs):
                 captured["analysis"] = passed_analysis
                 captured["parent"] = parent
 
@@ -1594,7 +1602,7 @@ class QtImportWiringTests(unittest.TestCase):
         edited_preview = cme.ImportPreview(title="Upraveno", authors="Editor")
 
         class FakeDialog:
-            def __init__(self, _analysis, parent=None):
+            def __init__(self, _analysis, parent=None, **kwargs):
                 pass
 
             def exec(self):
@@ -1960,7 +1968,7 @@ class QtImportWiringTests(unittest.TestCase):
         analysis = self._make_analysis()
 
         class FakeDialog:
-            def __init__(self, _analysis, parent=None):
+            def __init__(self, _analysis, parent=None, **kwargs):
                 pass
 
             def exec(self):
