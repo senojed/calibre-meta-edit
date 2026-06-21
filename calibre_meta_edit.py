@@ -3984,6 +3984,22 @@ def fetch_openlibrary_detail_metadata(
     return parse_openlibrary_edition_metadata(fetch(openlibrary_url(edition_key) + ".json"))
 
 
+def fetch_import_detail_for_url(
+    url: str,
+    fetcher: Callable[[str], str] | None = None,
+) -> tuple[str, BookDetailMetadata]:
+    """Stahne detail metadat z rucne vlozeneho odkazu podle jeho zdroje.
+
+    Vybere spravny parser (Google Books / Open Library / Databaze knih) a vrati
+    (kanonicky_url, detail). Pro 'Pouzit odkaz' v import dialogu.
+    """
+    if is_valid_google_books_url(url):
+        return fetch_google_books_detail_metadata(url, fetcher)
+    if is_valid_openlibrary_url(url):
+        return fetch_openlibrary_detail_metadata(url, fetcher)
+    return fetch_databaze_book_detail_metadata(url, fetcher)
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,

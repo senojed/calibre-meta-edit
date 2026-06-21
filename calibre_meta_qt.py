@@ -407,6 +407,8 @@ if PYSIDE6_AVAILABLE:
 
         # Vysledek vlakna "Hledat znovu": (kandidati|None, chyba).
         research_done = Signal(object, str)
+        # Vysledek vlakna "Pouzit odkaz": ((url, zdroj, detail)|None, chyba).
+        use_link_done = Signal(object, str)
 
         def __init__(
             self,
@@ -414,11 +416,13 @@ if PYSIDE6_AVAILABLE:
             parent: QWidget | None = None,
             search_func: Callable[[str, str], list[cme.ImportCandidate]] | None = None,
             runner: Callable[[Callable[[], None]], None] | None = None,
+            detail_func: Callable[[str], tuple[str, cme.BookDetailMetadata]] | None = None,
         ) -> None:
             super().__init__(parent)
             self.analysis = analysis
             self.search_func = search_func or (lambda title, authors: cme.lookup_import_candidates_for_query(title, authors))
             self.research_runner = runner or (lambda target: threading.Thread(target=target, daemon=True).start())
+            self.detail_func = detail_func or (lambda url: cme.fetch_import_detail_for_url(url))
             self.setWindowTitle("Import knihy")
             self.resize(1180, 720)
             root = QVBoxLayout(self)
@@ -481,6 +485,9 @@ if PYSIDE6_AVAILABLE:
             self.url_edit = QLineEdit()
             self.url_edit.setPlaceholderText("nenacteno - muzes vlozit odkaz rucne")
             link_row.addWidget(self.url_edit, stretch=1)
+            self.use_link_button = QPushButton("Pouzit odkaz")
+            self.use_link_button.clicked.connect(self.start_use_link)
+            link_row.addWidget(self.use_link_button)
             self.open_link_button = QPushButton("Otevrit odkaz")
             self.open_link_button.clicked.connect(self.open_current_url)
             link_row.addWidget(self.open_link_button)
@@ -503,6 +510,7 @@ if PYSIDE6_AVAILABLE:
             self.title_edit.textChanged.connect(self.update_import_enabled)
             self.authors_edit.textChanged.connect(self.update_import_enabled)
             self.research_done.connect(self.finish_research)
+            self.use_link_done.connect(self.finish_use_link)
             self.update_candidate_button_enabled()
             self.refresh_preview_labels()
             self.update_import_enabled()
@@ -545,6 +553,45 @@ if PYSIDE6_AVAILABLE:
                 return
             self.populate_candidates(candidates)
             self.update_candidate_button_enabled()
+
+        def start_use_link(self) -> None:
+            """Stahne detail metadat z rucne vlozeneho odkazu (jako 'Pouzit kandidata')."""
+            url = self.current_url()
+            if not url:
+                return
+            self.use_link_button.setEnabled(False)
+            self.use_link_button.setText("Nacitam...")
+
+            def worker() -> None:
+                try:
+                    written_url, detail = self.detail_func(url)
+                    source = cme.source_and_work_type_for_url(written_url)[0]
+                    self.use_link_done.emit((written_url, source, detail), "")
+                except Exception as exc:
+                    self.use_link_done.emit(None, str(exc))
+
+            self.research_runner(worker)
+
+        def finish_use_link(self, payload: object, error: str) -> None:
+            """Doplni nazev/autora ponecha, ale prida rok/vydavatele/komentar z odkazu."""
+            self.use_link_button.setEnabled(True)
+            self.use_link_button.setText("Pouzit odkaz")
+            if error or payload is None:
+                QMessageBox.warning(self, "Pouzit odkaz", error or "Detail se nepodarilo nacist.")
+                return
+            written_url, source, detail = payload
+            updates: dict[str, str] = {"url": written_url, "source": source}
+            if detail.published_year:
+                updates["published_year"] = detail.published_year
+            if detail.publisher:
+                updates["publisher"] = detail.publisher
+            if detail.tags:
+                updates["tags"] = ", ".join(detail.tags)
+            if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
+                updates["comment"] = cme.format_enriched_comment(written_url, detail)
+            self.current_preview = replace(self.current_preview, **updates)
+            self.refresh_preview_labels()
+            self.update_import_enabled()
 
         def selected_candidate(self) -> cme.ImportCandidate | None:
             item = self.candidates_list.currentItem()

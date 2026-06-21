@@ -1154,6 +1154,22 @@ class ImportOnlineLookupTests(unittest.TestCase):
         candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
         self.assertEqual(candidates[0].title, "Strata")
 
+    def test_fetch_import_detail_routes_google(self):
+        from unittest.mock import patch
+        url = cme.google_books_url("vol123")
+        with patch.object(cme, "fetch_google_books_detail_metadata", return_value=("u", cme.BookDetailMetadata(publisher="G"))) as g:
+            written, detail = cme.fetch_import_detail_for_url(url, fetcher=lambda _u: "")
+        g.assert_called_once()
+        self.assertEqual(detail.publisher, "G")
+
+    def test_fetch_import_detail_routes_databaze_by_default(self):
+        from unittest.mock import patch
+        url = "https://www.databazeknih.cz/knihy/strata-17178"
+        with patch.object(cme, "fetch_databaze_book_detail_metadata", return_value=("u", cme.BookDetailMetadata(publisher="DK"))) as d:
+            written, detail = cme.fetch_import_detail_for_url(url, fetcher=lambda _u: "")
+        d.assert_called_once()
+        self.assertEqual(detail.publisher, "DK")
+
     def test_lookup_for_query_searches_explicit_title(self):
         def fetcher(url):
             if "googleapis" in url and "Hrrr" in url:

@@ -629,6 +629,68 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("Hrrr na ně!", dialog.candidates_list.item(0).text())
         app.processEvents()
 
+    def test_import_dialog_use_link_enriches_preview(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Strata", authors="Terry Pratchett"),
+            messages=[],
+        )
+        detail = cme.BookDetailMetadata(published_year="1981", publisher="Talpress", tags=["fantasy"], about_text="popis")
+        url = "https://www.databazeknih.cz/knihy/strata-17178"
+        dialog = qt.ImportDialog(
+            analysis,
+            runner=lambda target: target(),
+            detail_func=lambda u: (url, detail),
+        )
+        dialog.url_edit.setText(url)
+        dialog.start_use_link()
+
+        result = dialog.preview()
+        self.assertEqual(result.title, "Strata")
+        self.assertEqual(result.authors, "Terry Pratchett")
+        self.assertEqual(result.published_year, "1981")
+        self.assertEqual(result.publisher, "Talpress")
+        self.assertEqual(result.url, url)
+        self.assertIn("fantasy", result.tags)
+        app.processEvents()
+
+    def test_import_dialog_use_link_skips_when_url_empty(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Strata", authors="Terry Pratchett"),
+            messages=[],
+        )
+        called = {"n": 0}
+
+        def fake_detail(url):
+            called["n"] += 1
+            return ("u", cme.BookDetailMetadata())
+
+        dialog = qt.ImportDialog(analysis, runner=lambda target: target(), detail_func=fake_detail)
+        dialog.url_edit.setText("")
+        dialog.start_use_link()
+
+        self.assertEqual(called["n"], 0)
+        app.processEvents()
+
     def test_import_dialog_research_skips_when_title_empty(self):
         from PySide6.QtWidgets import QApplication
         import sys
