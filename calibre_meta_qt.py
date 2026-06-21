@@ -548,10 +548,9 @@ if PYSIDE6_AVAILABLE:
             for duplicate in duplicates:
                 self.duplicates_list.addItem(f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}")
             # Zatrzitko "importovat i pres duplicitu" ma smysl jen kdyz duplicita je.
-            has_duplicates = bool(duplicates)
-            self.allow_duplicate_check.setEnabled(has_duplicates)
-            if not has_duplicates:
-                self.allow_duplicate_check.setChecked(False)
+            # Volbu uzivatele NIKDY neodskrtavame - jinak by ji prepocet duplicit
+            # (po 'Hledat znovu'/'Pouzit odkaz') tise zrusil a import by spadl.
+            self.allow_duplicate_check.setEnabled(bool(duplicates))
 
         def refresh_duplicates(self) -> None:
             """Prepocita duplicity podle aktualniho nazvu/autora; pri chybe nechá puvodni."""
@@ -2022,7 +2021,14 @@ if PYSIDE6_AVAILABLE:
             backup = getattr(result, "backup_path", "") or "bez zalohy"
             if status != "updated":
                 reason = getattr(result, "error", "") or "neznama chyba"
-                message = f"Zapis selhal: {reason}\nZaloha: {backup}"
+                if reason.startswith("strong-duplicate"):
+                    message = (
+                        "Kniha uz v Calibre je (silna duplicita).\n"
+                        "Pokud ji presto chces importovat, zaskrtni v dialogu "
+                        "'Importovat i pres duplicitu' a dej Importovat znovu."
+                    )
+                else:
+                    message = f"Zapis selhal: {reason}\nZaloha: {backup}"
                 self.write_output(f"Import knihy: CHYBA\n{message}")
                 self.set_status("Import knihy: CHYBA")
                 QMessageBox.warning(self, "Import knihy", message)

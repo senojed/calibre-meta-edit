@@ -772,6 +772,29 @@ class QtImportTests(unittest.TestCase):
         self.assertFalse(dialog.allow_duplicate_check.isEnabled())
         app.processEvents()
 
+    def test_import_dialog_allow_duplicate_keeps_user_choice_on_recompute(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dup = cme.DuplicateCandidate(book_id=1, title="Kniha", authors="Autor", score=100)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[dup],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis)
+        dialog.allow_duplicate_check.setChecked(True)
+        # Prepocet duplicit (napr. po 'Hledat znovu') nesmi odskrtnout volbu uzivatele.
+        dialog.populate_duplicates([])
+        self.assertTrue(dialog.allow_duplicate_check.isChecked())
+        app.processEvents()
+
     def test_import_dialog_research_skips_when_title_empty(self):
         from PySide6.QtWidgets import QApplication
         import sys
@@ -1984,7 +2007,7 @@ class QtImportWiringTests(unittest.TestCase):
         window.status_checks["skip"].setChecked(True)
         preview = cme.ImportPreview(title="Kniha", authors="Autor")
         result = cme.ImportApplyResult(
-            book_id=0, status="failed", error="strong-duplicate", backup_path="C:/back.db"
+            book_id=0, status="failed", error="add-failed", backup_path="C:/back.db"
         )
 
         def fake_apply(prev, ep):
@@ -2009,10 +2032,36 @@ class QtImportWiringTests(unittest.TestCase):
         load_csv.assert_not_called()
         info.assert_not_called()
         warning.assert_called_once()
-        self.assertIn("strong-duplicate", warning.call_args.args[2])
+        self.assertIn("add-failed", warning.call_args.args[2])
         self.assertFalse(window.status_checks["review"].isChecked())
         self.assertTrue(window.status_checks["skip"].isChecked())
         self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_run_import_apply_strong_duplicate_shows_actionable_hint(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        preview = cme.ImportPreview(title="Kniha", authors="Autor")
+        result = cme.ImportApplyResult(book_id=0, status="failed", error="strong-duplicate", backup_path="")
+
+        with (
+            patch.object(window, "load_csv"),
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.run_import_apply(
+                preview,
+                Path("kniha.epub"),
+                apply_func=lambda prev, ep: result,
+                runner=lambda target: target(),
+            )
+            app.processEvents()
+
+        warning.assert_called_once()
+        self.assertIn("Importovat i pres duplicitu", warning.call_args.args[2])
         app.processEvents()
 
     def test_run_import_apply_exception_shows_warning_and_restores_ui(self):
