@@ -416,13 +416,13 @@ if PYSIDE6_AVAILABLE:
             parent: QWidget | None = None,
             search_func: Callable[[str, str], list[cme.ImportCandidate]] | None = None,
             runner: Callable[[Callable[[], None]], None] | None = None,
-            detail_func: Callable[[str], tuple[str, cme.BookDetailMetadata]] | None = None,
+            link_data_func: Callable[[str], tuple[str, str, str, cme.BookDetailMetadata]] | None = None,
         ) -> None:
             super().__init__(parent)
             self.analysis = analysis
             self.search_func = search_func or (lambda title, authors: cme.lookup_import_candidates_for_query(title, authors))
             self.research_runner = runner or (lambda target: threading.Thread(target=target, daemon=True).start())
-            self.detail_func = detail_func or (lambda url: cme.fetch_import_detail_for_url(url))
+            self.link_data_func = link_data_func or (lambda url: cme.fetch_import_link_data(url))
             self.setWindowTitle("Import knihy")
             self.resize(1180, 720)
             root = QVBoxLayout(self)
@@ -564,22 +564,22 @@ if PYSIDE6_AVAILABLE:
 
             def worker() -> None:
                 try:
-                    written_url, detail = self.detail_func(url)
+                    title, authors, written_url, detail = self.link_data_func(url)
                     source = cme.source_and_work_type_for_url(written_url)[0]
-                    self.use_link_done.emit((written_url, source, detail), "")
+                    self.use_link_done.emit((title, authors, written_url, source, detail), "")
                 except Exception as exc:
                     self.use_link_done.emit(None, str(exc))
 
             self.research_runner(worker)
 
         def finish_use_link(self, payload: object, error: str) -> None:
-            """Doplni nazev/autora ponecha, ale prida rok/vydavatele/komentar z odkazu."""
+            """Z odkazu prida rok/vydavatele/komentar a opravi nazev/autora podle katalogu."""
             self.use_link_button.setEnabled(True)
             self.use_link_button.setText("Pouzit odkaz")
             if error or payload is None:
                 QMessageBox.warning(self, "Pouzit odkaz", error or "Detail se nepodarilo nacist.")
                 return
-            written_url, source, detail = payload
+            title, authors, written_url, source, detail = payload
             updates: dict[str, str] = {"url": written_url, "source": source}
             if detail.published_year:
                 updates["published_year"] = detail.published_year
@@ -590,6 +590,11 @@ if PYSIDE6_AVAILABLE:
             if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
                 updates["comment"] = cme.format_enriched_comment(written_url, detail)
             self.current_preview = replace(self.current_preview, **updates)
+            # Nazev a autora opravime podle katalogu, kdyz je odkaz vrati.
+            if title.strip():
+                self.title_edit.setText(title.strip())
+            if authors.strip():
+                self.authors_edit.setText(authors.strip())
             self.refresh_preview_labels()
             self.update_import_enabled()
 

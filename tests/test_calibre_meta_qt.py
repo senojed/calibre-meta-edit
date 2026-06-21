@@ -649,7 +649,7 @@ class QtImportTests(unittest.TestCase):
         dialog = qt.ImportDialog(
             analysis,
             runner=lambda target: target(),
-            detail_func=lambda u: (url, detail),
+            link_data_func=lambda u: ("Strata", "Terry Pratchett", url, detail),
         )
         dialog.url_edit.setText(url)
         dialog.start_use_link()
@@ -661,6 +661,34 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(result.publisher, "Talpress")
         self.assertEqual(result.url, url)
         self.assertIn("fantasy", result.tags)
+        app.processEvents()
+
+    def test_import_dialog_use_link_fixes_title_and_author_from_catalog(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="HRR NA NE", authors=""),
+            messages=[],
+        )
+        url = "https://www.databazeknih.cz/knihy/hrrr-na-ne-471"
+        dialog = qt.ImportDialog(
+            analysis,
+            runner=lambda target: target(),
+            link_data_func=lambda u: ("Hrrr na ně!", "Terry Pratchett", url, cme.BookDetailMetadata()),
+        )
+        dialog.url_edit.setText(url)
+        dialog.start_use_link()
+
+        self.assertEqual(dialog.title_edit.text(), "Hrrr na ně!")
+        self.assertEqual(dialog.authors_edit.text(), "Terry Pratchett")
         app.processEvents()
 
     def test_import_dialog_use_link_skips_when_url_empty(self):
@@ -680,11 +708,11 @@ class QtImportTests(unittest.TestCase):
         )
         called = {"n": 0}
 
-        def fake_detail(url):
+        def fake_link_data(url):
             called["n"] += 1
-            return ("u", cme.BookDetailMetadata())
+            return ("", "", "u", cme.BookDetailMetadata())
 
-        dialog = qt.ImportDialog(analysis, runner=lambda target: target(), detail_func=fake_detail)
+        dialog = qt.ImportDialog(analysis, runner=lambda target: target(), link_data_func=fake_link_data)
         dialog.url_edit.setText("")
         dialog.start_use_link()
 

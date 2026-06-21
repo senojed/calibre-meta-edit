@@ -1154,6 +1154,26 @@ class ImportOnlineLookupTests(unittest.TestCase):
         candidates = cme.lookup_import_candidates(signals, fetcher=fetcher)
         self.assertEqual(candidates[0].title, "Strata")
 
+    def test_parse_databaze_book_identity(self):
+        html = (
+            '<h1>Hrrr na ně!</h1>'
+            '<a href="/autori/terry-pratchett-165"></a>'
+            '<a href="/autori/terry-pratchett-165">Terry Pratchett</a>'
+        )
+        title, authors = cme.parse_databaze_book_identity(html)
+        self.assertEqual(title, "Hrrr na ně!")
+        self.assertEqual(authors, "Terry Pratchett")
+
+    def test_fetch_import_link_data_databaze(self):
+        from unittest.mock import patch
+        url = "https://www.databazeknih.cz/knihy/hrrr-na-ne-471"
+        html = '<h1>Hrrr na ně!</h1><a href="/autori/x">Terry Pratchett</a>'
+        with patch.object(cme, "fetch_databaze_book_detail_metadata", return_value=(url, cme.BookDetailMetadata(publisher="Talpress"))):
+            title, authors, written, detail = cme.fetch_import_link_data(url, fetcher=lambda _u: html)
+        self.assertEqual(title, "Hrrr na ně!")
+        self.assertEqual(authors, "Terry Pratchett")
+        self.assertEqual(detail.publisher, "Talpress")
+
     def test_fetch_import_detail_routes_google(self):
         from unittest.mock import patch
         url = cme.google_books_url("vol123")

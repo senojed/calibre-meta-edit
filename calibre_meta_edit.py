@@ -4000,6 +4000,50 @@ def fetch_import_detail_for_url(
     return fetch_databaze_book_detail_metadata(url, fetcher)
 
 
+def parse_databaze_book_identity(html_text: str) -> tuple[str, str]:
+    """Z HTML detailu Databaze knih vytahne nazev (h1) a autory (odkazy /autori/)."""
+    title = ""
+    title_match = re.search(r"<h1[^>]*>(.*?)</h1>", html_text, re.IGNORECASE | re.DOTALL)
+    if title_match:
+        title = html.unescape(re.sub(r"<[^>]+>", "", title_match.group(1))).strip()
+    authors: list[str] = []
+    for author_match in re.finditer(r'href="/autori/[^"]+"[^>]*>([^<]{2,60})</a>', html_text, re.IGNORECASE):
+        name = html.unescape(author_match.group(1)).strip()
+        if name and name not in authors:
+            authors.append(name)
+    return title, " & ".join(authors)
+
+
+def fetch_import_identity(url: str, fetcher: Callable[[str], str] | None = None) -> tuple[str, str]:
+    """Z rucne vlozeneho odkazu zjisti katalogovy nazev a autora podle zdroje."""
+    fetch = fetcher or fetch_text
+    if is_valid_google_books_url(url):
+        volume_id = google_books_volume_id_from_url(url)
+        if not volume_id:
+            return "", ""
+        raw = json.loads(fetch(GOOGLE_BOOKS_API + "/" + urllib.parse.quote(volume_id)))
+        info = raw.get("volumeInfo", {}) if isinstance(raw, dict) else {}
+        authors = info.get("authors") if isinstance(info.get("authors"), list) else []
+        return str(info.get("title") or ""), " & ".join(str(a) for a in authors if str(a).strip())
+    if is_valid_openlibrary_url(url):
+        edition_key = openlibrary_edition_key_from_url(url)
+        if not edition_key:
+            return "", ""
+        raw = json.loads(fetch(openlibrary_url(edition_key) + ".json"))
+        return str(raw.get("title") or ""), ""
+    return parse_databaze_book_identity(fetch(book_url_to_overview_url(url)))
+
+
+def fetch_import_link_data(
+    url: str,
+    fetcher: Callable[[str], str] | None = None,
+) -> tuple[str, str, str, BookDetailMetadata]:
+    """Pro 'Pouzit odkaz': vrati (nazev, autori, kanonicky_url, detail) z odkazu."""
+    written_url, detail = fetch_import_detail_for_url(url, fetcher)
+    title, authors = fetch_import_identity(url, fetcher)
+    return title, authors, written_url, detail
+
+
 def apply_match_row(
     row: MatchRow,
     library: str | Path,
