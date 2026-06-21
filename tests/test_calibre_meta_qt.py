@@ -1592,6 +1592,72 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertFalse(window.worker_running)
         app.processEvents()
 
+    def test_should_auto_import_only_at_full_match_without_duplicates(self):
+        import calibre_meta_qt as qt
+
+        full = cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/x", score=100)
+        partial = cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/y", score=70)
+        dup = cme.DuplicateCandidate(book_id=1, title="Kniha", authors="Autor", score=100)
+
+        self.assertTrue(qt.should_auto_import(self._make_analysis_with(candidates=[full], duplicates=[])))
+        self.assertFalse(qt.should_auto_import(self._make_analysis_with(candidates=[partial], duplicates=[])))
+        self.assertFalse(qt.should_auto_import(self._make_analysis_with(candidates=[full], duplicates=[dup])))
+        self.assertFalse(qt.should_auto_import(self._make_analysis_with(candidates=[], duplicates=[])))
+
+    def _make_analysis_with(self, candidates, duplicates):
+        return cme.ImportAnalysis(
+            epub_path="b.epub",
+            signals=[],
+            candidates=candidates,
+            recommended=None,
+            duplicates=duplicates,
+            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            messages=[],
+        )
+
+    def test_auto_import_at_full_match_skips_dialog_and_applies(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        full = cme.ImportCandidate("databazeknih", "Kniha", "", "https://dk/x", score=100)
+        preview = cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/x")
+        analysis = cme.ImportAnalysis(
+            epub_path="b.epub",
+            signals=[],
+            candidates=[full],
+            recommended=full,
+            duplicates=[],
+            preview=preview,
+            messages=[],
+        )
+        dialog_created = {"n": 0}
+
+        class FakeDialog:
+            def __init__(self, _analysis, parent=None, **kwargs):
+                dialog_created["n"] += 1
+
+            def exec(self):
+                return 0
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(window, "run_import_apply") as apply_stub,
+        ):
+            window.start_epub_import("kniha.epub", analyze=lambda path: analysis, runner=fake_runner)
+            app.processEvents()
+
+        self.assertEqual(dialog_created["n"], 0)
+        apply_stub.assert_called_once()
+        called_preview, _called_path = apply_stub.call_args.args
+        self.assertIs(called_preview, preview)
+        app.processEvents()
+
     def test_accepted_import_dialog_calls_no_write_apply_stub(self):
         from PySide6.QtWidgets import QApplication, QDialog
         import sys

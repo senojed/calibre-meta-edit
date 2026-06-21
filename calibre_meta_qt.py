@@ -308,6 +308,19 @@ def save_app_settings(library: str, theme: str, settings_path: Path | None = Non
     )
 
 
+def should_auto_import(analysis: cme.ImportAnalysis) -> bool:
+    """Auto-import jen pri jiste shode: nejlepsi kandidat 100 % a zadna duplicita.
+
+    Provede totez co tlacitko Importovat (prida knihu do Calibre, status review),
+    ale bez otevreni dialogu. Pri jakekoli duplicite radeji ukaze dialog.
+    """
+    candidates = list(getattr(analysis, "candidates", []) or [])
+    duplicates = list(getattr(analysis, "duplicates", []) or [])
+    if not candidates or duplicates:
+        return False
+    return max(candidate.score for candidate in candidates) >= 100
+
+
 def run_import_analysis(
     epub_path: str | Path,
     library: str | Path,
@@ -1891,6 +1904,11 @@ if PYSIDE6_AVAILABLE:
                 return
             self.write_output(f"Import knihy: nahled pripraven{log_suffix}")
             self.set_status("Import knihy: nahled pripraven")
+            if should_auto_import(analysis):
+                self.write_output(f"Import knihy: 100% shoda bez duplicit, importuji automaticky{log_suffix}")
+                self.set_status("Import knihy: automaticky import")
+                self.run_import_apply(analysis.preview, Path(analysis.epub_path))
+                return
             library = self.library_path
             dialog = ImportDialog(
                 analysis,
