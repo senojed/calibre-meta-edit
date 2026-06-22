@@ -1756,8 +1756,6 @@ def format_enriched_comment(url: str, detail: BookDetailMetadata) -> str:
         facts.append(f"Originalni nazev: {detail.original_title}")
     if detail.original_publication:
         facts.append(f"Originalne vyslo: {detail.original_publication}")
-    if detail.original_publisher:
-        facts.append(f"Originalni vydavatel: {detail.original_publisher}")
     if facts:
         parts.append("<p>" + "<br />".join(html.escape(item) for item in facts) + "</p>")
     if detail.about_text:

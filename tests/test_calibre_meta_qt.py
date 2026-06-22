@@ -293,6 +293,7 @@ class QtHelperTests(unittest.TestCase):
             rating_percent="87 %",
             original_title="Moving Pictures",
             original_publication="1990",
+            original_publisher="Gollancz",
         )
 
         fields = dict(qt.review_data_fields([row], "https://www.databazeknih.cz/prehled-knihy/pohyblive-obrazky-461", detail))
@@ -305,6 +306,7 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(fields["Hodnoceni"], "87 %")
         self.assertEqual(fields["Originalni nazev"], "Moving Pictures")
         self.assertEqual(fields["Originalne vyslo"], "1990")
+        self.assertNotIn("Originalni vydavatel", fields)
 
     def test_review_data_fields_apply_row_overrides(self):
         import calibre_meta_qt as qt
@@ -1478,6 +1480,18 @@ class QtImportWiringTests(unittest.TestCase):
 
         self.assertTrue(hasattr(window, "import_button"))
         self.assertEqual(window.import_button.toolTip(), "Import knihy")
+        app.processEvents()
+
+    def test_review_tab_does_not_expose_original_publisher_control(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertNotIn("Originalni vydavatel", window.review_data_edits)
+        self.assertNotIn("Originalni vydavatel", qt.REVIEW_EDITABLE_FIELDS)
         app.processEvents()
 
     def test_toolbar_right_buttons_follow_requested_order(self):

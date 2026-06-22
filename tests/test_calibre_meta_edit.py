@@ -203,7 +203,7 @@ class CommentTests(unittest.TestCase):
         self.assertIn("<p><strong>89 %</strong></p>", comment)
         self.assertIn("Originalni nazev: Twenty Pence with Envelope and Seasonal Greeting", comment)
         self.assertIn("Originalne vyslo: 12/1987", comment)
-        self.assertIn("Originalni vydavatel: Gollancz", comment)
+        self.assertNotIn("Originalni vydavatel: Gollancz", comment)
         self.assertIn("<p>Popis knihy &amp; dalsi text.</p>", comment)
         self.assertNotIn("Puvodni", comment)
 

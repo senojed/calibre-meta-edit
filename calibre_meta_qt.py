@@ -40,7 +40,6 @@ REVIEW_EDITABLE_FIELDS = (
     "Hodnoceni",
     "Originalni nazev",
     "Originalne vyslo",
-    "Originalni vydavatel",
 )
 AUTO_SETTING_DEFAULTS = {
     "startup_preview": True,
@@ -228,7 +227,6 @@ def review_data_fields(
         ("Hodnoceni", detail.rating_percent or "nenacteno"),
         ("Originalni nazev", detail.original_title or "nenacteno"),
         ("Originalne vyslo", detail.original_publication or "nenacteno"),
-        ("Originalni vydavatel", detail.original_publisher or "nenacteno"),
     ]
 
 
@@ -1222,7 +1220,7 @@ if PYSIDE6_AVAILABLE:
             self.review_data_labels: dict[str, QLabel] = {}
             self.review_data_edits: dict[str, QLineEdit] = {}
             for row_index, field in enumerate(
-                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo", "Originalni vydavatel")
+                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
