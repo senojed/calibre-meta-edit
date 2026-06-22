@@ -930,14 +930,15 @@ if PYSIDE6_AVAILABLE:
             self._add_button(toolbar, "Preferences", self.open_preferences, "neutralButton", "preferences", show_text=False)
             # Velky odstup deli levou skupinu (u leveho okraje) od prave (u praveho okraje).
             toolbar.addStretch(1)
-            # Prava skupina: calibre, odkaz, obalky, import - maly odstup - zapsat na konci.
-            self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "load-calibre", show_text=False)
-            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)
-            self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
+            # Prava skupina: import, obalky, odkaz, Calibre - odstup - smazat - odstup - zapsat.
             self.import_button = self._add_button(
                 toolbar, "Import knihy", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
             self.update_import_button_enabled(True)
+            self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
+            self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)
+            self._add_button(toolbar, "Nacist z Calibre", self.run_update_selected, "updateButton", "load-calibre", show_text=False)
+            toolbar.addSpacing(10)
             self._add_button(toolbar, "Smazat z Calibre", self.delete_selected_rows, "dangerButton", "delete", show_text=False)
             toolbar.addSpacing(10)
             self._add_button(toolbar, "Zapsat", self.run_apply, "applyButton", "write-calibre", show_text=False)

@@ -1480,6 +1480,35 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.import_button.toolTip(), "Import knihy")
         app.processEvents()
 
+    def test_toolbar_right_buttons_follow_requested_order(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        right_tooltips = {
+            "Import knihy",
+            "Obalky",
+            "Najit / overit odkaz",
+            "Nacist z Calibre",
+            "Smazat z Calibre",
+            "Zapsat",
+        }
+        self.assertEqual(
+            [button.toolTip() for button in window.buttons if button.toolTip() in right_tooltips],
+            [
+                "Import knihy",
+                "Obalky",
+                "Najit / overit odkaz",
+                "Nacist z Calibre",
+                "Smazat z Calibre",
+                "Zapsat",
+            ],
+        )
+        app.processEvents()
+
     def test_import_epub_button_enabled_on_fresh_idle_window_without_rows(self):
         from PySide6.QtWidgets import QApplication
         import sys
