@@ -2,23 +2,22 @@
 
 ## Current observed git state
 
-State recorded at the start of documentation reconciliation:
+State recorded after the UI-toolbar task and obsolete Claude worktree cleanup:
 
 * Current branch: `main`
-* Local `main` HEAD at reconciliation start: `3f8fa63` (`docs: add agent handoff baseline`).
-* `origin/main`: `e4c3b54` (`Update CLAUDE.md baseline to 0.4.3 and note future keychain task`).
-* Local `main` is one documentation commit ahead of `origin/main`; it has not been pushed.
+* `main` HEAD / `origin/main`: `8ee9e49` (`ui: reorder right toolbar buttons`).
+* Main is pushed and the working tree was clean before this documentation update.
 * `000d117` is a historical version 0.4.3 baseline only, not the current HEAD.
-* The handoff and reconciliation sessions changed documentation only. No feature implementation or source/test change was made.
-* Reconciliation is amended into the local handoff commit, so its final hash must be read from git after the amend.
+* The obsolete clean Claude worktree and merge-complete local branch
+  `claude/nervous-wiles-9dbd87` were removed after verification.
 
 ## Recent commits
 
-* `3f8fa63` Add agent handoff baseline documentation (pre-amend hash).
-* `e4c3b54` Update CLAUDE.md baseline to 0.4.3 and note future keychain task.
-* `000d117` Bump version to 0.4.3.
+* `8ee9e49` Reorder right toolbar buttons.
+* `507a5e9` Bump version to 0.4.4.
+* `c22afea` Add agent handoff baseline documentation.
 * `7a8c746` Auto-fetch cover after a successful import.
-* `9792bae` Merge databazeknih author-first search change.
+* `74cea1b` Wire cloud providers into Preferences and import.
 
 ## Important project files
 
@@ -38,7 +37,7 @@ State recorded at the start of documentation reconciliation:
 
 Verified in this handoff session on 2026-06-22:
 
-* `python -m pytest`: 459 passed.
+* `python -m pytest`: 460 passed.
 * `python -m py_compile calibre_meta_edit.py calibre_meta_qt.py`: passed.
 * The prior `PytestCacheWarning` is resolved. It was caused by a local ignored
   `.pytest_cache` path conflict at `.pytest_cache\\v\\cache`; deleting only
@@ -46,7 +45,7 @@ Verified in this handoff session on 2026-06-22:
 
 ## Known risks or inconsistencies
 
-* `000d117` is historical only; local `main` was `3f8fa63` at reconciliation start and current `origin/main` is `e4c3b54`.
+* `000d117` is historical only; current `main` and `origin/main` were `8ee9e49` when this state was recorded.
 * `.env`, `settings.json`, match databases/CSVs, backups, and worktree directories exist locally. Their intended tracking status should be confirmed before any cleanup or commits.
 * The project uses `unittest` in its test files, but the requested `pytest` command may require a locally available pytest installation.
 * Old unchecked boxes in `docs/superpowers/plans/` are historical implementation plans; current code, tests, and git history are the authoritative task-status evidence.

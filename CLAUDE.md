@@ -23,17 +23,13 @@ Current stable baseline is `main`.
 Latest known stable state:
 
 ```text
-local main HEAD at reconciliation start: 3f8fa63 docs: add agent handoff baseline
-origin/main: e4c3b54 Update CLAUDE.md baseline to 0.4.3 and note future keychain task
+main HEAD / origin/main: 8ee9e49 ui: reorder right toolbar buttons
 000d117: historical version 0.4.3 baseline only; not the current HEAD
 Visible app version: 0.4.4
-Tests: 459 OK (edit 293 + app 65 + qt 101)
+Tests: 460 OK (edit 293 + app 65 + qt 102)
 py_compile: OK
 Working tree: clean when this state was recorded
 ```
-
-The local, unpushed handoff documentation commit is amended by reconciliation;
-run `git rev-parse --short HEAD` for its resulting hash.
 
 Do not assume this section is current forever. Always check actual git state before starting work.
 
@@ -181,6 +177,8 @@ Recent completed tasks on `main`:
 * databazeknih search queries author before title (order-sensitive fulltext)
 * auto-fetch cover after a successful import
 * version bump to `0.4.4`
+* right-side Qt toolbar button order: import, covers, link, load from Calibre,
+  delete, write
 
 Known good commits:
 
@@ -190,31 +188,12 @@ Known good commits:
 9792bae Merge databaze-search-author-order (author before title)
 74cea1b Wire cloud providers into Preferences and import
 f1167c9 Normalize all-caps title and author from AI extraction
+8ee9e49 Reorder right toolbar buttons
 0660d77 Ignore .env to keep API keys out of git
 ```
 
 Old unchecked boxes in `docs/superpowers/plans/` are historical implementation
 plans. Determine task status from current code, tests, and git history instead.
-
-## Remaining known branch/worktree
-
-There may be a Claude worktree branch:
-
-```text
-claude/nervous-wiles-9dbd87
-.claude/worktrees/nervous-wiles-9dbd87
-```
-
-Do not delete it blindly.
-
-Before removing:
-
-```powershell
-git worktree list
-git -C .claude/worktrees/nervous-wiles-9dbd87 status --short
-```
-
-Only remove if clean and explicitly approved.
 
 ## Next task
 
