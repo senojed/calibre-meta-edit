@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## Project
 
@@ -39,6 +39,11 @@ Do not assume this section is current forever. Always check actual git state bef
 
 ## Development rules
 
+* Make minimal, targeted changes.
+* Do not refactor unrelated code.
+* Preserve existing behavior unless explicitly requested.
+* Do not commit unless explicitly asked.
+* Always report changed files and tests run.
 * Work in small, task-based changes.
 * Prefer one logical task = one commit.
 * Do not silently broaden scope.
@@ -110,6 +115,13 @@ python -m unittest discover -s tests -p test_calibre_meta_edit.py
 python -m unittest discover -s tests -p test_calibre_meta_qt.py
 python -m unittest discover -s tests
 python -m py_compile calibre_meta_edit.py calibre_meta_qt.py calibre_meta_app.py
+```
+
+Compatibility verification requested for handoff:
+
+```powershell
+python -m pytest
+python -m py_compile calibre_meta_edit.py calibre_meta_qt.py
 ```
 
 Note:
@@ -198,11 +210,11 @@ plans. Determine task status from current code, tests, and git history instead.
 
 ## Remaining known branch/worktree
 
-There may be a Claude worktree branch:
+There may be a Codex worktree branch:
 
 ```text
-claude/nervous-wiles-9dbd87
-.claude/worktrees/nervous-wiles-9dbd87
+Codex/nervous-wiles-9dbd87
+.Codex/worktrees/nervous-wiles-9dbd87
 ```
 
 Do not delete it blindly.
@@ -211,7 +223,7 @@ Before removing:
 
 ```powershell
 git worktree list
-git -C .claude/worktrees/nervous-wiles-9dbd87 status --short
+git -C .Codex/worktrees/nervous-wiles-9dbd87 status --short
 ```
 
 Only remove if clean and explicitly approved.
@@ -249,3 +261,8 @@ After each task, report:
 * whether the next task was started
 
 Stop after each task and wait for review unless the user explicitly approved commit/merge/push.
+
+## Handoff workflow
+
+* ChatGPT is used for planning and review.
+* Codex is used for repository inspection, editing, tests, diffs, and git operations.
