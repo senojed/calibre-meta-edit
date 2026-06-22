@@ -26,7 +26,7 @@ Latest known stable state:
 local main HEAD at reconciliation start: 3f8fa63 docs: add agent handoff baseline
 origin/main: e4c3b54 Update CLAUDE.md baseline to 0.4.3 and note future keychain task
 000d117: historical version 0.4.3 baseline only; not the current HEAD
-Visible app version: 0.4.3
+Visible app version: 0.4.4
 Tests: 459 OK (edit 293 + app 65 + qt 101)
 py_compile: OK
 Working tree: clean when this state was recorded
@@ -162,7 +162,7 @@ Do not commit `review.diff`.
 
 ## Versioning
 
-Visible app version is currently `0.4.3`.
+Visible app version is currently `0.4.4`.
 
 If bumping version:
 
@@ -192,7 +192,7 @@ Recent completed tasks on `main`:
 * Manual-link enrichment, candidate re-search, duplicate controls, and Calibre deletion
 * databazeknih search queries author before title (order-sensitive fulltext)
 * auto-fetch cover after a successful import
-* version bump to `0.4.3`
+* version bump to `0.4.4`
 
 Known good commits:
 
