@@ -73,8 +73,9 @@ def asset_icon_path(name: str) -> Path | None:
 
 def book_import_file_filter() -> str:
     """Slozi filtr pro vyber knihy z podporovanych pripon (epub + Calibre nastroje)."""
-    patterns = " ".join("*" + ext for ext in sorted({".epub", *cme.EBOOK_TOOL_FORMATS}))
-    return f"Knihy ({patterns});;EPUB (*.epub);;Vsechny soubory (*.*)"
+    patterns = " ".join("*" + extension for extension, _label in sorted(cme.BOOK_IMPORT_FORMATS))
+    epub_label = next(label for extension, label in cme.BOOK_IMPORT_FORMATS if extension == ".epub")
+    return f"Knihy ({patterns});;{epub_label} (*.epub);;Vsechny soubory (*.*)"
 
 
 def filter_rows(

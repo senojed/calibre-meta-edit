@@ -325,6 +325,18 @@ class AuthorDisplayNameTests(unittest.TestCase):
 
 
 class BookImportFormatTests(unittest.TestCase):
+    def test_supported_book_import_formats_are_labeled_and_keep_tool_subset(self):
+        self.assertEqual(
+            cme.BOOK_IMPORT_FORMATS,
+            (
+                (".epub", "EPUB"),
+                (".mobi", "MOBI"),
+                (".azw3", "AZW3"),
+                (".pdb", "PDB"),
+            ),
+        )
+        self.assertEqual(cme.EBOOK_TOOL_FORMATS, {".mobi", ".azw3", ".pdb"})
+
     def test_ebook_tool_formats_are_lowercase_with_dot(self):
         self.assertEqual(cme.EBOOK_TOOL_FORMATS, {".mobi", ".azw3", ".pdb"})
 

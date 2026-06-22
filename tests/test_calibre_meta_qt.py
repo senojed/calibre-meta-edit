@@ -26,8 +26,10 @@ class QtHelperTests(unittest.TestCase):
         import calibre_meta_qt as qt
 
         filter_text = qt.book_import_file_filter()
-        for pattern in ("*.epub", "*.mobi", "*.azw3", "*.pdb"):
+        for extension, _label in cme.BOOK_IMPORT_FORMATS:
+            pattern = "*" + extension
             self.assertIn(pattern, filter_text)
+        self.assertIn("EPUB (*.epub)", filter_text)
         self.assertIn("Vsechny soubory (*.*)", filter_text)
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):

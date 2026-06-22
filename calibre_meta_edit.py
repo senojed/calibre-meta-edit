@@ -41,8 +41,15 @@ OPEN_LIBRARY_BASE = "https://openlibrary.org"
 OPEN_LIBRARY_SEARCH_API = OPEN_LIBRARY_BASE + "/search.json"
 DEFAULT_LIBRARY = r"\\192.168.0.101\data\books"
 CALIBREDB_FALLBACK = r"C:\Program Files\Calibre2\calibredb.exe"
-# Jeden zdroj pravdy: pripony co umime nacist pres Calibre nastroje (ebook-meta/convert).
-EBOOK_TOOL_FORMATS = {".mobi", ".azw3", ".pdb"}
+# Jeden zdroj pravdy: vsechny pripony podporovane importem a jejich UI popisky.
+BOOK_IMPORT_FORMATS = (
+    (".epub", "EPUB"),
+    (".mobi", "MOBI"),
+    (".azw3", "AZW3"),
+    (".pdb", "PDB"),
+)
+# Pripony, ktere se ctou pres Calibre nastroje (ebook-meta/convert), ne stdlib EPUB cestou.
+EBOOK_TOOL_FORMATS = {extension for extension, _label in BOOK_IMPORT_FORMATS if extension != ".epub"}
 USER_AGENT = "calibre-meta-edit/1.0"
 MATCHES_PATH = Path("matches.db")
 LEGACY_MATCHES_CSV_PATH = Path("matches.csv")
