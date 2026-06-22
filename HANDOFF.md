@@ -2,22 +2,23 @@
 
 ## Current observed git state
 
-State recorded after the UI-toolbar task and obsolete Claude worktree cleanup:
+State recorded after the original-publisher cleanup merge:
 
 * Current branch: `main`
-* `main` HEAD / `origin/main`: `8ee9e49` (`ui: reorder right toolbar buttons`).
+* `main` HEAD / `origin/main` before this documentation update: `23fb06c`
+  (`ui: remove original publisher review field`).
 * Main is pushed and the working tree was clean before this documentation update.
 * `000d117` is a historical version 0.4.3 baseline only, not the current HEAD.
-* The obsolete clean Claude worktree and merge-complete local branch
-  `claude/nervous-wiles-9dbd87` were removed after verification.
+* Original publisher is no longer user-facing in Review or written into new
+  Calibre comments; legacy parsing and persisted-data loading remain tolerated.
 
 ## Recent commits
 
+* `23fb06c` Remove original publisher Review field.
+* `3103b26` Update handoff baseline after UI polish.
 * `8ee9e49` Reorder right toolbar buttons.
 * `507a5e9` Bump version to 0.4.4.
-* `c22afea` Add agent handoff baseline documentation.
 * `7a8c746` Auto-fetch cover after a successful import.
-* `74cea1b` Wire cloud providers into Preferences and import.
 
 ## Important project files
 
@@ -37,7 +38,7 @@ State recorded after the UI-toolbar task and obsolete Claude worktree cleanup:
 
 Verified in this handoff session on 2026-06-22:
 
-* `python -m pytest`: 460 passed.
+* `python -m pytest`: 461 passed.
 * `python -m py_compile calibre_meta_edit.py calibre_meta_qt.py`: passed.
 * The prior `PytestCacheWarning` is resolved. It was caused by a local ignored
   `.pytest_cache` path conflict at `.pytest_cache\\v\\cache`; deleting only
@@ -45,7 +46,7 @@ Verified in this handoff session on 2026-06-22:
 
 ## Known risks or inconsistencies
 
-* `000d117` is historical only; current `main` and `origin/main` were `8ee9e49` when this state was recorded.
+* `000d117` is historical only; `main` and `origin/main` were `23fb06c` when this state was recorded.
 * `.env`, `settings.json`, match databases/CSVs, backups, and worktree directories exist locally. Their intended tracking status should be confirmed before any cleanup or commits.
 * The project uses `unittest` in its test files, but the requested `pytest` command may require a locally available pytest installation.
 * Old unchecked boxes in `docs/superpowers/plans/` are historical implementation plans; current code, tests, and git history are the authoritative task-status evidence.

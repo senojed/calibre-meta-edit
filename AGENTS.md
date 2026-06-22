@@ -23,10 +23,10 @@ Current stable baseline is `main`.
 Latest known stable state:
 
 ```text
-main HEAD / origin/main: 8ee9e49 ui: reorder right toolbar buttons
+main HEAD / origin/main before this documentation update: 23fb06c ui: remove original publisher review field
 000d117: historical version 0.4.3 baseline only; not the current HEAD
 Visible app version: 0.4.4
-Tests: 460 OK (edit 293 + app 65 + qt 102)
+Tests: 461 OK (edit 293 + app 65 + qt 103)
 py_compile: OK
 Working tree: clean when this state was recorded
 ```
@@ -191,6 +191,8 @@ Recent completed tasks on `main`:
 * version bump to `0.4.4`
 * right-side Qt toolbar button order: import, covers, link, load from Calibre,
   delete, write
+* original publisher removed from Review UI, `REVIEW_EDITABLE_FIELDS`, Review
+  display, and generated Calibre comments; legacy parsing/loading remains tolerated
 
 Known good commits:
 
@@ -201,6 +203,7 @@ Known good commits:
 74cea1b Wire cloud providers into Preferences and import
 f1167c9 Normalize all-caps title and author from AI extraction
 8ee9e49 Reorder right toolbar buttons
+23fb06c Remove original publisher review field
 0660d77 Ignore .env to keep API keys out of git
 ```
 
