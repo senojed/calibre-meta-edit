@@ -23,9 +23,9 @@ Current stable baseline is `main`.
 Latest known stable state:
 
 ```text
-main HEAD / origin/main: 93afb9d Polish toolbar layout and bump version
-Visible app version: 0.4.1
-Tests: 336 OK
+main HEAD / origin/main: 000d117 Bump version to 0.4.3
+Visible app version: 0.4.3
+Tests: 459 OK (edit 293 + app 65 + qt 101)
 py_compile: OK
 Working tree: clean
 ```
@@ -145,7 +145,7 @@ Do not commit `review.diff`.
 
 ## Versioning
 
-Visible app version is currently `0.4.1`.
+Visible app version is currently `0.4.3`.
 
 If bumping version:
 
@@ -167,20 +167,20 @@ tests/test_calibre_meta_app.py
 
 Recent completed tasks on `main`:
 
-* EPUB import branch merged into `main`
-* Import author display-name normalization
-* Main UI layout controls reworked
-* Custom SVG toolbar icons added
-* Toolbar polish and visible version bump to `0.4.1`
+* Anthropic + OpenAI cloud AI providers for import (alongside Ollama)
+* API key read from env var / `.env` (never settings.json); `.env` gitignored
+* databazeknih search queries author before title (order-sensitive fulltext)
+* auto-fetch cover after a successful import
+* version bump to `0.4.3`
 
 Known good commits:
 
 ```text
-e2218a8 Merge branch 'epub-import'
-908b2f9 Normalize imported author display names
-8cd7afa Rework main UI control layout
-6c3cc68 Add custom SVG toolbar icons
-93afb9d Polish toolbar layout and bump version
+000d117 Bump version to 0.4.3
+7a8c746 Auto-fetch cover after a successful import
+9792bae Merge databaze-search-author-order (author before title)
+74cea1b Wire cloud providers into Preferences and import
+0660d77 Ignore .env to keep API keys out of git
 ```
 
 ## Remaining known branch/worktree
@@ -211,6 +211,9 @@ Do not start speculative work.
 
 Likely future tasks:
 
+* move API key storage to OS keychain (`keyring`) + GUI field for distribution
+  (or own proxy server if the dev pays for all users); `read_api_key` in
+  calibre_meta_edit.py is the single swap point
 * more cosmetic UI polish
 * more book import formats
 * bulk book import brainstorming/task
