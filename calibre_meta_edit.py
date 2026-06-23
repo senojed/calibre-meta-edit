@@ -2070,6 +2070,22 @@ def _clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _series_metadata_from_blocks(blocks: Sequence[tuple[list[str], str]]) -> tuple[str, str]:
+    """Vrati serii z jednoho jednoznacneho DK bloku nad titulkem."""
+    if len(blocks) != 1:
+        return "", ""
+    links, block_text = blocks[0]
+    if len(links) != 1:
+        return "", ""
+    series = _clean_text(links[0])
+    if not series:
+        return "", ""
+    indices = re.findall(r"\b(\d+)\s*\.\s*d[ií]l\b", block_text, flags=re.IGNORECASE)
+    if len(indices) > 1:
+        return "", ""
+    return series, indices[0] if indices else ""
+
+
 class BookDetailParser(HTMLParser):
     """Parser detailu knihy. JSON-LD bere pro metadata, HTML pro plny text O knize."""
 
@@ -2085,6 +2101,7 @@ class BookDetailParser(HTMLParser):
         self.cover_urls: list[str] = []
         self.visible_text_parts: list[str] = []
         self.detail_fields: list[tuple[str, str]] = []
+        self.series_blocks_before_title: list[tuple[list[str], str]] = []
 
         self._json_parts: list[str] = []
         self._inside_json_ld = False
@@ -2105,12 +2122,35 @@ class BookDetailParser(HTMLParser):
         self._detail_label_parts: list[str] = []
         self._detail_value_parts: list[str] = []
         self._current_detail_label = ""
+        self._title_seen = False
+        self._series_block_depth = 0
+        self._series_block_parts: list[str] = []
+        self._series_links: list[str] = []
+        self._series_link_parts: list[str] = []
+        self._inside_series_link = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {name.lower(): value or "" for name, value in attrs}
         classes = set(attrs_dict.get("class", "").split())
         lowered_tag = tag.lower()
         href = attrs_dict.get("href", "")
+
+        if lowered_tag == "h1":
+            self._title_seen = True
+
+        if not self._title_seen and lowered_tag == "div" and "book_detail_serie_info" in classes:
+            if self._series_block_depth:
+                self._series_block_depth += 1
+            else:
+                self._series_block_depth = 1
+                self._series_block_parts = []
+                self._series_links = []
+            return
+        if self._series_block_depth:
+            self._series_block_depth += 1
+            if lowered_tag == "a" and "/serie/" in href:
+                self._inside_series_link = True
+                self._series_link_parts = []
 
         if lowered_tag == "script" and attrs_dict.get("type", "").lower() == "application/ld+json":
             self._inside_json_ld = True
@@ -2187,6 +2227,18 @@ class BookDetailParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         lowered_tag = tag.lower()
 
+        if lowered_tag == "a" and self._inside_series_link:
+            series = _clean_text(" ".join(self._series_link_parts))
+            if series:
+                self._series_links.append(series)
+            self._series_link_parts = []
+            self._inside_series_link = False
+
+        if self._series_block_depth:
+            self._series_block_depth -= 1
+            if self._series_block_depth == 0 and not self._title_seen:
+                self.series_blocks_before_title.append((self._series_links, _clean_text(" ".join(self._series_block_parts))))
+
         if lowered_tag == "script" and self._inside_json_ld:
             self.json_ld_blocks.append("".join(self._json_parts))
             self._inside_json_ld = False
@@ -2235,6 +2287,10 @@ class BookDetailParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if data.strip():
             self.visible_text_parts.append(data.strip())
+        if self._series_block_depth:
+            self._series_block_parts.append(data)
+        if self._inside_series_link:
+            self._series_link_parts.append(data)
         if self._inside_json_ld:
             self._json_parts.append(data)
         if self._rating_depth:
@@ -2828,10 +2884,13 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     original_title, original_publication, original_publisher = _original_metadata_from_detail_fields(parser.detail_fields)
     if not (original_title or original_publication):
         original_title, original_publication = _original_metadata_from_text(" ".join(parser.visible_text_parts))
+    series, series_index = _series_metadata_from_blocks(parser.series_blocks_before_title)
 
     return BookDetailMetadata(
         published_year=published_year,
         publisher=_publisher_name(book_json.get("publisher")),
+        series=series,
+        series_index=series_index,
         tags=tags,
         rating_percent=rating,
         original_title=original_title,

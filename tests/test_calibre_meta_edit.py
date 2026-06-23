@@ -1928,6 +1928,79 @@ class ParserAndMatchingTests(unittest.TestCase):
         self.assertEqual(detail.about_text, "Prvni cast. Druha cast.")
         self.assertEqual(detail.tags, ["Literatura svetova", "Romany", "Fantasy", "draci"])
 
+    def test_parse_book_detail_metadata_reads_series_from_hrrr_na_ne_fixture(self):
+        fixture = Path(__file__).parent / "fixtures" / "databazeknih_detail_hrrr_na_ne_471.html"
+
+        detail = cme.parse_book_detail_metadata(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(detail.series, "Úžasná Zeměplocha")
+        self.assertEqual(detail.series_index, "21")
+
+    def test_parse_book_detail_metadata_reads_series_from_enderova_hra_fixture(self):
+        fixture = Path(__file__).parent / "fixtures" / "databazeknih_detail_enderova_hra_30553.html"
+
+        detail = cme.parse_book_detail_metadata(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(detail.series, "Enderova sága")
+        self.assertEqual(detail.series_index, "1")
+
+    def test_parse_book_detail_metadata_reads_series_from_posledni_prani_fixture(self):
+        fixture = Path(__file__).parent / "fixtures" / "databazeknih_detail_posledni_prani_30396.html"
+
+        detail = cme.parse_book_detail_metadata(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(detail.series, "Zaklínač")
+        self.assertEqual(detail.series_index, "1")
+
+    def test_parse_book_detail_metadata_leaves_series_empty_without_explicit_block(self):
+        detail = cme.parse_book_detail_metadata("<h1>Kniha 21</h1>")
+
+        self.assertEqual(detail.series, "")
+        self.assertEqual(detail.series_index, "")
+
+    def test_parse_book_detail_metadata_rejects_ambiguous_series_block(self):
+        html = """
+        <div class="book_detail_serie_info">
+          <a href="/serie/serie-a">Série A</a> série
+          <span>1. díl</span><span>2. díl</span>
+        </div>
+        <h1>Kniha</h1>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.series, "")
+        self.assertEqual(detail.series_index, "")
+
+    def test_parse_book_detail_metadata_ignores_series_block_after_title(self):
+        html = """
+        <h1>Kniha</h1>
+        <div class="book_detail_serie_info">
+          <a href="/serie/serie-a">Série A</a> série
+          <span>1. díl</span>
+        </div>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.series, "")
+        self.assertEqual(detail.series_index, "")
+
+    def test_parse_book_detail_metadata_rejects_multiple_series_links(self):
+        html = """
+        <div class="book_detail_serie_info">
+          <a href="/serie/serie-a">Série A</a>
+          <a href="/serie/serie-b">Série B</a> série
+          <span>1. díl</span>
+        </div>
+        <h1>Kniha</h1>
+        """
+
+        detail = cme.parse_book_detail_metadata(html)
+
+        self.assertEqual(detail.series, "")
+        self.assertEqual(detail.series_index, "")
+
     def test_parse_book_detail_metadata_reads_original_title_and_publication(self):
         html = """
         <div>
