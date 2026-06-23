@@ -132,6 +132,8 @@ class MatchRow:
 class BookDetailMetadata:
     published_year: str = ""
     publisher: str = ""
+    series: str = ""
+    series_index: str = ""
     tags: list[str] | None = None
     rating_percent: str = ""
     original_title: str = ""
@@ -1781,6 +1783,8 @@ def apply_review_overrides(row: MatchRow, detail: BookDetailMetadata) -> BookDet
     return BookDetailMetadata(
         published_year=row.review_published_year.strip() or detail.published_year,
         publisher=row.review_publisher.strip() or detail.publisher,
+        series=detail.series,
+        series_index=detail.series_index,
         tags=_review_tags(row.review_tags) or detail.tags,
         rating_percent=row.review_rating_percent.strip() or detail.rating_percent,
         original_title=row.review_original_title.strip() or detail.original_title,
@@ -4218,6 +4222,8 @@ def fetch_databaze_book_detail_metadata(
         detail = BookDetailMetadata(
             published_year=oldest_edition.published_year or detail.published_year,
             publisher=oldest_edition.publisher or detail.publisher,
+            series=detail.series,
+            series_index=detail.series_index,
             tags=detail.tags,
             rating_percent=detail.rating_percent,
             original_title=detail.original_title,

@@ -58,6 +58,59 @@ def write_test_epub(
 
 
 class TextAndUrlTests(unittest.TestCase):
+    def test_book_detail_metadata_defaults_series_fields_to_empty(self):
+        detail = cme.BookDetailMetadata()
+
+        self.assertEqual(detail.series, "")
+        self.assertEqual(detail.series_index, "")
+
+    def test_review_metadata_reconstruction_preserves_series_fields(self):
+        row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "matched", "matched")
+        detail = cme.BookDetailMetadata(series="Nadace", series_index="2")
+
+        rebuilt = cme.apply_review_overrides(row, detail)
+
+        self.assertEqual(rebuilt.series, "Nadace")
+        self.assertEqual(rebuilt.series_index, "2")
+
+    def test_databaze_edition_reconstruction_preserves_series_fields(self):
+        from unittest.mock import patch
+
+        detail = cme.BookDetailMetadata(series="Nadace", series_index="2")
+        oldest_edition = cme.EditionMetadata(published_year="1951", publisher="Argo", url="https://edition")
+        with (
+            patch.object(cme, "parse_book_detail_metadata", return_value=detail),
+            patch.object(cme, "extract_editions_url", return_value="https://editions"),
+            patch.object(cme, "parse_oldest_edition_metadata", return_value=oldest_edition),
+        ):
+            _written_url, rebuilt = cme.fetch_databaze_book_detail_metadata("https://book", fetcher=lambda _url: "html")
+
+        self.assertEqual(rebuilt.series, "Nadace")
+        self.assertEqual(rebuilt.series_index, "2")
+
+    def test_import_metadata_args_include_explicit_series_fields(self):
+        preview = cme.ImportPreview(title="Kniha", authors="Autor", series="Nadace", series_index="2")
+
+        args = cme._import_set_metadata_args("calibredb", "B:\\", 42, preview)
+
+        self.assertIn("series:Nadace", args)
+        self.assertIn("series_index:2", args)
+
+    def test_import_metadata_args_omit_empty_series_fields(self):
+        preview = cme.ImportPreview(title="Kniha 2", authors="Autor")
+
+        args = cme._import_set_metadata_args("calibredb", "B:\\", 42, preview)
+
+        self.assertFalse(any(value.startswith("series:") for value in args))
+        self.assertFalse(any(value.startswith("series_index:") for value in args))
+
+    def test_candidate_title_number_does_not_infer_series_metadata(self):
+        candidate = cme.ImportCandidate("databazeknih", "Nadace 2", "Isaac Asimov", "https://x")
+        preview = cme.import_preview_from_candidate(candidate, cme.ImportPreview())
+
+        self.assertEqual(preview.series, "")
+        self.assertEqual(preview.series_index, "")
+
     def test_normalize_text_removes_punctuation_from_title_words(self):
         self.assertEqual(cme.normalize_text("Stráže! Stráže!"), "straze straze")
 

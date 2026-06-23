@@ -937,6 +937,34 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(dialog.source_label.text(), "databazeknih")
         app.processEvents()
 
+    def test_import_dialog_preserves_candidate_series_metadata_without_controls(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        detail = cme.BookDetailMetadata(series="Nadace", series_index="2")
+        candidate = cme.ImportCandidate("databazeknih", "Nadace", "Isaac Asimov", "https://x", detail=detail)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=candidate,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Nadace", authors="Isaac Asimov"),
+            messages=[],
+        )
+        dialog = qt.ImportDialog(analysis, runner=lambda target: target())
+
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.apply_selected_candidate()
+
+        self.assertEqual(dialog.current_preview.series, "Nadace")
+        self.assertEqual(dialog.current_preview.series_index, "2")
+        self.assertFalse(hasattr(dialog, "series_edit"))
+        self.assertFalse(hasattr(dialog, "series_index_edit"))
+        app.processEvents()
+
     def test_import_dialog_switching_candidate_does_not_leak_hidden_metadata(self):
         # Kandidat A ma detail metadata; kandidat B ne. Po prepnuti z A na B
         # nesmi B podedit skryta metadata z A; ma padnout jen na base_preview.

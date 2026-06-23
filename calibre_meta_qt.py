@@ -629,6 +629,10 @@ if PYSIDE6_AVAILABLE:
                 updates["published_year"] = detail.published_year
             if detail.publisher:
                 updates["publisher"] = detail.publisher
+            if detail.series:
+                updates["series"] = detail.series
+            if detail.series_index:
+                updates["series_index"] = detail.series_index
             if detail.tags:
                 updates["tags"] = ", ".join(detail.tags)
             if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
@@ -683,6 +687,10 @@ if PYSIDE6_AVAILABLE:
                     updates["published_year"] = detail.published_year
                 if detail.publisher:
                     updates["publisher"] = detail.publisher
+                if detail.series:
+                    updates["series"] = detail.series
+                if detail.series_index:
+                    updates["series_index"] = detail.series_index
                 if detail.tags:
                     updates["tags"] = ", ".join(detail.tags)
                 if detail.about_text or detail.rating_percent or detail.original_title or detail.original_publication:
