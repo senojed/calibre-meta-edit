@@ -291,6 +291,8 @@ class QtHelperTests(unittest.TestCase):
         detail = cme.BookDetailMetadata(
             published_year="1996",
             publisher="Talpress",
+            series="Úžasná Zeměplocha",
+            series_index="21",
             tags=["Fantasy", "Humor"],
             rating_percent="87 %",
             original_title="Moving Pictures",
@@ -304,11 +306,15 @@ class QtHelperTests(unittest.TestCase):
         self.assertNotIn("Chyba", fields)
         self.assertEqual(fields["Rok vydani"], "1996")
         self.assertEqual(fields["Vydavatel"], "Talpress")
+        self.assertEqual(fields["Serie"], "Úžasná Zeměplocha")
+        self.assertEqual(fields["Cislo serie"], "21")
         self.assertEqual(fields["Tagy"], "Fantasy, Humor")
         self.assertEqual(fields["Hodnoceni"], "87 %")
         self.assertEqual(fields["Originalni nazev"], "Moving Pictures")
         self.assertEqual(fields["Originalne vyslo"], "1990")
         self.assertNotIn("Originalni vydavatel", fields)
+        self.assertNotIn("Serie", qt.REVIEW_EDITABLE_FIELDS)
+        self.assertNotIn("Cislo serie", qt.REVIEW_EDITABLE_FIELDS)
 
     def test_review_data_fields_apply_row_overrides(self):
         import calibre_meta_qt as qt
@@ -333,6 +339,8 @@ class QtHelperTests(unittest.TestCase):
 
         self.assertEqual(fields["Rok vydani"], "1999")
         self.assertEqual(fields["Vydavatel"], "Rucne")
+        self.assertEqual(fields["Serie"], "nenacteno")
+        self.assertEqual(fields["Cislo serie"], "nenacteno")
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
@@ -1522,6 +1530,20 @@ class QtImportWiringTests(unittest.TestCase):
 
         self.assertNotIn("Originalni vydavatel", window.review_data_edits)
         self.assertNotIn("Originalni vydavatel", qt.REVIEW_EDITABLE_FIELDS)
+        app.processEvents()
+
+    def test_review_tab_exposes_series_rows_as_read_only(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertIn("Serie", window.review_data_labels)
+        self.assertIn("Cislo serie", window.review_data_labels)
+        self.assertNotIn("Serie", window.review_data_edits)
+        self.assertNotIn("Cislo serie", window.review_data_edits)
         app.processEvents()
 
     def test_toolbar_right_buttons_follow_requested_order(self):

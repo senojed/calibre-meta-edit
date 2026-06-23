@@ -224,6 +224,8 @@ def review_data_fields(
         ("Typ", row.work_type or "kniha"),
         ("Rok vydani", detail.published_year or "nenacteno"),
         ("Vydavatel", detail.publisher or "nenacteno"),
+        ("Serie", detail.series or "nenacteno"),
+        ("Cislo serie", detail.series_index or "nenacteno"),
         ("Tagy", ", ".join(detail.tags or []) or "nenacteno"),
         ("Hodnoceni", detail.rating_percent or "nenacteno"),
         ("Originalni nazev", detail.original_title or "nenacteno"),
@@ -1229,7 +1231,7 @@ if PYSIDE6_AVAILABLE:
             self.review_data_labels: dict[str, QLabel] = {}
             self.review_data_edits: dict[str, QLineEdit] = {}
             for row_index, field in enumerate(
-                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
+                ("Status", "Zdroj", "Typ", "Rok vydani", "Vydavatel", "Serie", "Cislo serie", "Tagy", "Hodnoceni", "Originalni nazev", "Originalne vyslo")
             ):
                 name = QLabel(field)
                 name.setObjectName("fieldName")
