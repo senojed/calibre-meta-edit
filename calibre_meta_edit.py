@@ -4485,6 +4485,10 @@ def apply_match_row(
         args.extend(["--field", "publisher:" + detail.publisher])
     if detail.tags:
         args.extend(["--field", "tags:" + ",".join(detail.tags)])
+    if detail.series:
+        args.extend(["--field", "series:" + detail.series])
+    if detail.series_index:
+        args.extend(["--field", "series_index:" + detail.series_index])
     result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()

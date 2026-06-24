@@ -3863,9 +3863,43 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("pubdate:2013-00-00", calls[0])
         self.assertIn("publisher:Fantom Print", calls[0])
         self.assertIn("tags:Fantasy,draci", calls[0])
+        self.assertFalse(any(arg.startswith("series:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("series_index:") for arg in calls[0]))
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
         self.assertIn("<strong>89 %</strong>", comments_field)
         self.assertIn("Novy popis.", comments_field)
+
+    def test_apply_match_row_writes_databaze_series_metadata(self):
+        row = cme.MatchRow(
+            1,
+            "Carpe Jugulum",
+            "Terry Pratchett",
+            "approve",
+            "https://www.databazeknih.cz/prehled-knihy/uzasna-zemeplocha-uzasna-plochozem-carpe-jugulum-474",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+        )
+        calls = []
+        detail_html = """
+        <div class="book_detail_serie_info">
+          <a href="/serie/uzasna-zemeplocha">Úžasná Zeměplocha</a> série
+          <span>23. díl</span>
+        </div>
+        <h1>Carpe Jugulum</h1>
+        """
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda _url: detail_html,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertIn("series:Úžasná Zeměplocha", calls[0])
+        self.assertIn("series_index:23", calls[0])
 
     def test_apply_match_row_uses_review_override_metadata(self):
         row = cme.MatchRow(
