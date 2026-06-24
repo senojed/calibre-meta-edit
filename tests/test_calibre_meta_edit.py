@@ -93,6 +93,8 @@ class TextAndUrlTests(unittest.TestCase):
 
         args = cme._import_set_metadata_args("calibredb", "B:\\", 42, preview)
 
+        self.assertIn("title:Kniha", args)
+        self.assertIn("title_sort:Kniha", args)
         self.assertIn("series:Nadace", args)
         self.assertIn("series_index:2", args)
 
@@ -103,6 +105,14 @@ class TextAndUrlTests(unittest.TestCase):
 
         self.assertFalse(any(value.startswith("series:") for value in args))
         self.assertFalse(any(value.startswith("series_index:") for value in args))
+
+    def test_import_metadata_args_omit_title_sort_when_title_empty(self):
+        preview = cme.ImportPreview(title="", authors="Autor")
+
+        args = cme._import_set_metadata_args("calibredb", "B:\\", 42, preview)
+
+        self.assertIn("title:", args)
+        self.assertFalse(any(value.startswith("title_sort:") for value in args))
 
     def test_candidate_title_number_does_not_infer_series_metadata(self):
         candidate = cme.ImportCandidate("databazeknih", "Nadace 2", "Isaac Asimov", "https://x")
@@ -3898,6 +3908,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "updated")
+        self.assertIn("title_sort:Carpe Jugulum", calls[0])
         self.assertIn("series:Úžasná Zeměplocha", calls[0])
         self.assertIn("series_index:23", calls[0])
 

@@ -1326,6 +1326,8 @@ def _import_set_metadata_args(calibredb_path: str, library: str | Path, book_id:
         "--field",
         "authors:" + preview.authors,
     ]
+    if preview.title:
+        args.extend(["--field", "title_sort:" + preview.title])
     if preview.comment:
         args.extend(["--field", "comments:" + preview.comment])
     if preview.published_year:
@@ -4479,6 +4481,8 @@ def apply_match_row(
         "--field",
         "comments:" + new_comment,
     ]
+    if row.title:
+        args.extend(["--field", "title_sort:" + row.title])
     if detail.published_year:
         args.extend(["--field", "pubdate:" + calibre_pubdate_value(detail.published_year)])
     if detail.publisher:
