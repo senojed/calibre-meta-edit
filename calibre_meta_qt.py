@@ -913,6 +913,7 @@ if PYSIDE6_AVAILABLE:
                 schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
+            self._build_multiimport_menu()
             root = QWidget()
             layout = QVBoxLayout(root)
             layout.setContentsMargins(10, 10, 10, 6)
@@ -926,6 +927,13 @@ if PYSIDE6_AVAILABLE:
             self.statusBar().addPermanentWidget(self.calibre_indicator)
             self.set_status("Ready")
             self.apply_theme()
+
+        def _build_multiimport_menu(self) -> None:
+            menu = self.menuBar().addMenu("Multiimport")
+            self.multiimport_files_action = menu.addAction("Vybrat vice knih...")
+            self.multiimport_files_action.triggered.connect(lambda _checked=False: self.choose_multiimport_files())
+            self.multiimport_folder_action = menu.addAction("Vybrat slozku...")
+            self.multiimport_folder_action.triggered.connect(lambda _checked=False: self.choose_multiimport_folder())
 
         def _build_toolbar(self) -> QHBoxLayout:
             toolbar = QHBoxLayout()
@@ -1961,6 +1969,32 @@ if PYSIDE6_AVAILABLE:
                 book_import_file_filter(),
             )
             return path
+
+        def choose_multiimport_files(self) -> None:
+            paths, _filter = QFileDialog.getOpenFileNames(
+                self,
+                "Vyber knihy",
+                "",
+                book_import_file_filter(),
+            )
+            if not paths:
+                return
+            files = cme.collect_import_files_from_paths([Path(path) for path in paths])
+            self._show_multiimport_selection_summary(files)
+
+        def choose_multiimport_folder(self) -> None:
+            folder = QFileDialog.getExistingDirectory(self, "Vyber slozku s knihami", "")
+            if not folder:
+                return
+            files = cme.collect_import_files_from_folder(Path(folder))
+            self._show_multiimport_selection_summary(files)
+
+        def _show_multiimport_selection_summary(self, files: Sequence[Path]) -> None:
+            QMessageBox.information(
+                self,
+                "Multiimport",
+                f"Nalezeno podporovanych souboru: {len(files)}",
+            )
 
         def finish_import_analysis(self, analysis: object, error: str) -> None:
             """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""

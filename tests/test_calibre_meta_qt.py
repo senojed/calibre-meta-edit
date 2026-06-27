@@ -1520,6 +1520,62 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.import_button.toolTip(), "Import knihy")
         app.processEvents()
 
+    def test_multiimport_menu_has_file_and_folder_picker_actions(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertEqual(window.multiimport_files_action.text(), "Vybrat vice knih...")
+        self.assertEqual(window.multiimport_folder_action.text(), "Vybrat slozku...")
+        app.processEvents()
+
+    def test_multiimport_files_picker_uses_backend_collector_and_shows_count(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        selected = ["C:/books/b.epub", "C:/books/a.mobi"]
+        collected = [Path("C:/books/a.mobi"), Path("C:/books/b.epub")]
+
+        with (
+            patch.object(qt.QFileDialog, "getOpenFileNames", return_value=(selected, "")) as picker,
+            patch.object(cme, "collect_import_files_from_paths", return_value=collected) as collect,
+            patch.object(qt.QMessageBox, "information") as information,
+        ):
+            window.choose_multiimport_files()
+
+        picker.assert_called_once_with(window, "Vyber knihy", "", qt.book_import_file_filter())
+        collect.assert_called_once_with([Path(path) for path in selected])
+        self.assertIn("2", information.call_args.args[2])
+        app.processEvents()
+
+    def test_multiimport_folder_picker_uses_backend_collector_and_shows_count(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        folder = "C:/books"
+        collected = [Path("C:/books/a.azw3")]
+
+        with (
+            patch.object(qt.QFileDialog, "getExistingDirectory", return_value=folder) as picker,
+            patch.object(cme, "collect_import_files_from_folder", return_value=collected) as collect,
+            patch.object(qt.QMessageBox, "information") as information,
+        ):
+            window.choose_multiimport_folder()
+
+        picker.assert_called_once_with(window, "Vyber slozku s knihami", "")
+        collect.assert_called_once_with(Path(folder))
+        self.assertIn("1", information.call_args.args[2])
+        app.processEvents()
+
     def test_review_tab_does_not_expose_original_publisher_control(self):
         from PySide6.QtWidgets import QApplication
         import sys
