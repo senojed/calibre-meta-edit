@@ -52,6 +52,76 @@ class QtHelperTests(unittest.TestCase):
         self.assertIn("Chyby: 1", summary)
         self.assertIn("Nic nebylo importovano.", summary)
 
+    def test_multiimport_status_label_maps_known_statuses_and_falls_back_safely(self):
+        import calibre_meta_qt as qt
+
+        expected = {
+            "pending": "Čeká",
+            "analyzing": "Analyzuje se",
+            "ready": "Připraveno",
+            "needs_review": "Ke kontrole",
+            "duplicate_warning": "Možná duplicita",
+            "analysis_error": "Chyba analýzy",
+            "skipped": "Přeskočeno",
+            "writing": "Zapisuje se",
+            "written": "Zapsáno",
+            "write_error": "Chyba zápisu",
+        }
+
+        self.assertEqual({status: qt.multiimport_status_label(status) for status in expected}, expected)
+        self.assertEqual(qt.multiimport_status_label("future_status"), "Neznámý stav: future_status")
+
+    def test_multiimport_item_row_text_includes_state_duplicates_and_error(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(
+            Path("book.epub"),
+            "book.epub",
+            checked_for_import=True,
+            status="analysis_error",
+            error_message="network failed",
+            duplicates=[cme.DuplicateCandidate(7, "Kniha", "Autor")],
+        )
+
+        text = qt.multiimport_item_row_text(item)
+
+        self.assertIn("book.epub", text)
+        self.assertIn("Chyba analýzy", text)
+        self.assertNotIn("analysis_error", text)
+        self.assertIn("Predvybrano: ano", text)
+        self.assertIn("Duplicity: 1", text)
+        self.assertIn("network failed", text)
+
+    def test_multiimport_item_detail_text_includes_preview_candidate_and_duplicates(self):
+        import calibre_meta_qt as qt
+
+        candidate = cme.ImportCandidate("databazeknih", "Kandidat", "Autor K.", "https://dk/1", score=95)
+        duplicate = cme.DuplicateCandidate(7, "Existujici", "Autor E.", score=90)
+        item = cme.MultiImportBatchItem(
+            Path("book.epub"),
+            "book.epub",
+            status="duplicate_warning",
+            current_preview=cme.ImportPreview(
+                title="Nahled",
+                authors="Autor N.",
+                source="databazeknih",
+                url="https://dk/1",
+            ),
+            selected_candidate=candidate,
+            duplicates=[duplicate],
+        )
+
+        text = qt.multiimport_item_detail_text(item)
+
+        self.assertIn("Nazev: Nahled", text)
+        self.assertIn("Autori: Autor N.", text)
+        self.assertIn("Zdroj: databazeknih", text)
+        self.assertIn("Odkaz: https://dk/1", text)
+        self.assertIn("Stav: Možná duplicita", text)
+        self.assertNotIn("duplicate_warning", text)
+        self.assertIn("Kandidat / Autor K. / 95%", text)
+        self.assertIn("Existujici / Autor E.", text)
+
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
 
@@ -393,6 +463,46 @@ class QtImportTests(unittest.TestCase):
         dialog.update_import_enabled()
 
         self.assertTrue(dialog.import_button.isEnabled())
+        app.processEvents()
+
+    def test_multiimport_results_dialog_is_read_only_and_updates_details(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        items = [
+            cme.MultiImportBatchItem(
+                Path("ready.epub"),
+                "ready.epub",
+                status="ready",
+                current_preview=cme.ImportPreview(title="Ready", authors="Autor"),
+            ),
+            cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review"),
+            cme.MultiImportBatchItem(
+                Path("duplicate.epub"),
+                "duplicate.epub",
+                status="duplicate_warning",
+                duplicates=[cme.DuplicateCandidate(5, "Duplicita", "Autor D.")],
+            ),
+            cme.MultiImportBatchItem(
+                Path("error.epub"),
+                "error.epub",
+                status="analysis_error",
+                error_message="analysis failed",
+            ),
+        ]
+
+        dialog = qt.MultiImportResultsDialog(items)
+
+        self.assertEqual(dialog.items_list.count(), 4)
+        self.assertTrue(dialog.detail_text.isReadOnly())
+        self.assertFalse(hasattr(dialog, "import_button"))
+        self.assertIn("Ready", dialog.detail_text.toPlainText())
+        dialog.items_list.setCurrentRow(2)
+        self.assertIn("Duplicita", dialog.detail_text.toPlainText())
+        dialog.items_list.setCurrentRow(3)
+        self.assertIn("analysis failed", dialog.detail_text.toPlainText())
         app.processEvents()
 
     def test_import_dialog_returns_preview_with_edited_title_author(self):
@@ -1612,7 +1722,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "_build_import_analyze_callable", return_value=analyze) as build_analyzer,
-            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
@@ -1622,7 +1732,8 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(calls, [str(Path("C:/books/book.epub"))])
         self.assertEqual(items[0].status, "needs_review")
         self.assertFalse(items[0].checked_for_import)
-        self.assertIn("Podporovane soubory: 1", information.call_args.args[2])
+        results_dialog.assert_called_once_with(items, parent=window)
+        results_dialog.return_value.exec.assert_called_once_with()
         apply_preview.assert_not_called()
         run_apply.assert_not_called()
         app.processEvents()

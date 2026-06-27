@@ -100,6 +100,64 @@ def multiimport_analysis_summary(items: Sequence[cme.MultiImportBatchItem]) -> s
     )
 
 
+def multiimport_status_label(status: str) -> str:
+    labels = {
+        "pending": "Čeká",
+        "analyzing": "Analyzuje se",
+        "ready": "Připraveno",
+        "needs_review": "Ke kontrole",
+        "duplicate_warning": "Možná duplicita",
+        "analysis_error": "Chyba analýzy",
+        "skipped": "Přeskočeno",
+        "writing": "Zapisuje se",
+        "written": "Zapsáno",
+        "write_error": "Chyba zápisu",
+    }
+    return labels.get(status, f"Neznámý stav: {status}")
+
+
+def multiimport_item_row_text(item: cme.MultiImportBatchItem) -> str:
+    parts = [
+        item.display_name,
+        multiimport_status_label(item.status),
+        f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
+        f"Duplicity: {len(item.duplicates)}",
+    ]
+    if item.error_message:
+        parts.append(item.error_message)
+    return " | ".join(parts)
+
+
+def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
+    preview = item.current_preview or cme.ImportPreview()
+    lines = [
+        f"Soubor: {item.display_name}",
+        f"Stav: {multiimport_status_label(item.status)}",
+        f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
+        "",
+        f"Nazev: {preview.title}",
+        f"Autori: {preview.authors}",
+        f"Zdroj: {preview.source}",
+        f"Odkaz: {preview.url}",
+    ]
+    if item.selected_candidate is not None:
+        candidate = item.selected_candidate
+        lines.extend(
+            (
+                "",
+                "Doporuceny kandidat:",
+                f"{candidate.title} / {candidate.authors} / {candidate.score}%",
+                f"{candidate.source}: {candidate.url}",
+            )
+        )
+    lines.extend(("", f"Duplicity: {len(item.duplicates)}"))
+    for duplicate in item.duplicates:
+        lines.append(f"ID {duplicate.book_id}: {duplicate.title} / {duplicate.authors} / {duplicate.score}%")
+    if item.error_message:
+        lines.extend(("", f"Chyba: {item.error_message}"))
+    return "\n".join(lines)
+
+
 def filter_rows(
     rows: Sequence[cme.MatchRow],
     title: str = "",
@@ -444,6 +502,45 @@ if PYSIDE6_AVAILABLE:
         review_ready = Signal(int, int, str, object, str)
         import_ready = Signal(object, str)
         apply_ready = Signal(object, str)
+
+
+    class MultiImportResultsDialog(QDialog):
+        """Read-only prehled vysledku analyzy vice knih."""
+
+        def __init__(self, items: Sequence[cme.MultiImportBatchItem], parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.items = list(items)
+            self.setWindowTitle("Vysledky multiimport analyzy")
+            self.resize(900, 600)
+
+            root = QVBoxLayout(self)
+            summary_label = QLabel(multiimport_analysis_summary(self.items))
+            root.addWidget(summary_label)
+
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+            self.items_list = QListWidget()
+            for item in self.items:
+                self.items_list.addItem(multiimport_item_row_text(item))
+            body.addWidget(self.items_list, stretch=1)
+
+            self.detail_text = QTextEdit()
+            self.detail_text.setReadOnly(True)
+            body.addWidget(self.detail_text, stretch=2)
+
+            self.close_button = QPushButton("Zavrit")
+            self.close_button.clicked.connect(self.accept)
+            root.addWidget(self.close_button)
+
+            self.items_list.currentRowChanged.connect(self.show_item_details)
+            if self.items:
+                self.items_list.setCurrentRow(0)
+
+        def show_item_details(self, row: int) -> None:
+            if 0 <= row < len(self.items):
+                self.detail_text.setPlainText(multiimport_item_detail_text(self.items[row]))
+            else:
+                self.detail_text.clear()
 
 
     class ImportDialog(QDialog):
@@ -2024,11 +2121,7 @@ if PYSIDE6_AVAILABLE:
                 lambda path: analyze_book(str(path)),
                 precheck_safe_matches=False,
             )
-            QMessageBox.information(
-                self,
-                "Multiimport",
-                multiimport_analysis_summary(analyzed_items),
-            )
+            MultiImportResultsDialog(analyzed_items, parent=self).exec()
             return analyzed_items
 
         def finish_import_analysis(self, analysis: object, error: str) -> None:
