@@ -58,6 +58,174 @@ def write_test_epub(
 
 
 class TextAndUrlTests(unittest.TestCase):
+    def _multiimport_analysis(
+        self,
+        *,
+        recommended: cme.ImportCandidate | None = None,
+        candidates: list[cme.ImportCandidate] | None = None,
+        duplicates: list[cme.DuplicateCandidate] | None = None,
+        preview: cme.ImportPreview | None = None,
+    ) -> cme.ImportAnalysis:
+        if recommended is None and candidates is None:
+            recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        return cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=candidates if candidates is not None else ([recommended] if recommended is not None else []),
+            recommended=recommended,
+            duplicates=duplicates or [],
+            preview=preview or cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+            messages=[],
+        )
+
+    def test_multiimport_batch_item_defaults(self):
+        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
+
+        self.assertEqual(item.status, "pending")
+        self.assertFalse(item.checked_for_import)
+        self.assertEqual(item.error_message, "")
+        self.assertEqual(item.duplicates, [])
+        self.assertIn("pending", cme.MULTIIMPORT_BATCH_STATUSES)
+        self.assertIn("write_error", cme.MULTIIMPORT_BATCH_STATUSES)
+
+    def test_safe_multiimport_precheck_accepts_single_recommended_100_match(self):
+        analysis = self._multiimport_analysis()
+
+        self.assertTrue(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_recommended_score_below_100(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=99)
+        analysis = self._multiimport_analysis(recommended=recommended)
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_duplicates(self):
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", score=100, strong=True)
+        analysis = self._multiimport_analysis(duplicates=[duplicate])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_missing_recommended(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        analysis = self._multiimport_analysis(recommended=None, candidates=[candidate])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_invalid_preview(self):
+        analysis = self._multiimport_analysis(preview=cme.ImportPreview(title="", authors="Autor", url="https://dk/1"))
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_empty_preview_url(self):
+        analysis = self._multiimport_analysis(preview=cme.ImportPreview(title="Kniha", authors="Autor", url=""))
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_empty_recommended_url(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=recommended,
+            candidates=[recommended],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_preview_recommended_url_mismatch(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=recommended,
+            candidates=[recommended],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_multiple_distinct_100_score_urls(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        other = cme.ImportCandidate("legie", "Kniha", "Autor", "https://legie/1", score=100)
+        analysis = self._multiimport_analysis(recommended=recommended, candidates=[recommended, other])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_ai_override_lower_score_recommended(self):
+        full = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/100", score=100)
+        ai_choice = cme.ImportCandidate("openlibrary", "Kniha", "Autor", "https://ol/75", score=75)
+        analysis = self._multiimport_analysis(
+            recommended=ai_choice,
+            candidates=[full, ai_choice],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://ol/75"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_is_supported_import_file_accepts_all_configured_formats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for extension, _label in cme.BOOK_IMPORT_FORMATS:
+                path = root / f"book{extension}"
+                path.write_text("x", encoding="utf-8")
+
+                self.assertTrue(cme.is_supported_import_file(path), extension)
+
+    def test_is_supported_import_file_accepts_uppercase_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "book.EPUB"
+            path.write_text("x", encoding="utf-8")
+
+            self.assertTrue(cme.is_supported_import_file(path))
+
+    def test_is_supported_import_file_rejects_unsupported_suffix_and_no_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            txt = root / "book.txt"
+            no_suffix = root / "book"
+            txt.write_text("x", encoding="utf-8")
+            no_suffix.write_text("x", encoding="utf-8")
+
+            self.assertFalse(cme.is_supported_import_file(txt))
+            self.assertFalse(cme.is_supported_import_file(no_suffix))
+
+    def test_collect_import_files_from_paths_ignores_directories_and_unsupported_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            epub = root / "b.epub"
+            mobi = root / "a.mobi"
+            unsupported = root / "c.txt"
+            directory = root / "d.azw3"
+            epub.write_text("x", encoding="utf-8")
+            mobi.write_text("x", encoding="utf-8")
+            unsupported.write_text("x", encoding="utf-8")
+            directory.mkdir()
+
+            collected = cme.collect_import_files_from_paths([epub, unsupported, directory, mobi])
+
+            self.assertEqual(collected, [mobi, epub])
+
+    def test_collect_import_files_from_folder_is_non_recursive_and_sorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            z_epub = root / "z.epub"
+            a_pdb = root / "A.PDB"
+            unsupported = root / "middle.txt"
+            nested = root / "nested"
+            nested_mobi = nested / "nested.mobi"
+            z_epub.write_text("x", encoding="utf-8")
+            a_pdb.write_text("x", encoding="utf-8")
+            unsupported.write_text("x", encoding="utf-8")
+            nested.mkdir()
+            nested_mobi.write_text("x", encoding="utf-8")
+
+            collected = cme.collect_import_files_from_folder(root)
+
+            self.assertEqual(collected, [a_pdb, z_epub])
+
+    def test_collect_import_files_uses_book_import_formats_as_source_of_truth(self):
+        configured_extensions = {extension for extension, _label in cme.BOOK_IMPORT_FORMATS}
+
+        self.assertTrue(configured_extensions)
+        self.assertTrue(all(extension.startswith(".") for extension in configured_extensions))
+
     def test_book_detail_metadata_defaults_series_fields_to_empty(self):
         detail = cme.BookDetailMetadata()
 

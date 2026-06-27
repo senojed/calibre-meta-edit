@@ -22,7 +22,7 @@ import urllib.request
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -297,6 +297,35 @@ class ImportApplyResult:
     backup_path: str = ""
 
 
+MULTIIMPORT_BATCH_STATUSES = (
+    "pending",
+    "analyzing",
+    "ready",
+    "needs_review",
+    "duplicate_warning",
+    "analysis_error",
+    "skipped",
+    "writing",
+    "written",
+    "write_error",
+)
+
+
+@dataclass
+class MultiImportBatchItem:
+    source_path: Path
+    display_name: str
+    checked_for_import: bool = False
+    status: str = "pending"
+    error_message: str = ""
+    analysis: ImportAnalysis | None = None
+    current_preview: ImportPreview | None = None
+    selected_candidate: ImportCandidate | None = None
+    duplicates: list[DuplicateCandidate] = field(default_factory=list)
+    write_result: ImportApplyResult | None = None
+    calibre_id: int | None = None
+
+
 @dataclass(frozen=True)
 class CoverOption:
     url: str
@@ -306,6 +335,46 @@ class CoverOption:
 
 def is_valid_import_preview(preview: ImportPreview) -> bool:
     return bool(preview.title.strip() and preview.authors.strip())
+
+
+def is_supported_import_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    suffix = path.suffix.lower()
+    return any(suffix == extension for extension, _label in BOOK_IMPORT_FORMATS)
+
+
+def collect_import_files_from_paths(paths: Iterable[Path]) -> list[Path]:
+    return sorted(
+        (path for path in paths if is_supported_import_file(path)),
+        key=lambda path: str(path).casefold(),
+    )
+
+
+def collect_import_files_from_folder(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return collect_import_files_from_paths(folder.iterdir())
+
+
+def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
+    recommended = analysis.recommended
+    if recommended is None or recommended.score < 100:
+        return False
+    if analysis.duplicates:
+        return False
+    if not is_valid_import_preview(analysis.preview):
+        return False
+    preview_url = analysis.preview.url.strip()
+    recommended_url = recommended.url.strip()
+    if not preview_url or not recommended_url or preview_url != recommended_url:
+        return False
+    hundred_score_urls = {
+        candidate.url.strip()
+        for candidate in analysis.candidates
+        if candidate.score >= 100 and candidate.url.strip()
+    }
+    return hundred_score_urls == {recommended_url}
 
 
 def _epub_opf_path(archive: zipfile.ZipFile) -> str:
