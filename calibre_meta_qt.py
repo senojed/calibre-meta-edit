@@ -78,6 +78,28 @@ def book_import_file_filter() -> str:
     return f"Knihy ({patterns});;{epub_label} (*.epub);;Vsechny soubory (*.*)"
 
 
+def multiimport_analysis_summary(items: Sequence[cme.MultiImportBatchItem]) -> str:
+    counts = {
+        status: sum(item.status == status for item in items)
+        for status in ("ready", "needs_review", "duplicate_warning", "analysis_error")
+    }
+    successful = counts["ready"] + counts["needs_review"] + counts["duplicate_warning"]
+    return "\n".join(
+        (
+            "Multiimport analyza dokoncena.",
+            "",
+            f"Podporovane soubory: {len(items)}",
+            f"Analyzovano uspesne: {successful}",
+            f"Pripraveno: {counts['ready']}",
+            f"Vyzaduje kontrolu: {counts['needs_review']}",
+            f"Varovani na duplicitu: {counts['duplicate_warning']}",
+            f"Chyby: {counts['analysis_error']}",
+            "",
+            "Nic nebylo importovano.",
+        )
+    )
+
+
 def filter_rows(
     rows: Sequence[cme.MatchRow],
     title: str = "",
@@ -1980,21 +2002,34 @@ if PYSIDE6_AVAILABLE:
             if not paths:
                 return
             files = cme.collect_import_files_from_paths([Path(path) for path in paths])
-            self._show_multiimport_selection_summary(files)
+            self.run_multiimport_analysis(files)
 
         def choose_multiimport_folder(self) -> None:
             folder = QFileDialog.getExistingDirectory(self, "Vyber slozku s knihami", "")
             if not folder:
                 return
             files = cme.collect_import_files_from_folder(Path(folder))
-            self._show_multiimport_selection_summary(files)
+            self.run_multiimport_analysis(files)
 
-        def _show_multiimport_selection_summary(self, files: Sequence[Path]) -> None:
+        def run_multiimport_analysis(
+            self,
+            files: Sequence[Path],
+            *,
+            analyze: Callable[[str], cme.ImportAnalysis] | None = None,
+        ) -> list[cme.MultiImportBatchItem]:
+            analyze_book = analyze or self._build_import_analyze_callable()
+            items = cme.build_multiimport_batch_items(files)
+            analyzed_items = cme.run_multiimport_batch_analysis(
+                items,
+                lambda path: analyze_book(str(path)),
+                precheck_safe_matches=False,
+            )
             QMessageBox.information(
                 self,
                 "Multiimport",
-                f"Nalezeno podporovanych souboru: {len(files)}",
+                multiimport_analysis_summary(analyzed_items),
             )
+            return analyzed_items
 
         def finish_import_analysis(self, analysis: object, error: str) -> None:
             """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""

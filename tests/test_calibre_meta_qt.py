@@ -32,6 +32,26 @@ class QtHelperTests(unittest.TestCase):
         self.assertIn("EPUB (*.epub)", filter_text)
         self.assertIn("Vsechny soubory (*.*)", filter_text)
 
+    def test_multiimport_analysis_summary_counts_final_statuses(self):
+        import calibre_meta_qt as qt
+
+        items = [
+            cme.MultiImportBatchItem(Path("ready.epub"), "ready.epub", status="ready"),
+            cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review"),
+            cme.MultiImportBatchItem(Path("duplicate.epub"), "duplicate.epub", status="duplicate_warning"),
+            cme.MultiImportBatchItem(Path("error.epub"), "error.epub", status="analysis_error"),
+        ]
+
+        summary = qt.multiimport_analysis_summary(items)
+
+        self.assertIn("Podporovane soubory: 4", summary)
+        self.assertIn("Analyzovano uspesne: 3", summary)
+        self.assertIn("Pripraveno: 1", summary)
+        self.assertIn("Vyzaduje kontrolu: 1", summary)
+        self.assertIn("Varovani na duplicitu: 1", summary)
+        self.assertIn("Chyby: 1", summary)
+        self.assertIn("Nic nebylo importovano.", summary)
+
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
 
@@ -1532,7 +1552,7 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.multiimport_folder_action.text(), "Vybrat slozku...")
         app.processEvents()
 
-    def test_multiimport_files_picker_uses_backend_collector_and_shows_count(self):
+    def test_multiimport_files_picker_collects_files_and_starts_batch_analysis(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -1545,16 +1565,16 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt.QFileDialog, "getOpenFileNames", return_value=(selected, "")) as picker,
             patch.object(cme, "collect_import_files_from_paths", return_value=collected) as collect,
-            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(window, "run_multiimport_analysis") as analyze,
         ):
             window.choose_multiimport_files()
 
         picker.assert_called_once_with(window, "Vyber knihy", "", qt.book_import_file_filter())
         collect.assert_called_once_with([Path(path) for path in selected])
-        self.assertIn("2", information.call_args.args[2])
+        analyze.assert_called_once_with(collected)
         app.processEvents()
 
-    def test_multiimport_folder_picker_uses_backend_collector_and_shows_count(self):
+    def test_multiimport_folder_picker_collects_files_and_starts_batch_analysis(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -1567,13 +1587,44 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt.QFileDialog, "getExistingDirectory", return_value=folder) as picker,
             patch.object(cme, "collect_import_files_from_folder", return_value=collected) as collect,
-            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(window, "run_multiimport_analysis") as analyze,
         ):
             window.choose_multiimport_folder()
 
         picker.assert_called_once_with(window, "Vyber slozku s knihami", "")
         collect.assert_called_once_with(Path(folder))
-        self.assertIn("1", information.call_args.args[2])
+        analyze.assert_called_once_with(collected)
+        app.processEvents()
+
+    def test_multiimport_analysis_reuses_single_import_analyzer_without_writing(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            return analysis
+
+        with (
+            patch.object(window, "_build_import_analyze_callable", return_value=analyze) as build_analyzer,
+            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            items = window.run_multiimport_analysis([Path("C:/books/book.epub")])
+
+        build_analyzer.assert_called_once_with()
+        self.assertEqual(calls, [str(Path("C:/books/book.epub"))])
+        self.assertEqual(items[0].status, "needs_review")
+        self.assertFalse(items[0].checked_for_import)
+        self.assertIn("Podporovane soubory: 1", information.call_args.args[2])
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
         app.processEvents()
 
     def test_review_tab_does_not_expose_original_publisher_control(self):
