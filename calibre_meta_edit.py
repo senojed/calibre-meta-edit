@@ -357,6 +357,10 @@ def collect_import_files_from_folder(folder: Path) -> list[Path]:
     return collect_import_files_from_paths(folder.iterdir())
 
 
+def build_multiimport_batch_items(paths: Iterable[Path]) -> list[MultiImportBatchItem]:
+    return [MultiImportBatchItem(source_path=path, display_name=path.name) for path in paths]
+
+
 def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
     recommended = analysis.recommended
     if recommended is None or recommended.score < 100:
@@ -375,6 +379,43 @@ def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
         if candidate.score >= 100 and candidate.url.strip()
     }
     return hundred_score_urls == {recommended_url}
+
+
+def run_multiimport_batch_analysis(
+    items: Iterable[MultiImportBatchItem],
+    analyze_one: Callable[[Path], ImportAnalysis],
+    *,
+    precheck_safe_matches: bool = False,
+) -> list[MultiImportBatchItem]:
+    batch = list(items)
+    for item in batch:
+        item.status = "analyzing"
+        item.error_message = ""
+        item.checked_for_import = False
+        try:
+            analysis = analyze_one(item.source_path)
+        except Exception as exc:
+            item.analysis = None
+            item.current_preview = None
+            item.selected_candidate = None
+            item.duplicates = []
+            item.error_message = str(exc) or type(exc).__name__
+            item.status = "analysis_error"
+            continue
+
+        item.analysis = analysis
+        item.current_preview = analysis.preview
+        item.selected_candidate = analysis.recommended
+        item.duplicates = list(analysis.duplicates)
+        safe_match = is_safe_multiimport_precheck(analysis)
+        if item.duplicates:
+            item.status = "duplicate_warning"
+        elif safe_match:
+            item.status = "ready"
+        else:
+            item.status = "needs_review"
+        item.checked_for_import = precheck_safe_matches and safe_match
+    return batch
 
 
 def _epub_opf_path(archive: zipfile.ZipFile) -> str:

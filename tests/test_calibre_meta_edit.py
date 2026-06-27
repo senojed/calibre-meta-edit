@@ -159,6 +159,105 @@ class TextAndUrlTests(unittest.TestCase):
 
         self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
 
+    def test_build_multiimport_batch_items_preserves_path_order_and_defaults(self):
+        paths = [Path("second.mobi"), Path("first.epub")]
+
+        items = cme.build_multiimport_batch_items(paths)
+
+        self.assertEqual([item.source_path for item in items], paths)
+        self.assertEqual([item.display_name for item in items], ["second.mobi", "first.epub"])
+        self.assertEqual([item.status for item in items], ["pending", "pending"])
+        self.assertEqual([item.checked_for_import for item in items], [False, False])
+
+    def test_run_multiimport_batch_analysis_processes_items_sequentially_and_stores_analysis(self):
+        paths = [Path("first.epub"), Path("second.mobi")]
+        items = cme.build_multiimport_batch_items(paths)
+        analyses = {
+            path: self._multiimport_analysis(
+                recommended=cme.ImportCandidate("databazeknih", path.stem, "Autor", f"https://dk/{index}", score=100),
+                preview=cme.ImportPreview(title=path.stem, authors="Autor", url=f"https://dk/{index}"),
+            )
+            for index, path in enumerate(paths, start=1)
+        }
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            self.assertEqual(items[len(calls) - 1].status, "analyzing")
+            return analyses[path]
+
+        result = cme.run_multiimport_batch_analysis(items, analyze)
+
+        self.assertEqual(calls, paths)
+        self.assertIs(result[0], items[0])
+        for item, path in zip(result, paths):
+            analysis = analyses[path]
+            self.assertIs(item.analysis, analysis)
+            self.assertIs(item.current_preview, analysis.preview)
+            self.assertIs(item.selected_candidate, analysis.recommended)
+            self.assertEqual(item.duplicates, analysis.duplicates)
+
+    def test_run_multiimport_batch_analysis_safe_match_is_ready_but_not_checked_by_default(self):
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: self._multiimport_analysis())
+
+        self.assertEqual(result[0].status, "ready")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_prechecks_safe_match_when_enabled(self):
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(
+            items,
+            lambda _path: self._multiimport_analysis(),
+            precheck_safe_matches=True,
+        )
+
+        self.assertEqual(result[0].status, "ready")
+        self.assertTrue(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_unsafe_match_needs_review(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=99)
+        analysis = self._multiimport_analysis(recommended=candidate)
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: analysis, precheck_safe_matches=True)
+
+        self.assertEqual(result[0].status, "needs_review")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_marks_duplicates_for_warning(self):
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", score=100, strong=True)
+        analysis = self._multiimport_analysis(duplicates=[duplicate])
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: analysis, precheck_safe_matches=True)
+
+        self.assertEqual(result[0].duplicates, [duplicate])
+        self.assertEqual(result[0].status, "duplicate_warning")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_records_error_and_continues(self):
+        paths = [Path("broken.epub"), Path("good.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            if path == paths[0]:
+                raise RuntimeError("analysis failed")
+            return self._multiimport_analysis()
+
+        result = cme.run_multiimport_batch_analysis(items, analyze, precheck_safe_matches=True)
+
+        self.assertEqual(calls, paths)
+        self.assertEqual(result[0].status, "analysis_error")
+        self.assertEqual(result[0].error_message, "analysis failed")
+        self.assertFalse(result[0].checked_for_import)
+        self.assertEqual(result[1].status, "ready")
+        self.assertTrue(result[1].checked_for_import)
+
     def test_is_supported_import_file_accepts_all_configured_formats(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
