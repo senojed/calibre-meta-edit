@@ -505,6 +505,59 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("analysis failed", dialog.detail_text.toPlainText())
         app.processEvents()
 
+    def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        ready = cme.MultiImportBatchItem(
+            Path("ready.epub"),
+            "ready.epub",
+            checked_for_import=True,
+            status="ready",
+        )
+        error = cme.MultiImportBatchItem(
+            Path("error.epub"),
+            "error.epub",
+            checked_for_import=True,
+            status="analysis_error",
+            error_message="failed",
+        )
+
+        dialog = qt.MultiImportResultsDialog([ready, error])
+
+        self.assertEqual(dialog.items_list.item(0).checkState(), Qt.CheckState.Checked)
+        self.assertEqual(dialog.items_list.item(1).checkState(), Qt.CheckState.Unchecked)
+        self.assertFalse(error.checked_for_import)
+        self.assertFalse(dialog.items_list.item(1).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
+        app.processEvents()
+
+    def test_multiimport_results_dialog_toggle_updates_model_summary_and_detail(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review")
+        dialog = qt.MultiImportResultsDialog([item])
+
+        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+        self.assertTrue(item.checked_for_import)
+        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
+        self.assertIn("Predvybrano: ano", dialog.items_list.item(0).text())
+        self.assertIn("Predvybrano: ano", dialog.detail_text.toPlainText())
+
+        dialog.items_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+
+        self.assertFalse(item.checked_for_import)
+        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
+        app.processEvents()
+
     def test_import_dialog_returns_preview_with_edited_title_author(self):
         # Dialog je zjednoduseny: uzivatel edituje jen nazev a autora.
         # Zbyle pole (publisher, comment, ...) se berou z puvodniho preview.

@@ -516,12 +516,25 @@ if PYSIDE6_AVAILABLE:
             root = QVBoxLayout(self)
             summary_label = QLabel(multiimport_analysis_summary(self.items))
             root.addWidget(summary_label)
+            self.selected_summary_label = QLabel()
+            root.addWidget(self.selected_summary_label)
 
             body = QHBoxLayout()
             root.addLayout(body, stretch=1)
             self.items_list = QListWidget()
             for item in self.items:
-                self.items_list.addItem(multiimport_item_row_text(item))
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                list_item = QListWidgetItem(multiimport_item_row_text(item))
+                if item.status == "analysis_error":
+                    list_item.setCheckState(Qt.CheckState.Unchecked)
+                    list_item.setFlags(list_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                else:
+                    list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    list_item.setCheckState(
+                        Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                    )
+                self.items_list.addItem(list_item)
             body.addWidget(self.items_list, stretch=1)
 
             self.detail_text = QTextEdit()
@@ -532,9 +545,37 @@ if PYSIDE6_AVAILABLE:
             self.close_button.clicked.connect(self.accept)
             root.addWidget(self.close_button)
 
+            self._updating_check_state = False
+            self.items_list.itemChanged.connect(self.update_item_checked)
             self.items_list.currentRowChanged.connect(self.show_item_details)
+            self.update_selected_summary()
             if self.items:
                 self.items_list.setCurrentRow(0)
+
+        def update_item_checked(self, list_item: QListWidgetItem) -> None:
+            if self._updating_check_state:
+                return
+            row = self.items_list.row(list_item)
+            if not 0 <= row < len(self.items):
+                return
+            item = self.items[row]
+            self._updating_check_state = True
+            try:
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                    list_item.setCheckState(Qt.CheckState.Unchecked)
+                else:
+                    item.checked_for_import = list_item.checkState() == Qt.CheckState.Checked
+                list_item.setText(multiimport_item_row_text(item))
+                self.update_selected_summary()
+                if self.items_list.currentRow() == row:
+                    self.show_item_details(row)
+            finally:
+                self._updating_check_state = False
+
+        def update_selected_summary(self) -> None:
+            selected = sum(item.checked_for_import for item in self.items)
+            self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):
