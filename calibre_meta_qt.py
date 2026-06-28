@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import importlib.util
 import io
 import json
@@ -12,7 +13,7 @@ import threading
 import webbrowser
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import calibre_meta_app as shared
 import calibre_meta_edit as cme
@@ -156,6 +157,58 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
     if item.error_message:
         lines.extend(("", f"Chyba: {item.error_message}"))
     return "\n".join(lines)
+
+
+MULTIIMPORT_EXPORT_COLUMNS = (
+    "file",
+    "status",
+    "status_label",
+    "checked_for_import",
+    "preview_title",
+    "preview_authors",
+    "preview_source",
+    "preview_url",
+    "recommended_title",
+    "recommended_authors",
+    "recommended_url",
+    "recommended_score",
+    "duplicate_count",
+    "error_message",
+)
+
+
+def multiimport_export_rows(items: Iterable[cme.MultiImportBatchItem]) -> list[dict[str, str]]:
+    rows = []
+    for item in items:
+        preview = item.current_preview
+        candidate = item.selected_candidate
+        rows.append(
+            {
+                "file": item.display_name,
+                "status": item.status,
+                "status_label": multiimport_status_label(item.status),
+                "checked_for_import": "true" if item.checked_for_import else "false",
+                "preview_title": preview.title if preview is not None else "",
+                "preview_authors": preview.authors if preview is not None else "",
+                "preview_source": preview.source if preview is not None else "",
+                "preview_url": preview.url if preview is not None else "",
+                "recommended_title": candidate.title if candidate is not None else "",
+                "recommended_authors": candidate.authors if candidate is not None else "",
+                "recommended_url": candidate.url if candidate is not None else "",
+                "recommended_score": str(candidate.score) if candidate is not None else "",
+                "duplicate_count": str(len(item.duplicates)),
+                "error_message": item.error_message,
+            }
+        )
+    return rows
+
+
+def write_multiimport_csv_report(path: Path, items: Iterable[cme.MultiImportBatchItem]) -> None:
+    rows = multiimport_export_rows(items)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=MULTIIMPORT_EXPORT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def filter_rows(
@@ -541,9 +594,15 @@ if PYSIDE6_AVAILABLE:
             self.detail_text.setReadOnly(True)
             body.addWidget(self.detail_text, stretch=2)
 
+            buttons = QHBoxLayout()
+            buttons.addStretch(1)
+            self.export_button = QPushButton("Exportovat CSV")
+            self.export_button.clicked.connect(self.export_csv)
+            buttons.addWidget(self.export_button)
             self.close_button = QPushButton("Zavrit")
             self.close_button.clicked.connect(self.accept)
-            root.addWidget(self.close_button)
+            buttons.addWidget(self.close_button)
+            root.addLayout(buttons)
 
             self._updating_check_state = False
             self.items_list.itemChanged.connect(self.update_item_checked)
@@ -576,6 +635,23 @@ if PYSIDE6_AVAILABLE:
         def update_selected_summary(self) -> None:
             selected = sum(item.checked_for_import for item in self.items)
             self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
+
+        def export_csv(self) -> None:
+            selected_path, _filter = QFileDialog.getSaveFileName(
+                self,
+                "Exportovat multiimport CSV",
+                "multiimport-report.csv",
+                "CSV soubory (*.csv)",
+            )
+            if not selected_path:
+                return
+            path = Path(selected_path)
+            try:
+                write_multiimport_csv_report(path, self.items)
+            except Exception as exc:
+                QMessageBox.warning(self, "Export CSV", f"Export se nepodaril:\n{exc}")
+                return
+            QMessageBox.information(self, "Export CSV", f"CSV ulozeno:\n{path}")
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):

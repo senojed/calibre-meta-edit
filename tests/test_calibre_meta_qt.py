@@ -1,5 +1,6 @@
 # Testy hlidaji Qt app helpery bez otevirani grafickeho okna.
 
+import csv
 import importlib.util
 import json
 import os
@@ -121,6 +122,66 @@ class QtHelperTests(unittest.TestCase):
         self.assertNotIn("duplicate_warning", text)
         self.assertIn("Kandidat / Autor K. / 95%", text)
         self.assertIn("Existujici / Autor E.", text)
+
+    def test_multiimport_export_rows_preserve_order_and_include_analysis_data(self):
+        import calibre_meta_qt as qt
+
+        candidate = cme.ImportCandidate("databazeknih", "Kandidat", "Autor K.", "https://dk/1", score=95)
+        items = [
+            cme.MultiImportBatchItem(
+                Path("first.epub"),
+                "first.epub",
+                checked_for_import=True,
+                status="ready",
+                current_preview=cme.ImportPreview(
+                    title="Příběh",
+                    authors="Autor",
+                    source="databazeknih",
+                    url="https://dk/1",
+                ),
+                selected_candidate=candidate,
+                duplicates=[cme.DuplicateCandidate(7, "Duplicitni", "Autor D.")],
+            ),
+            cme.MultiImportBatchItem(
+                Path("second.mobi"),
+                "second.mobi",
+                status="analysis_error",
+                error_message="network failed",
+            ),
+        ]
+
+        rows = qt.multiimport_export_rows(items)
+
+        self.assertEqual([row["file"] for row in rows], ["first.epub", "second.mobi"])
+        self.assertEqual(rows[0]["checked_for_import"], "true")
+        self.assertEqual(rows[0]["status"], "ready")
+        self.assertEqual(rows[0]["status_label"], "Připraveno")
+        self.assertEqual(rows[0]["preview_title"], "Příběh")
+        self.assertEqual(rows[0]["recommended_title"], "Kandidat")
+        self.assertEqual(rows[0]["recommended_score"], "95")
+        self.assertEqual(rows[0]["duplicate_count"], "1")
+        self.assertEqual(rows[1]["error_message"], "network failed")
+
+    def test_write_multiimport_csv_report_writes_utf8_header_and_rows(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(
+            Path("book.epub"),
+            "book.epub",
+            status="ready",
+            current_preview=cme.ImportPreview(title="Příběh", authors="Autor"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.csv"
+
+            qt.write_multiimport_csv_report(path, [item])
+
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                rows = list(reader)
+
+        self.assertEqual(reader.fieldnames, list(qt.MULTIIMPORT_EXPORT_COLUMNS))
+        self.assertEqual(rows[0]["preview_title"], "Příběh")
 
     def test_filter_rows_supports_title_author_status_source_type_sets(self):
         import calibre_meta_qt as qt
@@ -556,6 +617,72 @@ class QtImportTests(unittest.TestCase):
 
         self.assertFalse(item.checked_for_import)
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
+        app.processEvents()
+
+    def test_multiimport_results_dialog_exports_current_items(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub", status="ready")
+        dialog = qt.MultiImportResultsDialog([item])
+        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+        output_path = "C:/reports/multiimport.csv"
+
+        with (
+            patch.object(qt.QFileDialog, "getSaveFileName", return_value=(output_path, "")) as picker,
+            patch.object(qt, "write_multiimport_csv_report") as writer,
+            patch.object(qt.QMessageBox, "information") as information,
+        ):
+            dialog.export_csv()
+
+        self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
+        picker.assert_called_once_with(
+            dialog,
+            "Exportovat multiimport CSV",
+            "multiimport-report.csv",
+            "CSV soubory (*.csv)",
+        )
+        writer.assert_called_once_with(Path(output_path), dialog.items)
+        self.assertTrue(item.checked_for_import)
+        information.assert_called_once()
+        app.processEvents()
+
+    def test_multiimport_results_dialog_cancelled_export_does_not_write(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dialog = qt.MultiImportResultsDialog([])
+
+        with (
+            patch.object(qt.QFileDialog, "getSaveFileName", return_value=("", "")),
+            patch.object(qt, "write_multiimport_csv_report") as writer,
+        ):
+            dialog.export_csv()
+
+        writer.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_results_dialog_reports_export_error(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dialog = qt.MultiImportResultsDialog([])
+
+        with (
+            patch.object(qt.QFileDialog, "getSaveFileName", return_value=("C:/reports/report.csv", "")),
+            patch.object(qt, "write_multiimport_csv_report", side_effect=OSError("disk full")),
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            dialog.export_csv()
+
+        self.assertIn("disk full", warning.call_args.args[2])
         app.processEvents()
 
     def test_import_dialog_returns_preview_with_edited_title_author(self):
