@@ -78,6 +78,130 @@ class TextAndUrlTests(unittest.TestCase):
             messages=[],
         )
 
+    def _valid_checked_multiimport_item(self, name: str = "book.epub") -> cme.MultiImportBatchItem:
+        analysis = self._multiimport_analysis()
+        return cme.MultiImportBatchItem(
+            Path(name),
+            name,
+            checked_for_import=True,
+            status="ready",
+            analysis=analysis,
+            current_preview=analysis.preview,
+            selected_candidate=analysis.recommended,
+        )
+
+    def test_validate_multiimport_checked_items_reports_no_checked_items(self):
+        item = self._valid_checked_multiimport_item()
+        item.checked_for_import = False
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.valid_items, [])
+        self.assertEqual([issue.reason for issue in result.issues], ["no_checked_items"])
+        self.assertIsNone(result.issues[0].item)
+
+    def test_validate_multiimport_checked_items_accepts_ready_item(self):
+        item = self._valid_checked_multiimport_item()
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.valid_items, [item])
+        self.assertEqual(result.issues, [])
+
+    def test_validate_multiimport_checked_items_ignores_unchecked_ready_item(self):
+        checked = self._valid_checked_multiimport_item("checked.epub")
+        unchecked = self._valid_checked_multiimport_item("unchecked.epub")
+        unchecked.checked_for_import = False
+
+        result = cme.validate_multiimport_checked_items([checked, unchecked])
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.valid_items, [checked])
+
+    def test_validate_multiimport_checked_items_blocks_needs_review_status(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["status_not_ready"])
+
+    def test_validate_multiimport_checked_items_blocks_duplicate_warning(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Kniha", "Autor")]
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
+
+    def test_validate_multiimport_checked_items_blocks_analysis_error(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "analysis_error"
+        item.error_message = "failed"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["analysis_error"])
+
+    def test_validate_multiimport_checked_items_requires_analysis(self):
+        item = self._valid_checked_multiimport_item()
+        item.analysis = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_analysis"])
+
+    def test_validate_multiimport_checked_items_requires_preview(self):
+        item = self._valid_checked_multiimport_item()
+        item.current_preview = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_preview"])
+
+    def test_validate_multiimport_checked_items_requires_selected_candidate(self):
+        item = self._valid_checked_multiimport_item()
+        item.selected_candidate = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_candidate"])
+
+    def test_validate_multiimport_checked_items_requires_valid_preview(self):
+        item = self._valid_checked_multiimport_item()
+        item.current_preview = cme.ImportPreview(title="", authors="Autor")
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["invalid_preview"])
+
+    def test_validate_multiimport_checked_items_preserves_valid_order_in_mixed_batch(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        invalid = self._valid_checked_multiimport_item("invalid.epub")
+        invalid.status = "needs_review"
+        unchecked = self._valid_checked_multiimport_item("unchecked.epub")
+        unchecked.checked_for_import = False
+        second = self._valid_checked_multiimport_item("second.epub")
+
+        result = cme.validate_multiimport_checked_items([first, invalid, unchecked, second])
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.valid_items, [first, second])
+        self.assertEqual([(issue.item, issue.reason) for issue in result.issues], [(invalid, "status_not_ready")])
+
+    def test_validate_multiimport_checked_items_never_calls_write(self):
+        from unittest.mock import patch
+
+        item = self._valid_checked_multiimport_item()
+
+        with patch.object(cme, "apply_import_preview") as apply_preview:
+            cme.validate_multiimport_checked_items([item])
+
+        apply_preview.assert_not_called()
+
     def test_multiimport_batch_item_defaults(self):
         item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
 

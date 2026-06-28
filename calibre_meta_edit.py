@@ -327,6 +327,22 @@ class MultiImportBatchItem:
 
 
 @dataclass(frozen=True)
+class MultiImportValidationIssue:
+    item: MultiImportBatchItem | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class MultiImportValidationResult:
+    valid_items: list[MultiImportBatchItem]
+    issues: list[MultiImportValidationIssue]
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.valid_items) and not self.issues
+
+
+@dataclass(frozen=True)
 class CoverOption:
     url: str
     source: str
@@ -335,6 +351,39 @@ class CoverOption:
 
 def is_valid_import_preview(preview: ImportPreview) -> bool:
     return bool(preview.title.strip() and preview.authors.strip())
+
+
+def validate_multiimport_checked_items(
+    items: Iterable[MultiImportBatchItem],
+) -> MultiImportValidationResult:
+    checked_items = [item for item in items if item.checked_for_import]
+    if not checked_items:
+        return MultiImportValidationResult([], [MultiImportValidationIssue(None, "no_checked_items")])
+
+    valid_items = []
+    issues = []
+    for item in checked_items:
+        reason = ""
+        if item.status == "duplicate_warning" or item.duplicates:
+            reason = "duplicate_warning"
+        elif item.status == "analysis_error" or item.error_message:
+            reason = "analysis_error"
+        elif item.status != "ready":
+            reason = "status_not_ready"
+        elif item.analysis is None:
+            reason = "missing_analysis"
+        elif item.current_preview is None:
+            reason = "missing_preview"
+        elif item.selected_candidate is None:
+            reason = "missing_candidate"
+        elif not is_valid_import_preview(item.current_preview):
+            reason = "invalid_preview"
+
+        if reason:
+            issues.append(MultiImportValidationIssue(item, reason))
+        else:
+            valid_items.append(item)
+    return MultiImportValidationResult(valid_items, issues)
 
 
 def is_supported_import_file(path: Path) -> bool:
