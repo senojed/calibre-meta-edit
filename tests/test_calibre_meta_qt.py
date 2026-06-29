@@ -614,7 +614,8 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(dialog.items_list.count(), 4)
         self.assertTrue(dialog.detail_text.isReadOnly())
-        self.assertFalse(hasattr(dialog, "import_button"))
+        self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
+        self.assertFalse(dialog.import_button.isEnabled())
         self.assertIn("Ready", dialog.detail_text.toPlainText())
         dialog.items_list.setCurrentRow(2)
         self.assertIn("Duplicita", dialog.detail_text.toPlainText())
@@ -673,6 +674,37 @@ class QtImportTests(unittest.TestCase):
 
         self.assertFalse(item.checked_for_import)
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
+        app.processEvents()
+
+    def test_multiimport_results_dialog_future_import_button_is_disabled_and_inert(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        item = cme.MultiImportBatchItem(Path("ready.epub"), "ready.epub", status="ready")
+        dialog = qt.MultiImportResultsDialog([item], parent=window)
+
+        self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
+        self.assertFalse(dialog.import_button.isEnabled())
+        self.assertIn("Zatím nic neimportuje", dialog.import_button.toolTip())
+        self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
+        self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
+
+        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+        self.assertTrue(item.checked_for_import)
+        self.assertFalse(dialog.import_button.isEnabled())
+        with (
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            dialog.import_button.click()
+
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
         app.processEvents()
 
     def test_multiimport_results_dialog_exports_current_items(self):
@@ -769,7 +801,7 @@ class QtImportTests(unittest.TestCase):
             dialog.validate_selection()
 
         self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
-        self.assertFalse(hasattr(dialog, "import_button"))
+        self.assertFalse(dialog.import_button.isEnabled())
         validate.assert_called_once_with(dialog.items)
         self.assertTrue(item.checked_for_import)
         self.assertIn("Položka není ve stavu Připraveno.", information.call_args.args[2])

@@ -636,6 +636,12 @@ if PYSIDE6_AVAILABLE:
             self.export_button = QPushButton("Exportovat CSV")
             self.export_button.clicked.connect(self.export_csv)
             buttons.addWidget(self.export_button)
+            self.import_button = QPushButton("Importovat zaškrtnuté")
+            self.import_button.setEnabled(False)
+            self.import_button.setToolTip(
+                "Zápis bude doplněn v dalším kroku. Zatím nic neimportuje."
+            )
+            buttons.addWidget(self.import_button)
             self.close_button = QPushButton("Zavrit")
             self.close_button.clicked.connect(self.accept)
             buttons.addWidget(self.close_button)
