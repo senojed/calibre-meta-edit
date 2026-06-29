@@ -382,6 +382,53 @@ class TextAndUrlTests(unittest.TestCase):
         self.assertEqual(result[1].status, "ready")
         self.assertTrue(result[1].checked_for_import)
 
+    def test_run_multiimport_batch_analysis_reports_progress_after_success_and_error(self):
+        paths = [Path("broken.epub"), Path("good.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        progress = []
+
+        def analyze(path):
+            if path == paths[0]:
+                raise RuntimeError("analysis failed")
+            return self._multiimport_analysis()
+
+        result = cme.run_multiimport_batch_analysis(
+            items,
+            analyze,
+            progress_callback=lambda current, total, item: progress.append(
+                (current, total, item, item.status)
+            ),
+        )
+
+        self.assertEqual(
+            progress,
+            [
+                (1, 2, result[0], "analysis_error"),
+                (2, 2, result[1], "ready"),
+            ],
+        )
+
+    def test_run_multiimport_batch_analysis_propagates_progress_callback_error(self):
+        paths = [Path("first.epub"), Path("second.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        analyzed = []
+
+        def analyze(path):
+            analyzed.append(path)
+            return self._multiimport_analysis()
+
+        def report_progress(_current, _total, _item):
+            raise RuntimeError("progress failed")
+
+        with self.assertRaisesRegex(RuntimeError, "progress failed"):
+            cme.run_multiimport_batch_analysis(
+                items,
+                analyze,
+                progress_callback=report_progress,
+            )
+
+        self.assertEqual(analyzed, [paths[0]])
+
     def test_is_supported_import_file_accepts_all_configured_formats(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -569,6 +569,7 @@ if PYSIDE6_AVAILABLE:
         QMainWindow,
         QMenu,
         QMessageBox,
+        QProgressDialog,
         QListWidget,
         QListWidgetItem,
         QStyleFactory,
@@ -2363,11 +2364,36 @@ if PYSIDE6_AVAILABLE:
         ) -> list[cme.MultiImportBatchItem]:
             analyze_book = analyze or self._build_import_analyze_callable()
             items = cme.build_multiimport_batch_items(files)
-            analyzed_items = cme.run_multiimport_batch_analysis(
-                items,
-                lambda path: analyze_book(str(path)),
-                precheck_safe_matches=False,
+            progress = QProgressDialog(
+                "Připravuji multiimport analýzu...",
+                "",
+                0,
+                len(items),
+                self,
             )
+            progress.setCancelButton(None)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.show()
+
+            def update_progress(
+                current: int,
+                total: int,
+                item: cme.MultiImportBatchItem,
+            ) -> None:
+                progress.setLabelText(f"Analyzuji {current}/{total}: {item.display_name}")
+                progress.setValue(current)
+                QApplication.processEvents()
+
+            try:
+                analyzed_items = cme.run_multiimport_batch_analysis(
+                    items,
+                    lambda path: analyze_book(str(path)),
+                    precheck_safe_matches=False,
+                    progress_callback=update_progress,
+                )
+            finally:
+                progress.close()
             MultiImportResultsDialog(analyzed_items, parent=self).exec()
             return analyzed_items
 

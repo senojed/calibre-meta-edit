@@ -2185,6 +2185,8 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(window, "_build_import_analyze_callable", return_value=analyze) as build_analyzer,
+            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt.QApplication, "processEvents") as process_events,
             patch.object(qt, "MultiImportResultsDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
@@ -2195,6 +2197,20 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(calls, [str(Path("C:/books/book.epub"))])
         self.assertEqual(items[0].status, "needs_review")
         self.assertFalse(items[0].checked_for_import)
+        progress_dialog.assert_called_once_with(
+            "Připravuji multiimport analýzu...",
+            "",
+            0,
+            1,
+            window,
+        )
+        progress = progress_dialog.return_value
+        progress.setCancelButton.assert_called_once_with(None)
+        progress.setValue.assert_any_call(0)
+        progress.setValue.assert_any_call(1)
+        progress.setLabelText.assert_called_once_with("Analyzuji 1/1: book.epub")
+        progress.close.assert_called_once_with()
+        process_events.assert_called_once_with()
         results_dialog.assert_called_once_with(items, parent=window)
         results_dialog.return_value.exec.assert_called_once_with()
         apply_preview.assert_not_called()

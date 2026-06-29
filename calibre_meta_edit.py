@@ -435,9 +435,11 @@ def run_multiimport_batch_analysis(
     analyze_one: Callable[[Path], ImportAnalysis],
     *,
     precheck_safe_matches: bool = False,
+    progress_callback: Callable[[int, int, MultiImportBatchItem], None] | None = None,
 ) -> list[MultiImportBatchItem]:
     batch = list(items)
-    for item in batch:
+    total = len(batch)
+    for index, item in enumerate(batch, start=1):
         item.status = "analyzing"
         item.error_message = ""
         item.checked_for_import = False
@@ -450,20 +452,21 @@ def run_multiimport_batch_analysis(
             item.duplicates = []
             item.error_message = str(exc) or type(exc).__name__
             item.status = "analysis_error"
-            continue
-
-        item.analysis = analysis
-        item.current_preview = analysis.preview
-        item.selected_candidate = analysis.recommended
-        item.duplicates = list(analysis.duplicates)
-        safe_match = is_safe_multiimport_precheck(analysis)
-        if item.duplicates:
-            item.status = "duplicate_warning"
-        elif safe_match:
-            item.status = "ready"
         else:
-            item.status = "needs_review"
-        item.checked_for_import = precheck_safe_matches and safe_match
+            item.analysis = analysis
+            item.current_preview = analysis.preview
+            item.selected_candidate = analysis.recommended
+            item.duplicates = list(analysis.duplicates)
+            safe_match = is_safe_multiimport_precheck(analysis)
+            if item.duplicates:
+                item.status = "duplicate_warning"
+            elif safe_match:
+                item.status = "ready"
+            else:
+                item.status = "needs_review"
+            item.checked_for_import = precheck_safe_matches and safe_match
+        if progress_callback is not None:
+            progress_callback(index, total, item)
     return batch
 
 
