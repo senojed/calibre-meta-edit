@@ -117,6 +117,16 @@ def multiimport_status_label(status: str) -> str:
     return labels.get(status, f"Neznámý stav: {status}")
 
 
+def multiimport_compact_status_label(status: str) -> str:
+    labels = {
+        "ready": "OK",
+        "needs_review": "Kontrola",
+        "duplicate_warning": "Duplicita",
+        "analysis_error": "Chyba",
+    }
+    return labels.get(status, multiimport_status_label(status))
+
+
 def multiimport_validation_reason_label(reason: str) -> str:
     labels = {
         "no_checked_items": "Není vybraná žádná položka.",
@@ -621,21 +631,38 @@ if PYSIDE6_AVAILABLE:
 
             body = QHBoxLayout()
             root.addLayout(body, stretch=1)
-            self.items_list = QListWidget()
-            for item in self.items:
+            self.items_table = QTableWidget(len(self.items), 3)
+            self.items_table.setHorizontalHeaderLabels(("Import", "Stav", "Soubor"))
+            self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+            self.items_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+            self.items_table.verticalHeader().setVisible(False)
+            header = self.items_table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            for row, item in enumerate(self.items):
                 if item.status == "analysis_error":
                     item.checked_for_import = False
-                list_item = QListWidgetItem(multiimport_item_row_text(item))
+                checkbox_item = QTableWidgetItem()
+                checkbox_item.setFlags(
+                    (checkbox_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    & ~Qt.ItemFlag.ItemIsEditable
+                )
                 if item.status == "analysis_error":
-                    list_item.setCheckState(Qt.CheckState.Unchecked)
-                    list_item.setFlags(list_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-                else:
-                    list_item.setFlags(list_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    list_item.setCheckState(
-                        Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                    checkbox_item.setFlags(
+                        checkbox_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
                     )
-                self.items_list.addItem(list_item)
-            body.addWidget(self.items_list, stretch=1)
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                )
+                status_item = QTableWidgetItem(multiimport_compact_status_label(item.status))
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                file_item = QTableWidgetItem(item.display_name)
+                file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.items_table.setItem(row, 0, checkbox_item)
+                self.items_table.setItem(row, 1, status_item)
+                self.items_table.setItem(row, 2, file_item)
+            body.addWidget(self.items_table, stretch=1)
 
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
@@ -661,16 +688,18 @@ if PYSIDE6_AVAILABLE:
             root.addLayout(buttons)
 
             self._updating_check_state = False
-            self.items_list.itemChanged.connect(self.update_item_checked)
-            self.items_list.currentRowChanged.connect(self.show_item_details)
+            self.items_table.itemChanged.connect(self.update_item_checked)
+            self.items_table.currentCellChanged.connect(
+                lambda row, _column, _previous_row, _previous_column: self.show_item_details(row)
+            )
             self.update_selected_summary()
             if self.items:
-                self.items_list.setCurrentRow(0)
+                self.items_table.setCurrentCell(0, 0)
 
-        def update_item_checked(self, list_item: QListWidgetItem) -> None:
-            if self._updating_check_state:
+        def update_item_checked(self, table_item: QTableWidgetItem) -> None:
+            if self._updating_check_state or table_item.column() != 0:
                 return
-            row = self.items_list.row(list_item)
+            row = table_item.row()
             if not 0 <= row < len(self.items):
                 return
             item = self.items[row]
@@ -678,12 +707,11 @@ if PYSIDE6_AVAILABLE:
             try:
                 if item.status == "analysis_error":
                     item.checked_for_import = False
-                    list_item.setCheckState(Qt.CheckState.Unchecked)
+                    table_item.setCheckState(Qt.CheckState.Unchecked)
                 else:
-                    item.checked_for_import = list_item.checkState() == Qt.CheckState.Checked
-                list_item.setText(multiimport_item_row_text(item))
+                    item.checked_for_import = table_item.checkState() == Qt.CheckState.Checked
                 self.update_selected_summary()
-                if self.items_list.currentRow() == row:
+                if self.items_table.currentRow() == row:
                     self.show_item_details(row)
             finally:
                 self._updating_check_state = False
@@ -694,27 +722,26 @@ if PYSIDE6_AVAILABLE:
 
         def _set_bulk_selection(
             self,
-            should_check: Callable[[cme.MultiImportBatchItem, QListWidgetItem], bool],
+            should_check: Callable[[cme.MultiImportBatchItem, QTableWidgetItem], bool],
         ) -> None:
-            current_row = self.items_list.currentRow()
+            current_row = self.items_table.currentRow()
             self._updating_check_state = True
             try:
                 for row, item in enumerate(self.items):
-                    list_item = self.items_list.item(row)
-                    checked = should_check(item, list_item)
+                    checkbox_item = self.items_table.item(row, 0)
+                    checked = should_check(item, checkbox_item)
                     item.checked_for_import = checked
-                    list_item.setCheckState(
+                    checkbox_item.setCheckState(
                         Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
                     )
-                    list_item.setText(multiimport_item_row_text(item))
                 self.update_selected_summary()
                 self.show_item_details(current_row)
             finally:
                 self._updating_check_state = False
 
         def select_safe_items(self) -> None:
-            def is_safe(item: cme.MultiImportBatchItem, list_item: QListWidgetItem) -> bool:
-                if not list_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+            def is_safe(item: cme.MultiImportBatchItem, checkbox_item: QTableWidgetItem) -> bool:
+                if not checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
                     return False
                 candidate = replace(item, checked_for_import=True)
                 return cme.validate_multiimport_checked_items([candidate]).ok
@@ -723,13 +750,13 @@ if PYSIDE6_AVAILABLE:
 
         def select_all_items(self) -> None:
             self._set_bulk_selection(
-                lambda _item, list_item: bool(
-                    list_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                lambda _item, checkbox_item: bool(
+                    checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
                 )
             )
 
         def clear_selected_items(self) -> None:
-            self._set_bulk_selection(lambda _item, _list_item: False)
+            self._set_bulk_selection(lambda _item, _checkbox_item: False)
 
         def export_csv(self) -> None:
             selected_path, _filter = QFileDialog.getSaveFileName(

@@ -583,7 +583,7 @@ class QtImportTests(unittest.TestCase):
         app.processEvents()
 
     def test_multiimport_results_dialog_is_read_only_and_updates_details(self):
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QTableWidget
         import sys
         import calibre_meta_qt as qt
 
@@ -612,14 +612,31 @@ class QtImportTests(unittest.TestCase):
 
         dialog = qt.MultiImportResultsDialog(items)
 
-        self.assertEqual(dialog.items_list.count(), 4)
+        self.assertIsInstance(dialog.items_table, QTableWidget)
+        self.assertEqual(dialog.items_table.rowCount(), 4)
+        self.assertEqual(dialog.items_table.columnCount(), 3)
+        self.assertEqual(
+            [dialog.items_table.horizontalHeaderItem(column).text() for column in range(3)],
+            ["Import", "Stav", "Soubor"],
+        )
+        self.assertEqual(
+            [dialog.items_table.item(row, 1).text() for row in range(4)],
+            ["OK", "Kontrola", "Duplicita", "Chyba"],
+        )
+        displayed_rows = [
+            " | ".join(dialog.items_table.item(row, column).text() for column in range(3))
+            for row in range(4)
+        ]
+        self.assertTrue(all("Predvybrano" not in row for row in displayed_rows))
+        self.assertTrue(all("Předvybráno" not in row for row in displayed_rows))
+        self.assertTrue(all("Duplicity:" not in row for row in displayed_rows))
         self.assertTrue(dialog.detail_text.isReadOnly())
         self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
         self.assertFalse(dialog.import_button.isEnabled())
         self.assertIn("Ready", dialog.detail_text.toPlainText())
-        dialog.items_list.setCurrentRow(2)
+        dialog.items_table.setCurrentCell(2, 0)
         self.assertIn("Duplicita", dialog.detail_text.toPlainText())
-        dialog.items_list.setCurrentRow(3)
+        dialog.items_table.setCurrentCell(3, 0)
         self.assertIn("analysis failed", dialog.detail_text.toPlainText())
         app.processEvents()
 
@@ -646,10 +663,12 @@ class QtImportTests(unittest.TestCase):
 
         dialog = qt.MultiImportResultsDialog([ready, error])
 
-        self.assertEqual(dialog.items_list.item(0).checkState(), Qt.CheckState.Checked)
-        self.assertEqual(dialog.items_list.item(1).checkState(), Qt.CheckState.Unchecked)
+        self.assertEqual(dialog.items_table.item(0, 0).checkState(), Qt.CheckState.Checked)
+        self.assertEqual(dialog.items_table.item(1, 0).checkState(), Qt.CheckState.Unchecked)
         self.assertFalse(error.checked_for_import)
-        self.assertFalse(dialog.items_list.item(1).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertFalse(
+            dialog.items_table.item(1, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
+        )
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
         app.processEvents()
 
@@ -663,14 +682,13 @@ class QtImportTests(unittest.TestCase):
         item = cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review")
         dialog = qt.MultiImportResultsDialog([item])
 
-        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
 
         self.assertTrue(item.checked_for_import)
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
-        self.assertIn("Predvybrano: ano", dialog.items_list.item(0).text())
         self.assertIn("Predvybrano: ano", dialog.detail_text.toPlainText())
 
-        dialog.items_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
 
         self.assertFalse(item.checked_for_import)
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
@@ -693,7 +711,7 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
         self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
 
-        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
 
         self.assertTrue(item.checked_for_import)
         self.assertFalse(dialog.import_button.isEnabled())
@@ -794,10 +812,12 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual([item.checked_for_import for item in items], [True, False, False, False, False])
         self.assertEqual(
-            [dialog.items_list.item(row).checkState() for row in range(5)],
+            [dialog.items_table.item(row, 0).checkState() for row in range(5)],
             [Qt.CheckState.Checked] + [Qt.CheckState.Unchecked] * 4,
         )
-        self.assertFalse(dialog.items_list.item(3).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertFalse(
+            dialog.items_table.item(3, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
+        )
         self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
         self.assertFalse(dialog.import_button.isEnabled())
         apply_preview.assert_not_called()
@@ -836,7 +856,7 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual([item.checked_for_import for item in items], [False, False, False, False])
         self.assertTrue(
             all(
-                dialog.items_list.item(row).checkState() == Qt.CheckState.Unchecked
+                dialog.items_table.item(row, 0).checkState() == Qt.CheckState.Unchecked
                 for row in range(4)
             )
         )
@@ -855,7 +875,7 @@ class QtImportTests(unittest.TestCase):
         app = QApplication.instance() or QApplication(sys.argv)
         item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub", status="ready")
         dialog = qt.MultiImportResultsDialog([item])
-        dialog.items_list.item(0).setCheckState(Qt.CheckState.Checked)
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
         output_path = "C:/reports/multiimport.csv"
 
         with (
