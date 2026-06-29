@@ -117,6 +117,40 @@ def multiimport_status_label(status: str) -> str:
     return labels.get(status, f"Neznámý stav: {status}")
 
 
+def multiimport_validation_reason_label(reason: str) -> str:
+    labels = {
+        "no_checked_items": "Není vybraná žádná položka.",
+        "status_not_ready": "Položka není ve stavu Připraveno.",
+        "missing_analysis": "Chybí analýza.",
+        "missing_preview": "Chybí náhled importu.",
+        "missing_candidate": "Chybí vybraný kandidát.",
+        "duplicate_warning": "Položka má varování na duplicitu.",
+        "analysis_error": "Položka má chybu analýzy.",
+        "invalid_preview": "Náhled importu není validní.",
+    }
+    return labels.get(reason, f"Neznámý důvod: {reason}")
+
+
+def multiimport_validation_summary_text(result: cme.MultiImportValidationResult) -> str:
+    if result.ok:
+        return (
+            "Výběr je validní. "
+            f"Položek připravených k budoucímu importu: {len(result.valid_items)}. "
+            "Nic nebylo importováno."
+        )
+
+    lines = [
+        "Výběr není validní.",
+        f"Položek připravených k budoucímu importu: {len(result.valid_items)}",
+        f"Blokující problémy: {len(result.issues)}",
+    ]
+    for issue in result.issues:
+        prefix = f"{issue.item.display_name}: " if issue.item is not None else ""
+        lines.append(f"- {prefix}{multiimport_validation_reason_label(issue.reason)}")
+    lines.extend(("", "Nic nebylo importováno."))
+    return "\n".join(lines)
+
+
 def multiimport_item_row_text(item: cme.MultiImportBatchItem) -> str:
     parts = [
         item.display_name,
@@ -596,6 +630,9 @@ if PYSIDE6_AVAILABLE:
 
             buttons = QHBoxLayout()
             buttons.addStretch(1)
+            self.validate_button = QPushButton("Ověřit výběr")
+            self.validate_button.clicked.connect(self.validate_selection)
+            buttons.addWidget(self.validate_button)
             self.export_button = QPushButton("Exportovat CSV")
             self.export_button.clicked.connect(self.export_csv)
             buttons.addWidget(self.export_button)
@@ -652,6 +689,14 @@ if PYSIDE6_AVAILABLE:
                 QMessageBox.warning(self, "Export CSV", f"Export se nepodaril:\n{exc}")
                 return
             QMessageBox.information(self, "Export CSV", f"CSV ulozeno:\n{path}")
+
+        def validate_selection(self) -> None:
+            result = cme.validate_multiimport_checked_items(self.items)
+            QMessageBox.information(
+                self,
+                "Ověření výběru",
+                multiimport_validation_summary_text(result),
+            )
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):

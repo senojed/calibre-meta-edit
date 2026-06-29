@@ -72,6 +72,62 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual({status: qt.multiimport_status_label(status) for status in expected}, expected)
         self.assertEqual(qt.multiimport_status_label("future_status"), "Neznámý stav: future_status")
 
+    def test_multiimport_validation_reason_label_maps_known_reasons_and_falls_back(self):
+        import calibre_meta_qt as qt
+
+        expected = {
+            "no_checked_items": "Není vybraná žádná položka.",
+            "status_not_ready": "Položka není ve stavu Připraveno.",
+            "missing_analysis": "Chybí analýza.",
+            "missing_preview": "Chybí náhled importu.",
+            "missing_candidate": "Chybí vybraný kandidát.",
+            "duplicate_warning": "Položka má varování na duplicitu.",
+            "analysis_error": "Položka má chybu analýzy.",
+            "invalid_preview": "Náhled importu není validní.",
+        }
+
+        self.assertEqual({reason: qt.multiimport_validation_reason_label(reason) for reason in expected}, expected)
+        self.assertEqual(qt.multiimport_validation_reason_label("future_reason"), "Neznámý důvod: future_reason")
+
+    def test_multiimport_validation_summary_reports_valid_selection_without_import(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
+        result = cme.MultiImportValidationResult([item], [])
+
+        text = qt.multiimport_validation_summary_text(result)
+
+        self.assertIn("Výběr je validní", text)
+        self.assertIn("Položek připravených k budoucímu importu: 1", text)
+        self.assertIn("Nic nebylo importováno.", text)
+
+    def test_multiimport_validation_summary_reports_no_checked_items(self):
+        import calibre_meta_qt as qt
+
+        result = cme.MultiImportValidationResult(
+            [],
+            [cme.MultiImportValidationIssue(None, "no_checked_items")],
+        )
+
+        text = qt.multiimport_validation_summary_text(result)
+
+        self.assertIn("Není vybraná žádná položka.", text)
+        self.assertIn("Nic nebylo importováno.", text)
+
+    def test_multiimport_validation_summary_identifies_blocked_item(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
+        result = cme.MultiImportValidationResult(
+            [],
+            [cme.MultiImportValidationIssue(item, "status_not_ready")],
+        )
+
+        text = qt.multiimport_validation_summary_text(result)
+
+        self.assertIn("Blokující problémy: 1", text)
+        self.assertIn("book.epub: Položka není ve stavu Připraveno.", text)
+
     def test_multiimport_item_row_text_includes_state_duplicates_and_error(self):
         import calibre_meta_qt as qt
 
@@ -683,6 +739,42 @@ class QtImportTests(unittest.TestCase):
             dialog.export_csv()
 
         self.assertIn("disk full", warning.call_args.args[2])
+        app.processEvents()
+
+    def test_multiimport_results_dialog_validates_current_selection_without_writing(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        item = cme.MultiImportBatchItem(
+            Path("book.epub"),
+            "book.epub",
+            checked_for_import=True,
+            status="needs_review",
+        )
+        dialog = qt.MultiImportResultsDialog([item], parent=window)
+        result = cme.MultiImportValidationResult(
+            [],
+            [cme.MultiImportValidationIssue(item, "status_not_ready")],
+        )
+
+        with (
+            patch.object(cme, "validate_multiimport_checked_items", return_value=result) as validate,
+            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            dialog.validate_selection()
+
+        self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
+        self.assertFalse(hasattr(dialog, "import_button"))
+        validate.assert_called_once_with(dialog.items)
+        self.assertTrue(item.checked_for_import)
+        self.assertIn("Položka není ve stavu Připraveno.", information.call_args.args[2])
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
         app.processEvents()
 
     def test_import_dialog_returns_preview_with_edited_title_author(self):
