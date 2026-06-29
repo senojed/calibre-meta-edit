@@ -707,6 +707,145 @@ class QtImportTests(unittest.TestCase):
         run_apply.assert_not_called()
         app.processEvents()
 
+    def test_multiimport_results_dialog_exposes_bulk_selection_buttons(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        dialog = qt.MultiImportResultsDialog([])
+
+        self.assertEqual(dialog.select_safe_button.text(), "Vybrat 100 %")
+        self.assertEqual(dialog.select_all_button.text(), "Vybrat vše")
+        self.assertEqual(dialog.clear_selection_button.text(), "Vše odznačit")
+        self.assertFalse(dialog.import_button.isEnabled())
+        app.processEvents()
+
+    def test_multiimport_results_dialog_select_safe_checks_only_valid_ready_items(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        candidate = cme.ImportCandidate(
+            source="databazeknih",
+            title="Safe",
+            authors="Autor",
+            url="https://example.test/safe",
+            score=100,
+        )
+        preview = cme.ImportPreview(
+            title="Safe",
+            authors="Autor",
+            url="https://example.test/safe",
+        )
+        analysis = cme.ImportAnalysis(
+            epub_path="safe.epub",
+            signals=[],
+            candidates=[candidate],
+            recommended=candidate,
+            duplicates=[],
+            preview=preview,
+            messages=[],
+        )
+        items = [
+            cme.MultiImportBatchItem(
+                Path("safe.epub"),
+                "safe.epub",
+                status="ready",
+                analysis=analysis,
+                current_preview=preview,
+                selected_candidate=candidate,
+            ),
+            cme.MultiImportBatchItem(
+                Path("review.epub"),
+                "review.epub",
+                checked_for_import=True,
+                status="needs_review",
+            ),
+            cme.MultiImportBatchItem(
+                Path("duplicate.epub"),
+                "duplicate.epub",
+                checked_for_import=True,
+                status="duplicate_warning",
+            ),
+            cme.MultiImportBatchItem(
+                Path("error.epub"),
+                "error.epub",
+                checked_for_import=True,
+                status="analysis_error",
+            ),
+            cme.MultiImportBatchItem(
+                Path("invalid.epub"),
+                "invalid.epub",
+                checked_for_import=True,
+                status="ready",
+            ),
+        ]
+        dialog = qt.MultiImportResultsDialog(items, parent=window)
+
+        with (
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            dialog.select_safe_items()
+
+        self.assertEqual([item.checked_for_import for item in items], [True, False, False, False, False])
+        self.assertEqual(
+            [dialog.items_list.item(row).checkState() for row in range(5)],
+            [Qt.CheckState.Checked] + [Qt.CheckState.Unchecked] * 4,
+        )
+        self.assertFalse(dialog.items_list.item(3).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
+        self.assertFalse(dialog.import_button.isEnabled())
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_results_dialog_select_all_and_clear_update_selection_only(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        items = [
+            cme.MultiImportBatchItem(Path("ready.epub"), "ready.epub", status="ready"),
+            cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review"),
+            cme.MultiImportBatchItem(
+                Path("duplicate.epub"), "duplicate.epub", status="duplicate_warning"
+            ),
+            cme.MultiImportBatchItem(Path("error.epub"), "error.epub", status="analysis_error"),
+        ]
+        dialog = qt.MultiImportResultsDialog(items, parent=window)
+
+        with (
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            dialog.select_all_items()
+            self.assertEqual([item.checked_for_import for item in items], [True, True, True, False])
+            self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 3")
+            self.assertFalse(dialog.import_button.isEnabled())
+
+            dialog.clear_selected_items()
+
+        self.assertEqual([item.checked_for_import for item in items], [False, False, False, False])
+        self.assertTrue(
+            all(
+                dialog.items_list.item(row).checkState() == Qt.CheckState.Unchecked
+                for row in range(4)
+            )
+        )
+        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
+        self.assertFalse(dialog.import_button.isEnabled())
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
+        app.processEvents()
+
     def test_multiimport_results_dialog_exports_current_items(self):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication

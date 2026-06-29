@@ -606,6 +606,19 @@ if PYSIDE6_AVAILABLE:
             self.selected_summary_label = QLabel()
             root.addWidget(self.selected_summary_label)
 
+            selection_buttons = QHBoxLayout()
+            self.select_safe_button = QPushButton("Vybrat 100 %")
+            self.select_safe_button.clicked.connect(self.select_safe_items)
+            selection_buttons.addWidget(self.select_safe_button)
+            self.select_all_button = QPushButton("Vybrat vše")
+            self.select_all_button.clicked.connect(self.select_all_items)
+            selection_buttons.addWidget(self.select_all_button)
+            self.clear_selection_button = QPushButton("Vše odznačit")
+            self.clear_selection_button.clicked.connect(self.clear_selected_items)
+            selection_buttons.addWidget(self.clear_selection_button)
+            selection_buttons.addStretch(1)
+            root.addLayout(selection_buttons)
+
             body = QHBoxLayout()
             root.addLayout(body, stretch=1)
             self.items_list = QListWidget()
@@ -678,6 +691,45 @@ if PYSIDE6_AVAILABLE:
         def update_selected_summary(self) -> None:
             selected = sum(item.checked_for_import for item in self.items)
             self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
+
+        def _set_bulk_selection(
+            self,
+            should_check: Callable[[cme.MultiImportBatchItem, QListWidgetItem], bool],
+        ) -> None:
+            current_row = self.items_list.currentRow()
+            self._updating_check_state = True
+            try:
+                for row, item in enumerate(self.items):
+                    list_item = self.items_list.item(row)
+                    checked = should_check(item, list_item)
+                    item.checked_for_import = checked
+                    list_item.setCheckState(
+                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    )
+                    list_item.setText(multiimport_item_row_text(item))
+                self.update_selected_summary()
+                self.show_item_details(current_row)
+            finally:
+                self._updating_check_state = False
+
+        def select_safe_items(self) -> None:
+            def is_safe(item: cme.MultiImportBatchItem, list_item: QListWidgetItem) -> bool:
+                if not list_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    return False
+                candidate = replace(item, checked_for_import=True)
+                return cme.validate_multiimport_checked_items([candidate]).ok
+
+            self._set_bulk_selection(is_safe)
+
+        def select_all_items(self) -> None:
+            self._set_bulk_selection(
+                lambda _item, list_item: bool(
+                    list_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                )
+            )
+
+        def clear_selected_items(self) -> None:
+            self._set_bulk_selection(lambda _item, _list_item: False)
 
         def export_csv(self) -> None:
             selected_path, _filter = QFileDialog.getSaveFileName(
