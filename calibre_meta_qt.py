@@ -629,9 +629,16 @@ if PYSIDE6_AVAILABLE:
     class MultiImportResultsDialog(QDialog):
         """Read-only prehled vysledku analyzy vice knih."""
 
-        def __init__(self, items: Sequence[cme.MultiImportBatchItem], parent: QWidget | None = None) -> None:
+        def __init__(
+            self,
+            items: Sequence[cme.MultiImportBatchItem],
+            parent: QWidget | None = None,
+            *,
+            write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+        ) -> None:
             super().__init__(parent)
             self.items = list(items)
+            self.write_one = write_one or getattr(parent, "_write_multiimport_item", None)
             self.setWindowTitle("Vysledky multiimport analyzy")
             self.resize(900, 600)
 
@@ -704,9 +711,7 @@ if PYSIDE6_AVAILABLE:
             buttons.addWidget(self.export_button)
             self.import_button = QPushButton("Importovat zaškrtnuté")
             self.import_button.setEnabled(False)
-            self.import_button.setToolTip(
-                "Zápis bude doplněn v dalším kroku. Zatím nic neimportuje."
-            )
+            self.import_button.clicked.connect(self.import_checked_items)
             buttons.addWidget(self.import_button)
             self.close_button = QPushButton("Zavrit")
             self.close_button.clicked.connect(self.accept)
@@ -745,6 +750,24 @@ if PYSIDE6_AVAILABLE:
         def update_selected_summary(self) -> None:
             selected = sum(item.checked_for_import for item in self.items)
             self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
+            self.update_import_button_enabled()
+
+        def update_import_button_enabled(self) -> None:
+            enabled = self.write_one is not None and any(
+                item.checked_for_import
+                and cme.validate_multiimport_checked_items(
+                    [replace(item, checked_for_import=True)]
+                ).ok
+                for item in self.items
+            )
+            self.import_button.setEnabled(enabled)
+            if self.write_one is None:
+                tooltip = "Zápis není dostupný."
+            elif enabled:
+                tooltip = "Importuje vybrané připravené položky do Calibre."
+            else:
+                tooltip = "Vyberte alespoň jednu připravenou položku."
+            self.import_button.setToolTip(tooltip)
 
         def _set_bulk_selection(
             self,
@@ -808,6 +831,98 @@ if PYSIDE6_AVAILABLE:
                 "Ověření výběru",
                 multiimport_validation_summary_text(result),
             )
+
+        def refresh_item_row(self, item: cme.MultiImportBatchItem) -> None:
+            row = next(
+                (index for index, current in enumerate(self.items) if current is item),
+                -1,
+            )
+            if row < 0:
+                return
+            self._updating_check_state = True
+            try:
+                checkbox_item = self.items_table.item(row, 0)
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked
+                    if item.checked_for_import
+                    else Qt.CheckState.Unchecked
+                )
+                status_item = self.items_table.item(row, 1)
+                status_item.setText(multiimport_compact_status_label(item.status))
+                status_item.setToolTip(multiimport_status_tooltip(item.status))
+                if self.items_table.currentRow() == row:
+                    self.show_item_details(row)
+            finally:
+                self._updating_check_state = False
+            self.update_selected_summary()
+
+        def import_checked_items(self) -> None:
+            validation = cme.validate_multiimport_checked_items(self.items)
+            if not validation.ok:
+                QMessageBox.warning(
+                    self,
+                    "Multiimport",
+                    multiimport_validation_summary_text(validation),
+                )
+                return
+            if self.write_one is None:
+                QMessageBox.warning(self, "Multiimport", "Zápis není dostupný.")
+                return
+            answer = QMessageBox.question(
+                self,
+                "Potvrdit multiimport",
+                f"Naimportovat {len(validation.valid_items)} vybraných knih do Calibre?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+            progress = QProgressDialog(
+                "Připravuji zápis…",
+                "",
+                0,
+                len(validation.valid_items),
+                self,
+            )
+            progress.setWindowTitle("Průběh importu")
+            progress.setCancelButton(None)
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.setValue(0)
+            progress.show()
+            QApplication.processEvents()
+
+            def update_progress(
+                current: int,
+                total: int,
+                item: cme.MultiImportBatchItem,
+            ) -> None:
+                self.refresh_item_row(item)
+                progress.setLabelText(f"Importuji {current}/{total}: {item.display_name}")
+                progress.setValue(current)
+                QApplication.processEvents()
+
+            try:
+                summary = cme.run_multiimport_batch_write(
+                    self.items,
+                    self.write_one,
+                    progress_callback=update_progress,
+                )
+            finally:
+                progress.close()
+
+            outcome = "Úspěch" if summary.ok else "Dokončeno s chybami"
+            QMessageBox.information(
+                self,
+                "Výsledek multiimportu",
+                f"{outcome}\n\n"
+                f"Pokusů: {summary.attempted}\n"
+                f"Úspěšně: {summary.succeeded}\n"
+                f"Selhalo: {summary.failed}",
+            )
+            self.update_import_button_enabled()
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):
@@ -2380,6 +2495,28 @@ if PYSIDE6_AVAILABLE:
                 return
             files = cme.collect_import_files_from_folder(Path(folder))
             self.run_multiimport_analysis(files)
+
+        def _write_multiimport_item(
+            self,
+            preview: cme.ImportPreview,
+            source_path: Path,
+        ) -> cme.ImportApplyResult:
+            calibredb_path = cme.find_calibredb()
+            if not calibredb_path:
+                return cme.ImportApplyResult(
+                    book_id=0,
+                    status="failed",
+                    error="Nepodařilo se najít calibredb.",
+                )
+            return cme.apply_import_preview(
+                preview,
+                source_path,
+                library=self.library_path,
+                calibredb_path=calibredb_path,
+                quit_func=lambda force: shared.quit_calibre(allow_force=force),
+                allow_force=True,
+                matches_path=self.matches_path,
+            )
 
         def run_multiimport_analysis(
             self,
