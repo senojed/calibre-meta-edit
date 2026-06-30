@@ -187,6 +187,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.multiimport_item_detail_text(item)
 
+        self.assertNotIn("Soubor:", text)
         self.assertIn("Nazev: Nahled", text)
         self.assertIn("Autori: Autor N.", text)
         self.assertIn("Zdroj: databazeknih", text)
@@ -195,6 +196,33 @@ class QtHelperTests(unittest.TestCase):
         self.assertNotIn("duplicate_warning", text)
         self.assertIn("Kandidat / Autor K. / 95%", text)
         self.assertIn("Existujici / Autor E.", text)
+
+    def test_multiimport_compact_status_labels_are_visually_distinct(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(
+            {
+                status: qt.multiimport_compact_status_label(status)
+                for status in (
+                    "ready",
+                    "needs_review",
+                    "duplicate_warning",
+                    "analysis_error",
+                    "writing",
+                    "written",
+                    "write_error",
+                )
+            },
+            {
+                "ready": "✓ OK",
+                "needs_review": "👁 Kontrola",
+                "duplicate_warning": "⧉ Duplicita",
+                "analysis_error": "✕ Chyba",
+                "writing": "↻ Zápis",
+                "written": "✓ Hotovo",
+                "write_error": "✕ Chyba zápisu",
+            },
+        )
 
     def test_multiimport_export_rows_preserve_order_and_include_analysis_data(self):
         import calibre_meta_qt as qt
@@ -638,7 +666,7 @@ class QtImportTests(unittest.TestCase):
         )
         self.assertEqual(
             [dialog.items_table.item(row, 1).text() for row in range(4)],
-            ["OK", "Kontrola", "Duplicita", "Chyba"],
+            ["✓ OK", "👁 Kontrola", "⧉ Duplicita", "✕ Chyba"],
         )
         displayed_rows = [
             " | ".join(dialog.items_table.item(row, column).text() for column in range(3))
@@ -655,6 +683,27 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("Duplicita", dialog.detail_text.toPlainText())
         dialog.items_table.setCurrentCell(3, 0)
         self.assertIn("analysis failed", dialog.detail_text.toPlainText())
+        app.processEvents()
+
+    def test_dark_theme_uses_palette_colors_for_table_text(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "dark"
+        window.apply_theme()
+
+        style = window.styleSheet()
+        self.assertIn(
+            "QTableWidget { gridline-color: palette(mid); "
+            "alternate-background-color: palette(alternate-base); "
+            "color: palette(text); background: palette(base); }",
+            style,
+        )
+        self.assertIn("QTableWidget::item { color: palette(text); }", style)
+        self.assertNotIn("QTableWidget::item { color: #111111; }", style)
         app.processEvents()
 
     def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
@@ -2226,6 +2275,9 @@ class QtImportWiringTests(unittest.TestCase):
         )
         progress = progress_dialog.return_value
         progress.setCancelButton.assert_called_once_with(None)
+        progress.setMinimumDuration.assert_called_once_with(0)
+        progress.setAutoClose.assert_called_once_with(False)
+        progress.setAutoReset.assert_called_once_with(False)
         progress.setValue.assert_any_call(0)
         progress.setValue.assert_any_call(1)
         progress.setLabelText.assert_called_once_with("Analyzuji 1/1: book.epub")

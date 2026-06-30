@@ -128,10 +128,13 @@ def multiimport_status_label(status: str) -> str:
 
 def multiimport_compact_status_label(status: str) -> str:
     labels = {
-        "ready": "OK",
-        "needs_review": "Kontrola",
-        "duplicate_warning": "Duplicita",
-        "analysis_error": "Chyba",
+        "ready": "✓ OK",
+        "needs_review": "👁 Kontrola",
+        "duplicate_warning": "⧉ Duplicita",
+        "analysis_error": "✕ Chyba",
+        "writing": "↻ Zápis",
+        "written": "✓ Hotovo",
+        "write_error": "✕ Chyba zápisu",
     }
     return labels.get(status, multiimport_status_label(status))
 
@@ -185,7 +188,6 @@ def multiimport_item_row_text(item: cme.MultiImportBatchItem) -> str:
 def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
     preview = item.current_preview or cme.ImportPreview()
     lines = [
-        f"Soubor: {item.display_name}",
         f"Stav: {multiimport_status_label(item.status)}",
         f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
         "",
@@ -2402,6 +2404,8 @@ if PYSIDE6_AVAILABLE:
             )
             progress.setCancelButton(None)
             progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
             progress.setValue(0)
             progress.show()
 
@@ -2736,8 +2740,8 @@ if PYSIDE6_AVAILABLE:
                 }
                 QLabel#coverStatus { font-weight: 700; padding: 4px; border-radius: 3px; background: #eeeeee; color: #111111; }
                 QLabel#coverImage { border: 1px solid #b8b8b8; background: #fafafa; color: #777777; }
-                QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
-                QTableWidget::item { color: #111111; }
+                QTableWidget { gridline-color: palette(mid); alternate-background-color: palette(alternate-base); color: palette(text); background: palette(base); }
+                QTableWidget::item { color: palette(text); }
                 QTableWidget::item:selected, QTableWidget::item:selected:!active {
                     background: #0d6efd;
                     color: #ffffff;
