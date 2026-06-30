@@ -343,6 +343,18 @@ class MultiImportValidationResult:
 
 
 @dataclass(frozen=True)
+class MultiImportWriteSummary:
+    validation: MultiImportValidationResult
+    attempted: int
+    succeeded: int
+    failed: int
+
+    @property
+    def ok(self) -> bool:
+        return self.attempted > 0 and self.failed == 0 and self.validation.ok
+
+
+@dataclass(frozen=True)
 class CoverOption:
     url: str
     source: str
@@ -384,6 +396,47 @@ def validate_multiimport_checked_items(
         else:
             valid_items.append(item)
     return MultiImportValidationResult(valid_items, issues)
+
+
+def run_multiimport_batch_write(
+    items: Iterable[MultiImportBatchItem],
+    write_one: Callable[[ImportPreview, Path], ImportApplyResult],
+    *,
+    progress_callback: Callable[[int, int, MultiImportBatchItem], None] | None = None,
+) -> MultiImportWriteSummary:
+    batch = list(items)
+    validation = validate_multiimport_checked_items(batch)
+    if not validation.ok:
+        return MultiImportWriteSummary(validation, attempted=0, succeeded=0, failed=0)
+
+    succeeded = 0
+    failed = 0
+    total = len(validation.valid_items)
+    for index, item in enumerate(validation.valid_items, start=1):
+        item.status = "writing"
+        try:
+            result = write_one(item.current_preview, item.source_path)
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            result = ImportApplyResult(book_id=0, status="failed", error=error)
+        item.write_result = result
+        item.calibre_id = result.book_id if result.book_id > 0 else None
+        if result.status == "updated":
+            item.status = "written"
+            succeeded += 1
+        else:
+            item.status = "write_error"
+            failed += 1
+        item.checked_for_import = False
+        if progress_callback is not None:
+            progress_callback(index, total, item)
+
+    return MultiImportWriteSummary(
+        validation,
+        attempted=total,
+        succeeded=succeeded,
+        failed=failed,
+    )
 
 
 def is_supported_import_file(path: Path) -> bool:

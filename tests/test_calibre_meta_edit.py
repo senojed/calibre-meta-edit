@@ -202,6 +202,211 @@ class TextAndUrlTests(unittest.TestCase):
 
         apply_preview.assert_not_called()
 
+    def test_run_multiimport_batch_write_blocks_entire_batch_when_checked_item_is_invalid(self):
+        from unittest.mock import Mock
+
+        valid = self._valid_checked_multiimport_item("valid.epub")
+        invalid = self._valid_checked_multiimport_item("review.epub")
+        invalid.status = "needs_review"
+        existing_result = cme.ImportApplyResult(book_id=9, status="updated")
+        valid.write_result = existing_result
+        valid.calibre_id = 9
+        writer = Mock()
+        progress = Mock()
+
+        summary = cme.run_multiimport_batch_write(
+            [valid, invalid], writer, progress_callback=progress
+        )
+
+        self.assertFalse(summary.validation.ok)
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (0, 0, 0))
+        self.assertEqual([valid.status, invalid.status], ["ready", "needs_review"])
+        self.assertEqual([valid.checked_for_import, invalid.checked_for_import], [True, True])
+        self.assertIs(valid.write_result, existing_result)
+        self.assertEqual(valid.calibre_id, 9)
+        writer.assert_not_called()
+        progress.assert_not_called()
+
+    def test_run_multiimport_batch_write_writes_checked_valid_items_in_order(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        ignored = self._valid_checked_multiimport_item("ignored.epub")
+        ignored.checked_for_import = False
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+        items_by_path = {item.source_path: item for item in (first, second)}
+
+        def write_one(preview, path):
+            self.assertEqual(items_by_path[path].status, "writing")
+            calls.append((preview, path))
+            return cme.ImportApplyResult(book_id=len(calls), status="updated")
+
+        summary = cme.run_multiimport_batch_write([first, ignored, second], write_one)
+
+        self.assertEqual([path for _preview, path in calls], [first.source_path, second.source_path])
+        self.assertEqual(summary.attempted, 2)
+        self.assertEqual(ignored.status, "ready")
+        self.assertFalse(ignored.checked_for_import)
+
+    def test_run_multiimport_batch_write_records_success(self):
+        item = self._valid_checked_multiimport_item()
+        result = cme.ImportApplyResult(book_id=42, status="updated")
+
+        summary = cme.run_multiimport_batch_write([item], lambda _preview, _path: result)
+
+        self.assertTrue(summary.ok)
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (1, 1, 0))
+        self.assertEqual(item.status, "written")
+        self.assertIs(item.write_result, result)
+        self.assertEqual(item.calibre_id, 42)
+        self.assertFalse(item.checked_for_import)
+
+    def test_run_multiimport_batch_write_records_returned_failure_and_continues(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        results = iter(
+            [
+                cme.ImportApplyResult(book_id=0, status="failed", error="write failed"),
+                cme.ImportApplyResult(book_id=12, status="updated"),
+            ]
+        )
+
+        summary = cme.run_multiimport_batch_write(
+            [first, second], lambda _preview, _path: next(results)
+        )
+
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (2, 1, 1))
+        self.assertEqual([first.status, second.status], ["write_error", "written"])
+        self.assertEqual([first.calibre_id, second.calibre_id], [None, 12])
+        self.assertEqual(first.write_result.error, "write failed")
+
+    def test_run_multiimport_batch_write_records_writer_exception_and_continues(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+
+        def write_one(_preview, path):
+            calls.append(path)
+            if path == first.source_path:
+                raise RuntimeError("writer exploded")
+            return cme.ImportApplyResult(book_id=13, status="updated")
+
+        summary = cme.run_multiimport_batch_write([first, second], write_one)
+
+        self.assertEqual(calls, [first.source_path, second.source_path])
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (2, 1, 1))
+        self.assertEqual(first.status, "write_error")
+        self.assertEqual(first.write_result.error, "writer exploded")
+        self.assertEqual(second.status, "written")
+
+    def test_run_multiimport_batch_write_blocks_duplicate_warning(self):
+        from unittest.mock import Mock
+
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Kniha", "Autor")]
+        writer = Mock()
+
+        summary = cme.run_multiimport_batch_write([item], writer)
+
+        self.assertEqual(summary.attempted, 0)
+        self.assertEqual(item.status, "duplicate_warning")
+        self.assertTrue(item.checked_for_import)
+        writer.assert_not_called()
+
+    def test_run_multiimport_batch_write_blocks_analysis_error(self):
+        from unittest.mock import Mock
+
+        item = self._valid_checked_multiimport_item()
+        item.status = "analysis_error"
+        item.error_message = "analysis failed"
+        writer = Mock()
+
+        summary = cme.run_multiimport_batch_write([item], writer)
+
+        self.assertEqual(summary.attempted, 0)
+        self.assertEqual(item.status, "analysis_error")
+        self.assertTrue(item.checked_for_import)
+        writer.assert_not_called()
+
+    def test_run_multiimport_batch_write_reports_progress_after_final_state(self):
+        item = self._valid_checked_multiimport_item()
+        result = cme.ImportApplyResult(book_id=42, status="updated")
+        progress = []
+
+        cme.run_multiimport_batch_write(
+            [item],
+            lambda _preview, _path: result,
+            progress_callback=lambda current, total, current_item: progress.append(
+                (
+                    current,
+                    total,
+                    current_item,
+                    current_item.status,
+                    current_item.write_result,
+                    current_item.calibre_id,
+                    current_item.checked_for_import,
+                )
+            ),
+        )
+
+        self.assertEqual(progress, [(1, 1, item, "written", result, 42, False)])
+
+    def test_run_multiimport_batch_write_propagates_progress_callback_error(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+
+        def write_one(_preview, path):
+            calls.append(path)
+            return cme.ImportApplyResult(book_id=len(calls), status="updated")
+
+        def report_progress(_current, _total, _item):
+            raise RuntimeError("progress failed")
+
+        with self.assertRaisesRegex(RuntimeError, "progress failed"):
+            cme.run_multiimport_batch_write(
+                [first, second], write_one, progress_callback=report_progress
+            )
+
+        self.assertEqual(calls, [first.source_path])
+        self.assertEqual(first.status, "written")
+        self.assertEqual(second.status, "ready")
+
+    def test_run_multiimport_batch_write_does_not_infer_eligibility_from_candidate_score(self):
+        item = self._valid_checked_multiimport_item()
+        item.selected_candidate = cme.ImportCandidate(
+            "databazeknih", "Kniha", "Autor", "https://dk/low", score=1
+        )
+        calls = []
+
+        summary = cme.run_multiimport_batch_write(
+            [item],
+            lambda preview, path: (
+                calls.append((preview, path))
+                or cme.ImportApplyResult(book_id=7, status="updated")
+            ),
+        )
+
+        self.assertEqual(summary.succeeded, 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_run_multiimport_batch_write_does_not_call_should_auto_import(self):
+        from unittest.mock import patch
+
+        item = self._valid_checked_multiimport_item()
+        with patch.object(
+            cme,
+            "should_auto_import",
+            side_effect=AssertionError("must not be called"),
+            create=True,
+        ):
+            summary = cme.run_multiimport_batch_write(
+                [item],
+                lambda _preview, _path: cme.ImportApplyResult(book_id=8, status="updated"),
+            )
+
+        self.assertEqual(summary.succeeded, 1)
+
     def test_multiimport_batch_item_defaults(self):
         item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
 
