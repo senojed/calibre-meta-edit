@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import os
+import socket
 import threading
 import webbrowser
 from dataclasses import replace
@@ -77,6 +78,14 @@ def book_import_file_filter() -> str:
     patterns = " ".join("*" + extension for extension, _label in sorted(cme.BOOK_IMPORT_FORMATS))
     epub_label = next(label for extension, label in cme.BOOK_IMPORT_FORMATS if extension == ".epub")
     return f"Knihy ({patterns});;{epub_label} (*.epub);;Vsechny soubory (*.*)"
+
+
+def is_probably_online(timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection(("1.1.1.1", 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def multiimport_analysis_summary(items: Sequence[cme.MultiImportBatchItem]) -> str:
@@ -2361,9 +2370,29 @@ if PYSIDE6_AVAILABLE:
             files: Sequence[Path],
             *,
             analyze: Callable[[str], cme.ImportAnalysis] | None = None,
+            connectivity_check: Callable[[], bool] | None = None,
         ) -> list[cme.MultiImportBatchItem]:
-            analyze_book = analyze or self._build_import_analyze_callable()
             items = cme.build_multiimport_batch_items(files)
+            if items:
+                check_online = connectivity_check or is_probably_online
+                try:
+                    online = bool(check_online())
+                except Exception:
+                    online = False
+                if not online:
+                    answer = QMessageBox.question(
+                        self,
+                        "Bez připojení k internetu",
+                        "Zdá se, že počítač není online. Online vyhledávání metadat může "
+                        "selhat nebo vrátit neúplné výsledky.\n\n"
+                        "Chcete v analýze pokračovat?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if answer != QMessageBox.StandardButton.Yes:
+                        return items
+
+            analyze_book = analyze or self._build_import_analyze_callable()
             progress = QProgressDialog(
                 "Připravuji multiimport analýzu...",
                 "",

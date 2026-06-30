@@ -33,6 +33,23 @@ class QtHelperTests(unittest.TestCase):
         self.assertIn("EPUB (*.epub)", filter_text)
         self.assertIn("Vsechny soubory (*.*)", filter_text)
 
+    def test_is_probably_online_uses_short_generic_socket_probe(self):
+        import calibre_meta_qt as qt
+
+        with patch.object(qt.socket, "create_connection") as create_connection:
+            result = qt.is_probably_online()
+
+        self.assertTrue(result)
+        create_connection.assert_called_once_with(("1.1.1.1", 443), timeout=1.0)
+
+    def test_is_probably_online_returns_false_for_socket_error(self):
+        import calibre_meta_qt as qt
+
+        with patch.object(qt.socket, "create_connection", side_effect=OSError("offline")):
+            result = qt.is_probably_online()
+
+        self.assertFalse(result)
+
     def test_multiimport_analysis_summary_counts_final_statuses(self):
         import calibre_meta_qt as qt
 
@@ -2191,7 +2208,10 @@ class QtImportWiringTests(unittest.TestCase):
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
-            items = window.run_multiimport_analysis([Path("C:/books/book.epub")])
+            items = window.run_multiimport_analysis(
+                [Path("C:/books/book.epub")],
+                connectivity_check=lambda: True,
+            )
 
         build_analyzer.assert_called_once_with()
         self.assertEqual(calls, [str(Path("C:/books/book.epub"))])
@@ -2215,6 +2235,117 @@ class QtImportWiringTests(unittest.TestCase):
         results_dialog.return_value.exec.assert_called_once_with()
         apply_preview.assert_not_called()
         run_apply.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_analysis_offline_continue_runs_progress_and_results(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        analysis = self._make_analysis()
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            return analysis
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ) as question,
+            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt.QApplication, "processEvents"),
+            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+            patch.object(cme, "apply_import_preview") as apply_preview,
+            patch.object(window, "run_import_apply") as run_apply,
+        ):
+            items = window.run_multiimport_analysis(
+                [Path("C:/books/book.epub")],
+                analyze=analyze,
+                connectivity_check=lambda: False,
+            )
+
+        question.assert_called_once_with(
+            window,
+            "Bez připojení k internetu",
+            "Zdá se, že počítač není online. Online vyhledávání metadat může selhat "
+            "nebo vrátit neúplné výsledky.\n\nChcete v analýze pokračovat?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        self.assertEqual(calls, [str(Path("C:/books/book.epub"))])
+        progress_dialog.assert_called_once()
+        results_dialog.assert_called_once_with(items, parent=window)
+        results_dialog.return_value.exec.assert_called_once_with()
+        apply_preview.assert_not_called()
+        run_apply.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_analysis_offline_cancel_stops_before_progress_and_analysis(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        calls = []
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as question,
+            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+        ):
+            items = window.run_multiimport_analysis(
+                [Path("C:/books/book.epub")],
+                analyze=lambda path: calls.append(path),
+                connectivity_check=lambda: False,
+            )
+
+        question.assert_called_once()
+        self.assertEqual(calls, [])
+        self.assertEqual([item.status for item in items], ["pending"])
+        progress_dialog.assert_not_called()
+        results_dialog.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_analysis_connectivity_error_uses_offline_warning(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        def fail_check():
+            raise RuntimeError("probe failed")
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as question,
+            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+        ):
+            items = window.run_multiimport_analysis(
+                [Path("C:/books/book.epub")],
+                analyze=lambda _path: self._make_analysis(),
+                connectivity_check=fail_check,
+            )
+
+        question.assert_called_once()
+        self.assertEqual([item.status for item in items], ["pending"])
+        progress_dialog.assert_not_called()
+        results_dialog.assert_not_called()
         app.processEvents()
 
     def test_review_tab_does_not_expose_original_publisher_control(self):
