@@ -128,13 +128,26 @@ def multiimport_status_label(status: str) -> str:
 
 def multiimport_compact_status_label(status: str) -> str:
     labels = {
-        "ready": "✓ OK",
-        "needs_review": "👁 Kontrola",
-        "duplicate_warning": "⧉ Duplicita",
-        "analysis_error": "✕ Chyba",
-        "writing": "↻ Zápis",
-        "written": "✓ Hotovo",
-        "write_error": "✕ Chyba zápisu",
+        "ready": "✓",
+        "needs_review": "👁",
+        "duplicate_warning": "⧉",
+        "analysis_error": "✕",
+        "writing": "↻",
+        "written": "✓",
+        "write_error": "✕",
+    }
+    return labels.get(status, multiimport_status_label(status))
+
+
+def multiimport_status_tooltip(status: str) -> str:
+    labels = {
+        "ready": "OK",
+        "needs_review": "Kontrola",
+        "duplicate_warning": "Duplicita",
+        "analysis_error": "Chyba",
+        "writing": "Zápis",
+        "written": "Hotovo",
+        "write_error": "Chyba zápisu",
     }
     return labels.get(status, multiimport_status_label(status))
 
@@ -668,6 +681,7 @@ if PYSIDE6_AVAILABLE:
                     Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
                 )
                 status_item = QTableWidgetItem(multiimport_compact_status_label(item.status))
+                status_item.setToolTip(multiimport_status_tooltip(item.status))
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 file_item = QTableWidgetItem(item.display_name)
                 file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -2396,18 +2410,20 @@ if PYSIDE6_AVAILABLE:
 
             analyze_book = analyze or self._build_import_analyze_callable()
             progress = QProgressDialog(
-                "Připravuji multiimport analýzu...",
+                "Připravuji analýzu…",
                 "",
                 0,
                 len(items),
                 self,
             )
+            progress.setWindowTitle("Průběh načítání")
             progress.setCancelButton(None)
             progress.setMinimumDuration(0)
             progress.setAutoClose(False)
             progress.setAutoReset(False)
             progress.setValue(0)
             progress.show()
+            QApplication.processEvents()
 
             def update_progress(
                 current: int,

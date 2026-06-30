@@ -214,13 +214,40 @@ class QtHelperTests(unittest.TestCase):
                 )
             },
             {
-                "ready": "✓ OK",
-                "needs_review": "👁 Kontrola",
-                "duplicate_warning": "⧉ Duplicita",
-                "analysis_error": "✕ Chyba",
-                "writing": "↻ Zápis",
-                "written": "✓ Hotovo",
-                "write_error": "✕ Chyba zápisu",
+                "ready": "✓",
+                "needs_review": "👁",
+                "duplicate_warning": "⧉",
+                "analysis_error": "✕",
+                "writing": "↻",
+                "written": "✓",
+                "write_error": "✕",
+            },
+        )
+
+    def test_multiimport_status_tooltips_preserve_semantic_labels(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(
+            {
+                status: qt.multiimport_status_tooltip(status)
+                for status in (
+                    "ready",
+                    "needs_review",
+                    "duplicate_warning",
+                    "analysis_error",
+                    "writing",
+                    "written",
+                    "write_error",
+                )
+            },
+            {
+                "ready": "OK",
+                "needs_review": "Kontrola",
+                "duplicate_warning": "Duplicita",
+                "analysis_error": "Chyba",
+                "writing": "Zápis",
+                "written": "Hotovo",
+                "write_error": "Chyba zápisu",
             },
         )
 
@@ -628,7 +655,7 @@ class QtImportTests(unittest.TestCase):
         app.processEvents()
 
     def test_multiimport_results_dialog_is_read_only_and_updates_details(self):
-        from PySide6.QtWidgets import QApplication, QTableWidget
+        from PySide6.QtWidgets import QApplication, QHeaderView, QTableWidget
         import sys
         import calibre_meta_qt as qt
 
@@ -666,8 +693,17 @@ class QtImportTests(unittest.TestCase):
         )
         self.assertEqual(
             [dialog.items_table.item(row, 1).text() for row in range(4)],
-            ["✓ OK", "👁 Kontrola", "⧉ Duplicita", "✕ Chyba"],
+            ["✓", "👁", "⧉", "✕"],
         )
+        self.assertEqual(
+            [dialog.items_table.item(row, 1).toolTip() for row in range(4)],
+            ["OK", "Kontrola", "Duplicita", "Chyba"],
+        )
+        self.assertEqual(
+            dialog.items_table.horizontalHeader().sectionResizeMode(1),
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+        self.assertFalse(dialog.items_table.isSortingEnabled())
         displayed_rows = [
             " | ".join(dialog.items_table.item(row, column).text() for column in range(3))
             for row in range(4)
@@ -2246,6 +2282,10 @@ class QtImportWiringTests(unittest.TestCase):
         calls = []
 
         def analyze(path):
+            progress = progress_dialog.return_value
+            self.assertTrue(progress.setWindowTitle.called)
+            self.assertTrue(progress.show.called)
+            self.assertTrue(process_events.called)
             calls.append(path)
             return analysis
 
@@ -2267,13 +2307,14 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(items[0].status, "needs_review")
         self.assertFalse(items[0].checked_for_import)
         progress_dialog.assert_called_once_with(
-            "Připravuji multiimport analýzu...",
+            "Připravuji analýzu…",
             "",
             0,
             1,
             window,
         )
         progress = progress_dialog.return_value
+        progress.setWindowTitle.assert_called_once_with("Průběh načítání")
         progress.setCancelButton.assert_called_once_with(None)
         progress.setMinimumDuration.assert_called_once_with(0)
         progress.setAutoClose.assert_called_once_with(False)
@@ -2282,7 +2323,7 @@ class QtImportWiringTests(unittest.TestCase):
         progress.setValue.assert_any_call(1)
         progress.setLabelText.assert_called_once_with("Analyzuji 1/1: book.epub")
         progress.close.assert_called_once_with()
-        process_events.assert_called_once_with()
+        self.assertEqual(process_events.call_count, 2)
         results_dialog.assert_called_once_with(items, parent=window)
         results_dialog.return_value.exec.assert_called_once_with()
         apply_preview.assert_not_called()
