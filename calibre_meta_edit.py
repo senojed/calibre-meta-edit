@@ -4334,12 +4334,13 @@ def audit_cover_rows(
     library: str | Path,
     cover_flags_reader: Callable[[str | Path, set[int] | None], dict[int, bool]] = get_cover_flags,
     fetcher: Callable[[str], str] | None = None,
+    include_existing_covers: bool = False,
 ) -> list[MatchRow]:
     """Najde kandidatni obalky a ulozi je do radku bez zapisu do Calibre."""
     flags = cover_flags_reader(library, {row.book_id for row in rows})
     updated: list[MatchRow] = []
     for row in rows:
-        if flags.get(row.book_id, False):
+        if flags.get(row.book_id, False) and not include_existing_covers:
             updated.append(row)
             continue
         if not (

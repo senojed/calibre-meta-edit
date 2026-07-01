@@ -185,9 +185,19 @@ def make_legie_audit_args(library: str, book_ids: set[int] | None = None) -> Sim
     return args
 
 
-def make_cover_args(library: str, book_ids: set[int] | None = None) -> SimpleNamespace:
+def make_cover_args(
+    library: str,
+    book_ids: set[int] | None = None,
+    include_existing_covers: bool = False,
+) -> SimpleNamespace:
     """Argumenty pro doplneni obalek."""
-    args = SimpleNamespace(library=library, book_id=None, limit=None, sleep=1.0)
+    args = SimpleNamespace(
+        library=library,
+        book_id=None,
+        limit=None,
+        sleep=1.0,
+        include_existing_covers=include_existing_covers,
+    )
     if book_ids:
         args.book_ids = sorted(book_ids)
     return args
@@ -533,7 +543,7 @@ def make_preview_with_legie_audit_action(
 def make_cover_audit_action(
     args: SimpleNamespace,
     matches_path: Path = cme.MATCHES_PATH,
-    audit_func: Callable[[Sequence[cme.MatchRow], str | Path], list[cme.MatchRow]] = cme.audit_cover_rows,
+    audit_func: Callable[..., list[cme.MatchRow]] = cme.audit_cover_rows,
 ) -> Callable[[], int]:
     """Pripravi audit kandidatnich obalek bez zapisu do Calibre."""
     def action() -> int:
@@ -543,7 +553,11 @@ def make_cover_audit_action(
         rows = cme.read_matches_csv(matches_path)
         selected_ids = set(getattr(args, "book_ids", None) or [])
         selected_rows = cme.select_match_rows(rows, book_ids=selected_ids) if selected_ids else rows
-        audited_selected = audit_func(selected_rows, args.library)
+        audited_selected = audit_func(
+            selected_rows,
+            args.library,
+            include_existing_covers=bool(getattr(args, "include_existing_covers", False)),
+        )
         if selected_ids:
             replacements = {row.book_id: row for row in audited_selected}
             updated_rows = [replacements.get(row.book_id, row) for row in rows]
