@@ -8,7 +8,9 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import urllib.parse
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -127,6 +129,16 @@ class TextAndUrlTests(unittest.TestCase):
         result = cme.validate_multiimport_checked_items([item])
 
         self.assertEqual([issue.reason for issue in result.issues], ["status_not_ready"])
+
+    def test_validate_multiimport_checked_items_reports_strict_precheck_reason(self):
+        item = self._valid_checked_multiimport_item()
+        other = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100)
+        item.analysis = replace(item.analysis, candidates=[item.selected_candidate, other])
+        item.status = "needs_review"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["multiple_100_candidate_urls"])
 
     def test_validate_multiimport_checked_items_blocks_duplicate_warning(self):
         item = self._valid_checked_multiimport_item()
@@ -555,6 +567,26 @@ class TextAndUrlTests(unittest.TestCase):
 
         self.assertEqual(result[0].status, "needs_review")
         self.assertFalse(result[0].checked_for_import)
+
+    def test_multiimport_precheck_explains_preview_url_mismatch(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=candidate,
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/2"),
+        )
+
+        self.assertEqual(cme.multiimport_precheck_issues(analysis), ["preview_url_mismatch"])
+
+    def test_multiimport_precheck_accepts_one_distinct_100_percent_url(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        duplicate_url = replace(candidate, title="Stejna kniha")
+        analysis = self._multiimport_analysis(
+            recommended=candidate,
+            candidates=[candidate, duplicate_url],
+        )
+
+        self.assertEqual(cme.multiimport_precheck_issues(analysis), [])
+        self.assertTrue(cme.is_safe_multiimport_precheck(analysis))
 
     def test_run_multiimport_batch_analysis_marks_duplicates_for_warning(self):
         duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", score=100, strong=True)
@@ -1972,6 +2004,51 @@ class ImportCandidateScoringTests(unittest.TestCase):
 
         self.assertEqual(scored[0].url, "https://dk/good")
         self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_lookup_import_candidates_tolerates_hatteras_inflection_without_bypassing_precheck(self):
+        signals = [
+            cme.ImportSourceSignal(
+                "epub-metadata",
+                "Dobrodru\u017estv\u00ed kapit\u00e1na Hatterasa",
+                "Verne, Jules",
+                language="cs",
+            ),
+            cme.ImportSourceSignal(
+                "epub-text",
+                "Dobrodru\u017estv\u00ed kapit\u00e1na Hatterasa",
+                "Verne, Jules",
+                language="cs",
+            ),
+        ]
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            if "Hatterase" not in urllib.parse.unquote_plus(url):
+                return ""
+            return """
+                <a href="/prehled-knihy/dobrodruzstvi-kapitana-hatterase-36039">
+                    <img title="Dobrodru\u017estv\u00ed kapit\u00e1na Hatterase" />
+                    Dobrodru\u017estv\u00ed kapit\u00e1na Hatterase
+                </a>
+                <p>Jules Verne</p>
+            """
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetch)
+
+        self.assertTrue(any("Hatterase" in urllib.parse.unquote_plus(url) for url in calls))
+        self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/knihy/dobrodruzstvi-kapitana-hatterase-36039")
+        self.assertEqual(candidates[0].score, 100)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=signals,
+            candidates=candidates,
+            recommended=candidates[0],
+            duplicates=[],
+            preview=cme.ImportPreview(title=candidates[0].title, authors="Jules Verne"),
+            messages=[],
+        )
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
 
     def test_score_import_candidates_requires_databaze_author_evidence_text(self):
         signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]

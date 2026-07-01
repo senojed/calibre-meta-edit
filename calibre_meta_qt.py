@@ -162,6 +162,16 @@ def multiimport_validation_reason_label(reason: str) -> str:
         "duplicate_warning": "Položka má varování na duplicitu.",
         "analysis_error": "Položka má chybu analýzy.",
         "invalid_preview": "Náhled importu není validní.",
+        "candidate_score_below_100": "Doporučený kandidát nemá 100% shodu.",
+        "missing_preview_url": "Náhled nemá zdrojový odkaz.",
+        "missing_candidate_url": "Doporučený kandidát nemá odkaz.",
+        "preview_url_mismatch": "Odkaz náhledu neodpovídá doporučenému kandidátovi.",
+        "multiple_100_candidate_urls": (
+            "Existuje více různých kandidátů se 100% shodou; aplikace nemůže "
+            "bezpečně vybrat jednu Databáze knih URL. Ponechte položku ke kontrole "
+            "a použijte jednopoložkový ruční postup."
+        ),
+        "recommended_not_unique_100_candidate": "Doporučený kandidát není jediná 100% shoda.",
     }
     return labels.get(reason, f"Neznámý důvod: {reason}")
 
@@ -219,6 +229,30 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
                 f"{candidate.source}: {candidate.url}",
             )
         )
+    if item.status == "needs_review" and item.analysis is not None:
+        issues = cme.multiimport_precheck_issues(item.analysis)
+        if issues:
+            lines.extend(("", "Důvod kontroly:"))
+            lines.extend(f"- {multiimport_validation_reason_label(reason)}" for reason in issues)
+        if "multiple_100_candidate_urls" in issues:
+            candidates = []
+            seen_urls = set()
+            for candidate in item.analysis.candidates:
+                url = candidate.url.strip()
+                if candidate.score < 100 or not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                candidates.append(candidate)
+            if candidates:
+                lines.extend(("", "Konfliktní 100% kandidáti:"))
+                lines.extend(f"- {candidate.title}: {candidate.url}" for candidate in candidates)
+            lines.extend(
+                (
+                    "",
+                    "Automatický import je zablokován, protože nelze bezpečně vybrat jednu URL.",
+                    "Ponechte řádek ke kontrole a použijte jednopoložkový ruční postup.",
+                )
+            )
     lines.extend(("", f"Duplicity: {len(item.duplicates)}"))
     for duplicate in item.duplicates:
         lines.append(f"ID {duplicate.book_id}: {duplicate.title} / {duplicate.authors} / {duplicate.score}%")
@@ -594,6 +628,7 @@ if PYSIDE6_AVAILABLE:
         QMenu,
         QMessageBox,
         QProgressDialog,
+        QProgressBar,
         QListWidget,
         QListWidgetItem,
         QStyleFactory,
@@ -626,6 +661,49 @@ if PYSIDE6_AVAILABLE:
         apply_ready = Signal(object, str)
 
 
+    class MultiImportProgressDialog(QDialog):
+        """Jednoduchý nenativní průběh synchronního multiimportu."""
+
+        def __init__(self, total: int, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setWindowTitle("Průběh importu")
+            self.setModal(True)
+            self.setMinimumWidth(420)
+            self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+            layout = QVBoxLayout(self)
+            self.progress_label = QLabel()
+            self.progress_label.setWordWrap(True)
+            layout.addWidget(self.progress_label)
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setFormat("%v / %m")
+            self.progress_bar.setTextVisible(True)
+            layout.addWidget(self.progress_bar)
+            self.prepare(total)
+
+        def prepare(self, total: int) -> None:
+            self.progress_label.setText("Připravuji import…")
+            self.progress_bar.setRange(0, total)
+            self.progress_bar.setValue(0)
+
+        def show_prepared(self) -> None:
+            self.ensurePolished()
+            layout = self.layout()
+            if layout is not None:
+                layout.activate()
+            self.adjustSize()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            self.progress_label.repaint()
+            self.progress_bar.repaint()
+            self.repaint()
+            QApplication.processEvents()
+
+        def update_progress(self, current: int, total: int, display_name: str) -> None:
+            self.progress_label.setText(f"Importuji {current}/{total}: {display_name}")
+            self.progress_bar.setValue(current)
+
+
     class MultiImportResultsDialog(QDialog):
         """Read-only prehled vysledku analyzy vice knih."""
 
@@ -635,10 +713,16 @@ if PYSIDE6_AVAILABLE:
             parent: QWidget | None = None,
             *,
             write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+            post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
         ) -> None:
             super().__init__(parent)
             self.items = list(items)
             self.write_one = write_one or getattr(parent, "_write_multiimport_item", None)
+            self.post_write_refresh = post_write_refresh or getattr(
+                parent,
+                "_refresh_after_multiimport_write",
+                None,
+            )
             self.setWindowTitle("Vysledky multiimport analyzy")
             self.resize(900, 600)
 
@@ -753,20 +837,14 @@ if PYSIDE6_AVAILABLE:
             self.update_import_button_enabled()
 
         def update_import_button_enabled(self) -> None:
-            enabled = self.write_one is not None and any(
-                item.checked_for_import
-                and cme.validate_multiimport_checked_items(
-                    [replace(item, checked_for_import=True)]
-                ).ok
-                for item in self.items
-            )
+            enabled = self.write_one is not None and any(item.checked_for_import for item in self.items)
             self.import_button.setEnabled(enabled)
             if self.write_one is None:
                 tooltip = "Zápis není dostupný."
             elif enabled:
-                tooltip = "Importuje vybrané připravené položky do Calibre."
+                tooltip = "Ověří výběr a importuje pouze bezpečně připravené položky."
             else:
-                tooltip = "Vyberte alespoň jednu připravenou položku."
+                tooltip = "Vyberte alespoň jednu položku."
             self.import_button.setToolTip(tooltip)
 
         def _set_bulk_selection(
@@ -878,21 +956,9 @@ if PYSIDE6_AVAILABLE:
             if answer != QMessageBox.StandardButton.Yes:
                 return
 
-            progress = QProgressDialog(
-                "Připravuji zápis…",
-                "",
-                0,
-                len(validation.valid_items),
-                self,
-            )
-            progress.setWindowTitle("Průběh importu")
-            progress.setCancelButton(None)
-            progress.setMinimumDuration(0)
-            progress.setAutoClose(False)
-            progress.setAutoReset(False)
-            progress.setValue(0)
-            progress.show()
-            QApplication.processEvents()
+            progress = MultiImportProgressDialog(len(validation.valid_items), self)
+            progress.prepare(len(validation.valid_items))
+            progress.show_prepared()
 
             def update_progress(
                 current: int,
@@ -900,19 +966,41 @@ if PYSIDE6_AVAILABLE:
                 item: cme.MultiImportBatchItem,
             ) -> None:
                 self.refresh_item_row(item)
-                progress.setLabelText(f"Importuji {current}/{total}: {item.display_name}")
-                progress.setValue(current)
+                progress.update_progress(current, total, item.display_name)
                 QApplication.processEvents()
 
+            summaries: list[cme.MultiImportWriteSummary] = []
+            errors: list[BaseException] = []
+
+            def run_write() -> None:
+                try:
+                    summaries.append(
+                        cme.run_multiimport_batch_write(
+                            self.items,
+                            self.write_one,
+                            progress_callback=update_progress,
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    progress.accept()
+
+            QTimer.singleShot(0, run_write)
+            progress.exec()
             try:
-                summary = cme.run_multiimport_batch_write(
-                    self.items,
-                    self.write_one,
-                    progress_callback=update_progress,
-                )
+                if errors:
+                    raise errors[0]
+                if not summaries:
+                    return
+                summary = summaries[0]
             finally:
                 progress.close()
+                progress.deleteLater()
+                QApplication.processEvents()
 
+            if summary.succeeded > 0 and self.post_write_refresh is not None:
+                self.post_write_refresh(summary)
             outcome = "Úspěch" if summary.ok else "Dokončeno s chybami"
             QMessageBox.information(
                 self,
@@ -923,6 +1011,8 @@ if PYSIDE6_AVAILABLE:
                 f"Selhalo: {summary.failed}",
             )
             self.update_import_button_enabled()
+            if summary.ok and summary.attempted > 0:
+                self.accept()
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):
@@ -2518,6 +2608,15 @@ if PYSIDE6_AVAILABLE:
                 matches_path=self.matches_path,
             )
 
+        def _refresh_after_multiimport_write(
+            self,
+            summary: cme.MultiImportWriteSummary,
+        ) -> None:
+            if summary.succeeded <= 0:
+                return
+            self.show_import_review_filter()
+            self.load_csv(show_message=False)
+
         def run_multiimport_analysis(
             self,
             files: Sequence[Path],
@@ -2893,8 +2992,7 @@ if PYSIDE6_AVAILABLE:
                 }
                 QLabel#coverStatus { font-weight: 700; padding: 4px; border-radius: 3px; background: #eeeeee; color: #111111; }
                 QLabel#coverImage { border: 1px solid #b8b8b8; background: #fafafa; color: #777777; }
-                QTableWidget { gridline-color: palette(mid); alternate-background-color: palette(alternate-base); color: palette(text); background: palette(base); }
-                QTableWidget::item { color: palette(text); }
+                QTableWidget { gridline-color: palette(mid); }
                 QTableWidget::item:selected, QTableWidget::item:selected:!active {
                     background: #0d6efd;
                     color: #ffffff;

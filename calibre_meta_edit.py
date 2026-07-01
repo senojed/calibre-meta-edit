@@ -381,7 +381,8 @@ def validate_multiimport_checked_items(
         elif item.status == "analysis_error" or item.error_message:
             reason = "analysis_error"
         elif item.status != "ready":
-            reason = "status_not_ready"
+            precheck_issues = multiimport_precheck_issues(item.analysis) if item.analysis is not None else []
+            reason = precheck_issues[0] if precheck_issues else "status_not_ready"
         elif item.analysis is None:
             reason = "missing_analysis"
         elif item.current_preview is None:
@@ -463,24 +464,39 @@ def build_multiimport_batch_items(paths: Iterable[Path]) -> list[MultiImportBatc
     return [MultiImportBatchItem(source_path=path, display_name=path.name) for path in paths]
 
 
-def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
+def multiimport_precheck_issues(analysis: ImportAnalysis) -> list[str]:
+    issues = []
     recommended = analysis.recommended
-    if recommended is None or recommended.score < 100:
-        return False
+    if recommended is None:
+        return ["missing_candidate"]
+    if recommended.score < 100:
+        issues.append("candidate_score_below_100")
     if analysis.duplicates:
-        return False
+        issues.append("duplicate_warning")
     if not is_valid_import_preview(analysis.preview):
-        return False
+        issues.append("invalid_preview")
     preview_url = analysis.preview.url.strip()
     recommended_url = recommended.url.strip()
-    if not preview_url or not recommended_url or preview_url != recommended_url:
-        return False
+    if not preview_url:
+        issues.append("missing_preview_url")
+    if not recommended_url:
+        issues.append("missing_candidate_url")
+    if preview_url and recommended_url and preview_url != recommended_url:
+        issues.append("preview_url_mismatch")
     hundred_score_urls = {
         candidate.url.strip()
         for candidate in analysis.candidates
         if candidate.score >= 100 and candidate.url.strip()
     }
-    return hundred_score_urls == {recommended_url}
+    if len(hundred_score_urls) > 1:
+        issues.append("multiple_100_candidate_urls")
+    elif recommended_url and hundred_score_urls != {recommended_url}:
+        issues.append("recommended_not_unique_100_candidate")
+    return issues
+
+
+def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
+    return not multiimport_precheck_issues(analysis)
 
 
 def run_multiimport_batch_analysis(
@@ -1471,6 +1487,31 @@ def _word_overlap_score(left: str, right: str) -> int:
     return int(60 * len(overlap) / max(len(left_words), len(right_words)))
 
 
+def _terminal_inflection_title_variant(title: str) -> str:
+    """Vrati uzky fallback pro ceskou koncovku posledniho slova a/e."""
+    match = re.match(r"^(.*\s)([^\W\d_]{6,})$", title.strip(), flags=re.UNICODE)
+    if not match or not match.group(2).casefold().endswith("a"):
+        return ""
+    word = match.group(2)
+    replacement = "E" if word[-1].isupper() else "e"
+    return match.group(1) + word[:-1] + replacement
+
+
+def _titles_match_terminal_inflection(left: str, right: str) -> bool:
+    left_words = normalize_text(left).split()
+    right_words = normalize_text(right).split()
+    if len(left_words) < 3 or len(left_words) != len(right_words) or left_words[:-1] != right_words[:-1]:
+        return False
+    left_last = left_words[-1]
+    right_last = right_words[-1]
+    return (
+        len(left_last) >= 6
+        and len(left_last) == len(right_last)
+        and left_last[:-1] == right_last[:-1]
+        and {left_last[-1], right_last[-1]} == {"a", "e"}
+    )
+
+
 def _authors_text(authors: Sequence[str] | str) -> str:
     if isinstance(authors, str):
         return authors
@@ -1672,7 +1713,7 @@ def delete_books_from_calibre(
 
 
 def _title_similarity_score(left: str, right: str) -> int:
-    if normalize_text(left) == normalize_text(right) and left:
+    if (normalize_text(left) == normalize_text(right) or _titles_match_terminal_inflection(left, right)) and left:
         return 70
     return min(70, int(_word_overlap_score(left, right) * 70 / 60))
 
@@ -1769,9 +1810,19 @@ def _lookup_import_source(
 ) -> list[ImportCandidate]:
     if source == "databazeknih":
         html_text = fetch(build_search_url(book.title, book.authors))
-        return [
+        found = [
             import_candidate_from_search_candidate("databazeknih", item, signals)
             for item in parse_search_results(html_text)
+        ]
+        if found:
+            return found
+        variant = _terminal_inflection_title_variant(book.title)
+        if not variant:
+            return []
+        fallback_html = fetch(build_search_url(variant, book.authors))
+        return [
+            import_candidate_from_search_candidate("databazeknih", item, signals)
+            for item in parse_search_results(fallback_html)
         ]
     if source == "legie":
         html_text = fetch(build_legie_search_url(book.title, book.authors))

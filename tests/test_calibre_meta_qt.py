@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import calibre_meta_edit as cme
 
@@ -196,6 +196,42 @@ class QtHelperTests(unittest.TestCase):
         self.assertNotIn("duplicate_warning", text)
         self.assertIn("Kandidat / Autor K. / 95%", text)
         self.assertIn("Existujici / Autor E.", text)
+
+    def test_multiimport_item_detail_text_explains_multiple_100_percent_candidates(self):
+        import calibre_meta_qt as qt
+
+        first = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        second = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100)
+        preview = cme.ImportPreview(title="Kniha", authors="Autor", url=first.url)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=[first, second],
+            recommended=first,
+            duplicates=[],
+            preview=preview,
+            messages=[],
+        )
+        item = cme.MultiImportBatchItem(
+            Path("book.epub"),
+            "book.epub",
+            checked_for_import=True,
+            status="needs_review",
+            analysis=analysis,
+            current_preview=preview,
+            selected_candidate=first,
+        )
+
+        text = qt.multiimport_item_detail_text(item)
+
+        self.assertIn("Důvod kontroly:", text)
+        self.assertIn("více různých kandidátů se 100% shodou", text)
+        self.assertIn("https://dk/1", text)
+        self.assertIn("https://dk/2", text)
+        self.assertIn("Automatický import je zablokován", text)
+        self.assertIn("jednopoložkový ruční postup", text)
+        validation = cme.validate_multiimport_checked_items([item])
+        self.assertEqual(validation.issues[0].reason, "multiple_100_candidate_urls")
 
     def test_multiimport_compact_status_labels_are_visually_distinct(self):
         import calibre_meta_qt as qt
@@ -624,6 +660,72 @@ class QtHelperTests(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class QtImportTests(unittest.TestCase):
+
+    def test_multiimport_progress_dialog_has_visible_content_and_updates(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        progress = qt.MultiImportProgressDialog(3)
+
+        self.assertEqual(progress.progress_label.text(), "Připravuji import…")
+        self.assertEqual((progress.progress_bar.minimum(), progress.progress_bar.maximum()), (0, 3))
+        self.assertEqual(progress.progress_bar.value(), 0)
+        progress.show_prepared()
+        self.assertTrue(progress.isVisible())
+        self.assertTrue(progress.progress_label.isVisible())
+        self.assertTrue(progress.progress_bar.isVisible())
+
+        progress.update_progress(2, 3, "book.epub")
+
+        self.assertIn("2/3", progress.progress_label.text())
+        self.assertIn("book.epub", progress.progress_label.text())
+        self.assertEqual(progress.progress_bar.value(), 2)
+        progress.close()
+        app.processEvents()
+
+    def test_multiimport_write_starts_after_prepared_progress_dialog_enters_event_loop(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        events = []
+        scheduled = []
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: (
+                events.append("write") or cme.ImportApplyResult(1, "updated")
+            ),
+        )
+
+        def schedule(_delay, callback):
+            events.append("scheduled")
+            scheduled.append(callback)
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog") as progress_class,
+            patch.object(qt.QTimer, "singleShot", side_effect=schedule) as single_shot,
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress = progress_class.return_value
+            progress.show_prepared.side_effect = lambda: events.append("painted")
+            progress.exec.side_effect = lambda: (events.append("event-loop"), scheduled.pop(0)())
+            dialog.import_button.click()
+
+        self.assertEqual(events[:4], ["painted", "scheduled", "event-loop", "write"])
+        single_shot.assert_called_once()
+        self.assertEqual(single_shot.call_args.args[0], 0)
+        app.processEvents()
+
     def _valid_multiimport_item(
         self,
         name: str = "book.epub",
@@ -754,7 +856,7 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("analysis failed", dialog.detail_text.toPlainText())
         app.processEvents()
 
-    def test_dark_theme_uses_palette_colors_for_table_text(self):
+    def test_table_item_style_does_not_override_explicit_main_table_foreground(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -765,13 +867,8 @@ class QtImportTests(unittest.TestCase):
         window.apply_theme()
 
         style = window.styleSheet()
-        self.assertIn(
-            "QTableWidget { gridline-color: palette(mid); "
-            "alternate-background-color: palette(alternate-base); "
-            "color: palette(text); background: palette(base); }",
-            style,
-        )
-        self.assertIn("QTableWidget::item { color: palette(text); }", style)
+        self.assertNotIn("QTableWidget::item { color:", style)
+        self.assertNotIn("color: palette(text)", style)
         self.assertNotIn("QTableWidget::item { color: #111111; }", style)
         app.processEvents()
 
@@ -862,12 +959,14 @@ class QtImportTests(unittest.TestCase):
         dialog = qt.MultiImportResultsDialog(
             [valid, invalid],
             write_one=lambda preview, path: writer_calls.append((preview, path)),
+            post_write_refresh=lambda summary: writer_calls.append(("refresh", summary)),
         )
 
         with (
             patch.object(qt.QMessageBox, "warning") as warning,
             patch.object(qt.QMessageBox, "question") as question,
             patch.object(cme, "run_multiimport_batch_write") as run_write,
+            patch.object(dialog, "accept") as accept,
         ):
             dialog.import_button.click()
 
@@ -875,6 +974,7 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(writer_calls, [])
         run_write.assert_not_called()
         question.assert_not_called()
+        accept.assert_not_called()
         self.assertIn("Nic nebylo importováno.", warning.call_args.args[2])
         self.assertEqual([valid.status, invalid.status], ["ready", "needs_review"])
         app.processEvents()
@@ -890,6 +990,7 @@ class QtImportTests(unittest.TestCase):
         dialog = qt.MultiImportResultsDialog(
             [item],
             write_one=lambda preview, path: writer_calls.append((preview, path)),
+            post_write_refresh=lambda summary: writer_calls.append(("refresh", summary)),
         )
 
         with (
@@ -899,11 +1000,13 @@ class QtImportTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.No,
             ),
             patch.object(cme, "run_multiimport_batch_write") as run_write,
+            patch.object(dialog, "accept") as accept,
         ):
             dialog.import_button.click()
 
         self.assertEqual(writer_calls, [])
         run_write.assert_not_called()
+        accept.assert_not_called()
         self.assertEqual(item.status, "ready")
         app.processEvents()
 
@@ -917,6 +1020,7 @@ class QtImportTests(unittest.TestCase):
         ignored = self._valid_multiimport_item("ignored.epub", checked=False)
         second = self._valid_multiimport_item("second.epub", checked=True)
         events = []
+        refresh_summaries = []
         real_validate = cme.validate_multiimport_checked_items
 
         def validate(items):
@@ -929,7 +1033,11 @@ class QtImportTests(unittest.TestCase):
                 return cme.ImportApplyResult(book_id=41, status="updated")
             return cme.ImportApplyResult(book_id=0, status="failed", error="failed")
 
-        dialog = qt.MultiImportResultsDialog([first, ignored, second], write_one=write_one)
+        dialog = qt.MultiImportResultsDialog(
+            [first, ignored, second],
+            write_one=write_one,
+            post_write_refresh=refresh_summaries.append,
+        )
 
         with (
             patch.object(cme, "validate_multiimport_checked_items", side_effect=validate),
@@ -939,8 +1047,10 @@ class QtImportTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.Yes,
             ) as question,
             patch.object(qt.QMessageBox, "information") as information,
-            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
+            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
             patch.object(qt.QApplication, "processEvents"),
+            patch.object(dialog, "accept") as accept,
             patch.object(
                 cme,
                 "should_auto_import",
@@ -968,15 +1078,93 @@ class QtImportTests(unittest.TestCase):
         self.assertFalse(first.checked_for_import)
         self.assertFalse(second.checked_for_import)
         self.assertFalse(dialog.import_button.isEnabled())
+        self.assertEqual(len(refresh_summaries), 1)
+        self.assertEqual(refresh_summaries[0].succeeded, 1)
+        accept.assert_not_called()
         summary_text = information.call_args.args[2]
         self.assertIn("Pokusů: 2", summary_text)
         self.assertIn("Úspěšně: 1", summary_text)
         self.assertIn("Selhalo: 1", summary_text)
         progress = progress_dialog.return_value
-        progress.setValue.assert_any_call(0)
-        progress.setValue.assert_any_call(1)
-        progress.setValue.assert_any_call(2)
+        progress_dialog.assert_called_once_with(2, dialog)
+        self.assertGreater(
+            progress.method_calls.index(call.show_prepared()),
+            progress.method_calls.index(call.prepare(2)),
+        )
+        progress.update_progress.assert_has_calls(
+            [call(1, 2, "first.epub"), call(2, 2, "second.epub")]
+        )
         progress.close.assert_called_once_with()
+        progress.deleteLater.assert_called_once_with()
+        app.processEvents()
+
+    def test_multiimport_all_success_refreshes_and_closes_dialog(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        refresh_summaries = []
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(61, "updated"),
+            post_write_refresh=refresh_summaries.append,
+        )
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch.object(qt.QMessageBox, "information") as information,
+            patch.object(qt, "MultiImportProgressDialog"),
+            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
+            patch.object(qt.QApplication, "processEvents"),
+            patch.object(dialog, "accept") as accept,
+        ):
+            dialog.import_button.click()
+
+        self.assertEqual(len(refresh_summaries), 1)
+        self.assertTrue(refresh_summaries[0].ok)
+        information.assert_called_once()
+        accept.assert_called_once_with()
+        app.processEvents()
+
+    def test_multiimport_all_failure_stays_open_without_refresh(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        refresh_summaries = []
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(
+                0, "failed", "write failed"
+            ),
+            post_write_refresh=refresh_summaries.append,
+        )
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog"),
+            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
+            patch.object(qt.QApplication, "processEvents"),
+            patch.object(dialog, "accept") as accept,
+        ):
+            dialog.import_button.click()
+
+        self.assertEqual(refresh_summaries, [])
+        self.assertEqual(item.status, "write_error")
+        accept.assert_not_called()
         app.processEvents()
 
     def test_multiimport_production_writer_adapter_reuses_single_item_apply_contract(self):
@@ -1006,7 +1194,27 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(apply_preview.call_args.kwargs["allow_force"])
         app.processEvents()
 
-    def test_multiimport_import_button_is_disabled_and_inert_for_ineligible_item(self):
+    def test_multiimport_post_write_refresh_reuses_existing_review_reload_path(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        validation = cme.MultiImportValidationResult([], [])
+        summary = cme.MultiImportWriteSummary(validation, 2, 1, 1)
+
+        with (
+            patch.object(window, "show_import_review_filter") as show_review,
+            patch.object(window, "load_csv") as load_csv,
+        ):
+            window._refresh_after_multiimport_write(summary)
+
+        show_review.assert_called_once_with()
+        load_csv.assert_called_once_with(show_message=False)
+        app.processEvents()
+
+    def test_multiimport_import_button_allows_checked_blocked_item_to_show_warning(self):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication
         import sys
@@ -1019,22 +1227,95 @@ class QtImportTests(unittest.TestCase):
 
         self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
         self.assertFalse(dialog.import_button.isEnabled())
-        self.assertIn("Vyberte alespoň jednu připravenou položku", dialog.import_button.toolTip())
+        self.assertIn("Vyberte alespoň jednu položku", dialog.import_button.toolTip())
         self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
         self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
 
         dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
 
         self.assertTrue(item.checked_for_import)
-        self.assertFalse(dialog.import_button.isEnabled())
+        self.assertTrue(dialog.import_button.isEnabled())
         with (
+            patch.object(qt.QMessageBox, "warning") as warning,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
             dialog.import_button.click()
 
+        self.assertIn("ready.epub: Chybí analýza", warning.call_args.args[2])
+        self.assertIn("Nic nebylo importováno", warning.call_args.args[2])
         apply_preview.assert_not_called()
         run_apply.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_blocked_warning_lists_duplicate_unrecognized_and_ambiguous_reasons(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        duplicate = cme.MultiImportBatchItem(
+            Path("duplicate.epub"),
+            "duplicate.epub",
+            checked_for_import=True,
+            status="duplicate_warning",
+            duplicates=[cme.DuplicateCandidate(7, "Existující", "Autor")],
+        )
+        unrecognized_analysis = cme.ImportAnalysis(
+            epub_path="unknown.epub",
+            signals=[],
+            candidates=[],
+            recommended=None,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Unknown", authors="Autor"),
+            messages=[],
+        )
+        unrecognized = cme.MultiImportBatchItem(
+            Path("unknown.epub"),
+            "unknown.epub",
+            checked_for_import=True,
+            status="needs_review",
+            analysis=unrecognized_analysis,
+            current_preview=unrecognized_analysis.preview,
+        )
+        first = cme.ImportCandidate("databazeknih", "Kniha A", "Autor", "https://dk/1", score=100)
+        second = cme.ImportCandidate("databazeknih", "Kniha B", "Autor", "https://dk/2", score=100)
+        ambiguous_analysis = cme.ImportAnalysis(
+            epub_path="ambiguous.epub",
+            signals=[],
+            candidates=[first, second],
+            recommended=first,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha A", authors="Autor", url=first.url),
+            messages=[],
+        )
+        ambiguous = cme.MultiImportBatchItem(
+            Path("ambiguous.epub"),
+            "ambiguous.epub",
+            checked_for_import=True,
+            status="needs_review",
+            analysis=ambiguous_analysis,
+            current_preview=ambiguous_analysis.preview,
+            selected_candidate=first,
+        )
+        writer_calls = []
+        dialog = qt.MultiImportResultsDialog(
+            [duplicate, unrecognized, ambiguous],
+            write_one=lambda preview, path: writer_calls.append((preview, path)),
+        )
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            dialog.import_button.click()
+
+        message = warning.call_args.args[2]
+        self.assertIn("duplicate.epub", message)
+        self.assertIn("varování na duplicitu", message)
+        self.assertIn("unknown.epub", message)
+        self.assertIn("Chybí vybraný kandidát", message)
+        self.assertIn("ambiguous.epub", message)
+        self.assertIn("více různých kandidátů se 100% shodou", message)
+        self.assertIn("bezpečně vybrat jednu", message)
+        self.assertEqual(writer_calls, [])
         app.processEvents()
 
     def test_multiimport_results_dialog_exposes_bulk_selection_buttons(self):
@@ -1161,7 +1442,7 @@ class QtImportTests(unittest.TestCase):
             dialog.select_all_items()
             self.assertEqual([item.checked_for_import for item in items], [True, True, True, False])
             self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 3")
-            self.assertFalse(dialog.import_button.isEnabled())
+            self.assertTrue(dialog.import_button.isEnabled())
 
             dialog.clear_selected_items()
 
@@ -1272,7 +1553,7 @@ class QtImportTests(unittest.TestCase):
             dialog.validate_selection()
 
         self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
-        self.assertFalse(dialog.import_button.isEnabled())
+        self.assertTrue(dialog.import_button.isEnabled())
         validate.assert_called_once_with(dialog.items)
         self.assertTrue(item.checked_for_import)
         self.assertIn("Položka není ve stavu Připraveno.", information.call_args.args[2])
