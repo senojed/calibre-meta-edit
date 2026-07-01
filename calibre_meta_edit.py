@@ -22,7 +22,7 @@ import urllib.request
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 import zipfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -297,6 +297,63 @@ class ImportApplyResult:
     backup_path: str = ""
 
 
+MULTIIMPORT_BATCH_STATUSES = (
+    "pending",
+    "analyzing",
+    "ready",
+    "needs_review",
+    "duplicate_warning",
+    "analysis_error",
+    "skipped",
+    "writing",
+    "written",
+    "write_error",
+)
+
+
+@dataclass
+class MultiImportBatchItem:
+    source_path: Path
+    display_name: str
+    checked_for_import: bool = False
+    status: str = "pending"
+    error_message: str = ""
+    analysis: ImportAnalysis | None = None
+    current_preview: ImportPreview | None = None
+    selected_candidate: ImportCandidate | None = None
+    duplicates: list[DuplicateCandidate] = field(default_factory=list)
+    write_result: ImportApplyResult | None = None
+    calibre_id: int | None = None
+
+
+@dataclass(frozen=True)
+class MultiImportValidationIssue:
+    item: MultiImportBatchItem | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class MultiImportValidationResult:
+    valid_items: list[MultiImportBatchItem]
+    issues: list[MultiImportValidationIssue]
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.valid_items) and not self.issues
+
+
+@dataclass(frozen=True)
+class MultiImportWriteSummary:
+    validation: MultiImportValidationResult
+    attempted: int
+    succeeded: int
+    failed: int
+
+    @property
+    def ok(self) -> bool:
+        return self.attempted > 0 and self.failed == 0 and self.validation.ok
+
+
 @dataclass(frozen=True)
 class CoverOption:
     url: str
@@ -306,6 +363,180 @@ class CoverOption:
 
 def is_valid_import_preview(preview: ImportPreview) -> bool:
     return bool(preview.title.strip() and preview.authors.strip())
+
+
+def validate_multiimport_checked_items(
+    items: Iterable[MultiImportBatchItem],
+) -> MultiImportValidationResult:
+    checked_items = [item for item in items if item.checked_for_import]
+    if not checked_items:
+        return MultiImportValidationResult([], [MultiImportValidationIssue(None, "no_checked_items")])
+
+    valid_items = []
+    issues = []
+    for item in checked_items:
+        reason = ""
+        if item.status == "duplicate_warning" or item.duplicates:
+            reason = "duplicate_warning"
+        elif item.status == "analysis_error" or item.error_message:
+            reason = "analysis_error"
+        elif item.status != "ready":
+            precheck_issues = multiimport_precheck_issues(item.analysis) if item.analysis is not None else []
+            reason = precheck_issues[0] if precheck_issues else "status_not_ready"
+        elif item.analysis is None:
+            reason = "missing_analysis"
+        elif item.current_preview is None:
+            reason = "missing_preview"
+        elif item.selected_candidate is None:
+            reason = "missing_candidate"
+        elif not is_valid_import_preview(item.current_preview):
+            reason = "invalid_preview"
+
+        if reason:
+            issues.append(MultiImportValidationIssue(item, reason))
+        else:
+            valid_items.append(item)
+    return MultiImportValidationResult(valid_items, issues)
+
+
+def run_multiimport_batch_write(
+    items: Iterable[MultiImportBatchItem],
+    write_one: Callable[[ImportPreview, Path], ImportApplyResult],
+    *,
+    progress_callback: Callable[[int, int, MultiImportBatchItem], None] | None = None,
+) -> MultiImportWriteSummary:
+    batch = list(items)
+    validation = validate_multiimport_checked_items(batch)
+    if not validation.ok:
+        return MultiImportWriteSummary(validation, attempted=0, succeeded=0, failed=0)
+
+    succeeded = 0
+    failed = 0
+    total = len(validation.valid_items)
+    for index, item in enumerate(validation.valid_items, start=1):
+        item.status = "writing"
+        try:
+            result = write_one(item.current_preview, item.source_path)
+        except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            result = ImportApplyResult(book_id=0, status="failed", error=error)
+        item.write_result = result
+        item.calibre_id = result.book_id if result.book_id > 0 else None
+        if result.status == "updated":
+            item.status = "written"
+            succeeded += 1
+        else:
+            item.status = "write_error"
+            failed += 1
+        item.checked_for_import = False
+        if progress_callback is not None:
+            progress_callback(index, total, item)
+
+    return MultiImportWriteSummary(
+        validation,
+        attempted=total,
+        succeeded=succeeded,
+        failed=failed,
+    )
+
+
+def is_supported_import_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    suffix = path.suffix.lower()
+    return any(suffix == extension for extension, _label in BOOK_IMPORT_FORMATS)
+
+
+def collect_import_files_from_paths(paths: Iterable[Path]) -> list[Path]:
+    return sorted(
+        (path for path in paths if is_supported_import_file(path)),
+        key=lambda path: str(path).casefold(),
+    )
+
+
+def collect_import_files_from_folder(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return collect_import_files_from_paths(folder.iterdir())
+
+
+def build_multiimport_batch_items(paths: Iterable[Path]) -> list[MultiImportBatchItem]:
+    return [MultiImportBatchItem(source_path=path, display_name=path.name) for path in paths]
+
+
+def multiimport_precheck_issues(analysis: ImportAnalysis) -> list[str]:
+    issues = []
+    recommended = analysis.recommended
+    if recommended is None:
+        return ["missing_candidate"]
+    if recommended.score < 100:
+        issues.append("candidate_score_below_100")
+    if analysis.duplicates:
+        issues.append("duplicate_warning")
+    if not is_valid_import_preview(analysis.preview):
+        issues.append("invalid_preview")
+    preview_url = analysis.preview.url.strip()
+    recommended_url = recommended.url.strip()
+    if not preview_url:
+        issues.append("missing_preview_url")
+    if not recommended_url:
+        issues.append("missing_candidate_url")
+    if preview_url and recommended_url and preview_url != recommended_url:
+        issues.append("preview_url_mismatch")
+    hundred_score_urls = {
+        candidate.url.strip()
+        for candidate in analysis.candidates
+        if candidate.score >= 100 and candidate.url.strip()
+    }
+    if len(hundred_score_urls) > 1:
+        issues.append("multiple_100_candidate_urls")
+    elif recommended_url and hundred_score_urls != {recommended_url}:
+        issues.append("recommended_not_unique_100_candidate")
+    return issues
+
+
+def is_safe_multiimport_precheck(analysis: ImportAnalysis) -> bool:
+    return not multiimport_precheck_issues(analysis)
+
+
+def run_multiimport_batch_analysis(
+    items: Iterable[MultiImportBatchItem],
+    analyze_one: Callable[[Path], ImportAnalysis],
+    *,
+    precheck_safe_matches: bool = False,
+    progress_callback: Callable[[int, int, MultiImportBatchItem], None] | None = None,
+) -> list[MultiImportBatchItem]:
+    batch = list(items)
+    total = len(batch)
+    for index, item in enumerate(batch, start=1):
+        item.status = "analyzing"
+        item.error_message = ""
+        item.checked_for_import = False
+        try:
+            analysis = analyze_one(item.source_path)
+        except Exception as exc:
+            item.analysis = None
+            item.current_preview = None
+            item.selected_candidate = None
+            item.duplicates = []
+            item.error_message = str(exc) or type(exc).__name__
+            item.status = "analysis_error"
+        else:
+            item.analysis = analysis
+            item.current_preview = analysis.preview
+            item.selected_candidate = analysis.recommended
+            item.duplicates = list(analysis.duplicates)
+            safe_match = is_safe_multiimport_precheck(analysis)
+            if item.duplicates:
+                item.status = "duplicate_warning"
+            elif safe_match:
+                item.status = "ready"
+            else:
+                item.status = "needs_review"
+            item.checked_for_import = precheck_safe_matches and safe_match
+        if progress_callback is not None:
+            progress_callback(index, total, item)
+    return batch
 
 
 def _epub_opf_path(archive: zipfile.ZipFile) -> str:
@@ -1256,6 +1487,31 @@ def _word_overlap_score(left: str, right: str) -> int:
     return int(60 * len(overlap) / max(len(left_words), len(right_words)))
 
 
+def _terminal_inflection_title_variant(title: str) -> str:
+    """Vrati uzky fallback pro ceskou koncovku posledniho slova a/e."""
+    match = re.match(r"^(.*\s)([^\W\d_]{6,})$", title.strip(), flags=re.UNICODE)
+    if not match or not match.group(2).casefold().endswith("a"):
+        return ""
+    word = match.group(2)
+    replacement = "E" if word[-1].isupper() else "e"
+    return match.group(1) + word[:-1] + replacement
+
+
+def _titles_match_terminal_inflection(left: str, right: str) -> bool:
+    left_words = normalize_text(left).split()
+    right_words = normalize_text(right).split()
+    if len(left_words) < 3 or len(left_words) != len(right_words) or left_words[:-1] != right_words[:-1]:
+        return False
+    left_last = left_words[-1]
+    right_last = right_words[-1]
+    return (
+        len(left_last) >= 6
+        and len(left_last) == len(right_last)
+        and left_last[:-1] == right_last[:-1]
+        and {left_last[-1], right_last[-1]} == {"a", "e"}
+    )
+
+
 def _authors_text(authors: Sequence[str] | str) -> str:
     if isinstance(authors, str):
         return authors
@@ -1457,7 +1713,7 @@ def delete_books_from_calibre(
 
 
 def _title_similarity_score(left: str, right: str) -> int:
-    if normalize_text(left) == normalize_text(right) and left:
+    if (normalize_text(left) == normalize_text(right) or _titles_match_terminal_inflection(left, right)) and left:
         return 70
     return min(70, int(_word_overlap_score(left, right) * 70 / 60))
 
@@ -1554,9 +1810,19 @@ def _lookup_import_source(
 ) -> list[ImportCandidate]:
     if source == "databazeknih":
         html_text = fetch(build_search_url(book.title, book.authors))
-        return [
+        found = [
             import_candidate_from_search_candidate("databazeknih", item, signals)
             for item in parse_search_results(html_text)
+        ]
+        if found:
+            return found
+        variant = _terminal_inflection_title_variant(book.title)
+        if not variant:
+            return []
+        fallback_html = fetch(build_search_url(variant, book.authors))
+        return [
+            import_candidate_from_search_candidate("databazeknih", item, signals)
+            for item in parse_search_results(fallback_html)
         ]
     if source == "legie":
         html_text = fetch(build_legie_search_url(book.title, book.authors))

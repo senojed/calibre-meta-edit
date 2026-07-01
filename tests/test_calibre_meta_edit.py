@@ -8,7 +8,9 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import urllib.parse
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -58,6 +60,679 @@ def write_test_epub(
 
 
 class TextAndUrlTests(unittest.TestCase):
+    def _multiimport_analysis(
+        self,
+        *,
+        recommended: cme.ImportCandidate | None = None,
+        candidates: list[cme.ImportCandidate] | None = None,
+        duplicates: list[cme.DuplicateCandidate] | None = None,
+        preview: cme.ImportPreview | None = None,
+    ) -> cme.ImportAnalysis:
+        if recommended is None and candidates is None:
+            recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        return cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=[],
+            candidates=candidates if candidates is not None else ([recommended] if recommended is not None else []),
+            recommended=recommended,
+            duplicates=duplicates or [],
+            preview=preview or cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+            messages=[],
+        )
+
+    def _valid_checked_multiimport_item(self, name: str = "book.epub") -> cme.MultiImportBatchItem:
+        analysis = self._multiimport_analysis()
+        return cme.MultiImportBatchItem(
+            Path(name),
+            name,
+            checked_for_import=True,
+            status="ready",
+            analysis=analysis,
+            current_preview=analysis.preview,
+            selected_candidate=analysis.recommended,
+        )
+
+    def test_validate_multiimport_checked_items_reports_no_checked_items(self):
+        item = self._valid_checked_multiimport_item()
+        item.checked_for_import = False
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.valid_items, [])
+        self.assertEqual([issue.reason for issue in result.issues], ["no_checked_items"])
+        self.assertIsNone(result.issues[0].item)
+
+    def test_validate_multiimport_checked_items_accepts_ready_item(self):
+        item = self._valid_checked_multiimport_item()
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.valid_items, [item])
+        self.assertEqual(result.issues, [])
+
+    def test_validate_multiimport_checked_items_ignores_unchecked_ready_item(self):
+        checked = self._valid_checked_multiimport_item("checked.epub")
+        unchecked = self._valid_checked_multiimport_item("unchecked.epub")
+        unchecked.checked_for_import = False
+
+        result = cme.validate_multiimport_checked_items([checked, unchecked])
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.valid_items, [checked])
+
+    def test_validate_multiimport_checked_items_blocks_needs_review_status(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["status_not_ready"])
+
+    def test_validate_multiimport_checked_items_reports_strict_precheck_reason(self):
+        item = self._valid_checked_multiimport_item()
+        other = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100)
+        item.analysis = replace(item.analysis, candidates=[item.selected_candidate, other])
+        item.status = "needs_review"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["multiple_100_candidate_urls"])
+
+    def test_validate_multiimport_checked_items_blocks_duplicate_warning(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Kniha", "Autor")]
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
+
+    def test_validate_multiimport_checked_items_blocks_analysis_error(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "analysis_error"
+        item.error_message = "failed"
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["analysis_error"])
+
+    def test_validate_multiimport_checked_items_requires_analysis(self):
+        item = self._valid_checked_multiimport_item()
+        item.analysis = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_analysis"])
+
+    def test_validate_multiimport_checked_items_requires_preview(self):
+        item = self._valid_checked_multiimport_item()
+        item.current_preview = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_preview"])
+
+    def test_validate_multiimport_checked_items_requires_selected_candidate(self):
+        item = self._valid_checked_multiimport_item()
+        item.selected_candidate = None
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["missing_candidate"])
+
+    def test_validate_multiimport_checked_items_requires_valid_preview(self):
+        item = self._valid_checked_multiimport_item()
+        item.current_preview = cme.ImportPreview(title="", authors="Autor")
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["invalid_preview"])
+
+    def test_validate_multiimport_checked_items_preserves_valid_order_in_mixed_batch(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        invalid = self._valid_checked_multiimport_item("invalid.epub")
+        invalid.status = "needs_review"
+        unchecked = self._valid_checked_multiimport_item("unchecked.epub")
+        unchecked.checked_for_import = False
+        second = self._valid_checked_multiimport_item("second.epub")
+
+        result = cme.validate_multiimport_checked_items([first, invalid, unchecked, second])
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.valid_items, [first, second])
+        self.assertEqual([(issue.item, issue.reason) for issue in result.issues], [(invalid, "status_not_ready")])
+
+    def test_validate_multiimport_checked_items_never_calls_write(self):
+        from unittest.mock import patch
+
+        item = self._valid_checked_multiimport_item()
+
+        with patch.object(cme, "apply_import_preview") as apply_preview:
+            cme.validate_multiimport_checked_items([item])
+
+        apply_preview.assert_not_called()
+
+    def test_run_multiimport_batch_write_blocks_entire_batch_when_checked_item_is_invalid(self):
+        from unittest.mock import Mock
+
+        valid = self._valid_checked_multiimport_item("valid.epub")
+        invalid = self._valid_checked_multiimport_item("review.epub")
+        invalid.status = "needs_review"
+        existing_result = cme.ImportApplyResult(book_id=9, status="updated")
+        valid.write_result = existing_result
+        valid.calibre_id = 9
+        writer = Mock()
+        progress = Mock()
+
+        summary = cme.run_multiimport_batch_write(
+            [valid, invalid], writer, progress_callback=progress
+        )
+
+        self.assertFalse(summary.validation.ok)
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (0, 0, 0))
+        self.assertEqual([valid.status, invalid.status], ["ready", "needs_review"])
+        self.assertEqual([valid.checked_for_import, invalid.checked_for_import], [True, True])
+        self.assertIs(valid.write_result, existing_result)
+        self.assertEqual(valid.calibre_id, 9)
+        writer.assert_not_called()
+        progress.assert_not_called()
+
+    def test_run_multiimport_batch_write_writes_checked_valid_items_in_order(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        ignored = self._valid_checked_multiimport_item("ignored.epub")
+        ignored.checked_for_import = False
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+        items_by_path = {item.source_path: item for item in (first, second)}
+
+        def write_one(preview, path):
+            self.assertEqual(items_by_path[path].status, "writing")
+            calls.append((preview, path))
+            return cme.ImportApplyResult(book_id=len(calls), status="updated")
+
+        summary = cme.run_multiimport_batch_write([first, ignored, second], write_one)
+
+        self.assertEqual([path for _preview, path in calls], [first.source_path, second.source_path])
+        self.assertEqual(summary.attempted, 2)
+        self.assertEqual(ignored.status, "ready")
+        self.assertFalse(ignored.checked_for_import)
+
+    def test_run_multiimport_batch_write_records_success(self):
+        item = self._valid_checked_multiimport_item()
+        result = cme.ImportApplyResult(book_id=42, status="updated")
+
+        summary = cme.run_multiimport_batch_write([item], lambda _preview, _path: result)
+
+        self.assertTrue(summary.ok)
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (1, 1, 0))
+        self.assertEqual(item.status, "written")
+        self.assertIs(item.write_result, result)
+        self.assertEqual(item.calibre_id, 42)
+        self.assertFalse(item.checked_for_import)
+
+    def test_run_multiimport_batch_write_records_returned_failure_and_continues(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        results = iter(
+            [
+                cme.ImportApplyResult(book_id=0, status="failed", error="write failed"),
+                cme.ImportApplyResult(book_id=12, status="updated"),
+            ]
+        )
+
+        summary = cme.run_multiimport_batch_write(
+            [first, second], lambda _preview, _path: next(results)
+        )
+
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (2, 1, 1))
+        self.assertEqual([first.status, second.status], ["write_error", "written"])
+        self.assertEqual([first.calibre_id, second.calibre_id], [None, 12])
+        self.assertEqual(first.write_result.error, "write failed")
+
+    def test_run_multiimport_batch_write_records_writer_exception_and_continues(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+
+        def write_one(_preview, path):
+            calls.append(path)
+            if path == first.source_path:
+                raise RuntimeError("writer exploded")
+            return cme.ImportApplyResult(book_id=13, status="updated")
+
+        summary = cme.run_multiimport_batch_write([first, second], write_one)
+
+        self.assertEqual(calls, [first.source_path, second.source_path])
+        self.assertEqual((summary.attempted, summary.succeeded, summary.failed), (2, 1, 1))
+        self.assertEqual(first.status, "write_error")
+        self.assertEqual(first.write_result.error, "writer exploded")
+        self.assertEqual(second.status, "written")
+
+    def test_run_multiimport_batch_write_blocks_duplicate_warning(self):
+        from unittest.mock import Mock
+
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Kniha", "Autor")]
+        writer = Mock()
+
+        summary = cme.run_multiimport_batch_write([item], writer)
+
+        self.assertEqual(summary.attempted, 0)
+        self.assertEqual(item.status, "duplicate_warning")
+        self.assertTrue(item.checked_for_import)
+        writer.assert_not_called()
+
+    def test_run_multiimport_batch_write_blocks_analysis_error(self):
+        from unittest.mock import Mock
+
+        item = self._valid_checked_multiimport_item()
+        item.status = "analysis_error"
+        item.error_message = "analysis failed"
+        writer = Mock()
+
+        summary = cme.run_multiimport_batch_write([item], writer)
+
+        self.assertEqual(summary.attempted, 0)
+        self.assertEqual(item.status, "analysis_error")
+        self.assertTrue(item.checked_for_import)
+        writer.assert_not_called()
+
+    def test_run_multiimport_batch_write_reports_progress_after_final_state(self):
+        item = self._valid_checked_multiimport_item()
+        result = cme.ImportApplyResult(book_id=42, status="updated")
+        progress = []
+
+        cme.run_multiimport_batch_write(
+            [item],
+            lambda _preview, _path: result,
+            progress_callback=lambda current, total, current_item: progress.append(
+                (
+                    current,
+                    total,
+                    current_item,
+                    current_item.status,
+                    current_item.write_result,
+                    current_item.calibre_id,
+                    current_item.checked_for_import,
+                )
+            ),
+        )
+
+        self.assertEqual(progress, [(1, 1, item, "written", result, 42, False)])
+
+    def test_run_multiimport_batch_write_propagates_progress_callback_error(self):
+        first = self._valid_checked_multiimport_item("first.epub")
+        second = self._valid_checked_multiimport_item("second.epub")
+        calls = []
+
+        def write_one(_preview, path):
+            calls.append(path)
+            return cme.ImportApplyResult(book_id=len(calls), status="updated")
+
+        def report_progress(_current, _total, _item):
+            raise RuntimeError("progress failed")
+
+        with self.assertRaisesRegex(RuntimeError, "progress failed"):
+            cme.run_multiimport_batch_write(
+                [first, second], write_one, progress_callback=report_progress
+            )
+
+        self.assertEqual(calls, [first.source_path])
+        self.assertEqual(first.status, "written")
+        self.assertEqual(second.status, "ready")
+
+    def test_run_multiimport_batch_write_does_not_infer_eligibility_from_candidate_score(self):
+        item = self._valid_checked_multiimport_item()
+        item.selected_candidate = cme.ImportCandidate(
+            "databazeknih", "Kniha", "Autor", "https://dk/low", score=1
+        )
+        calls = []
+
+        summary = cme.run_multiimport_batch_write(
+            [item],
+            lambda preview, path: (
+                calls.append((preview, path))
+                or cme.ImportApplyResult(book_id=7, status="updated")
+            ),
+        )
+
+        self.assertEqual(summary.succeeded, 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_run_multiimport_batch_write_does_not_call_should_auto_import(self):
+        from unittest.mock import patch
+
+        item = self._valid_checked_multiimport_item()
+        with patch.object(
+            cme,
+            "should_auto_import",
+            side_effect=AssertionError("must not be called"),
+            create=True,
+        ):
+            summary = cme.run_multiimport_batch_write(
+                [item],
+                lambda _preview, _path: cme.ImportApplyResult(book_id=8, status="updated"),
+            )
+
+        self.assertEqual(summary.succeeded, 1)
+
+    def test_multiimport_batch_item_defaults(self):
+        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub")
+
+        self.assertEqual(item.status, "pending")
+        self.assertFalse(item.checked_for_import)
+        self.assertEqual(item.error_message, "")
+        self.assertEqual(item.duplicates, [])
+        self.assertIn("pending", cme.MULTIIMPORT_BATCH_STATUSES)
+        self.assertIn("write_error", cme.MULTIIMPORT_BATCH_STATUSES)
+
+    def test_safe_multiimport_precheck_accepts_single_recommended_100_match(self):
+        analysis = self._multiimport_analysis()
+
+        self.assertTrue(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_recommended_score_below_100(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=99)
+        analysis = self._multiimport_analysis(recommended=recommended)
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_duplicates(self):
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", score=100, strong=True)
+        analysis = self._multiimport_analysis(duplicates=[duplicate])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_missing_recommended(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        analysis = self._multiimport_analysis(recommended=None, candidates=[candidate])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_invalid_preview(self):
+        analysis = self._multiimport_analysis(preview=cme.ImportPreview(title="", authors="Autor", url="https://dk/1"))
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_empty_preview_url(self):
+        analysis = self._multiimport_analysis(preview=cme.ImportPreview(title="Kniha", authors="Autor", url=""))
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_empty_recommended_url(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=recommended,
+            candidates=[recommended],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_preview_recommended_url_mismatch(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=recommended,
+            candidates=[recommended],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_multiple_distinct_100_score_urls(self):
+        recommended = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        other = cme.ImportCandidate("legie", "Kniha", "Autor", "https://legie/1", score=100)
+        analysis = self._multiimport_analysis(recommended=recommended, candidates=[recommended, other])
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_safe_multiimport_precheck_rejects_ai_override_lower_score_recommended(self):
+        full = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/100", score=100)
+        ai_choice = cme.ImportCandidate("openlibrary", "Kniha", "Autor", "https://ol/75", score=75)
+        analysis = self._multiimport_analysis(
+            recommended=ai_choice,
+            candidates=[full, ai_choice],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://ol/75"),
+        )
+
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_build_multiimport_batch_items_preserves_path_order_and_defaults(self):
+        paths = [Path("second.mobi"), Path("first.epub")]
+
+        items = cme.build_multiimport_batch_items(paths)
+
+        self.assertEqual([item.source_path for item in items], paths)
+        self.assertEqual([item.display_name for item in items], ["second.mobi", "first.epub"])
+        self.assertEqual([item.status for item in items], ["pending", "pending"])
+        self.assertEqual([item.checked_for_import for item in items], [False, False])
+
+    def test_run_multiimport_batch_analysis_processes_items_sequentially_and_stores_analysis(self):
+        paths = [Path("first.epub"), Path("second.mobi")]
+        items = cme.build_multiimport_batch_items(paths)
+        analyses = {
+            path: self._multiimport_analysis(
+                recommended=cme.ImportCandidate("databazeknih", path.stem, "Autor", f"https://dk/{index}", score=100),
+                preview=cme.ImportPreview(title=path.stem, authors="Autor", url=f"https://dk/{index}"),
+            )
+            for index, path in enumerate(paths, start=1)
+        }
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            self.assertEqual(items[len(calls) - 1].status, "analyzing")
+            return analyses[path]
+
+        result = cme.run_multiimport_batch_analysis(items, analyze)
+
+        self.assertEqual(calls, paths)
+        self.assertIs(result[0], items[0])
+        for item, path in zip(result, paths):
+            analysis = analyses[path]
+            self.assertIs(item.analysis, analysis)
+            self.assertIs(item.current_preview, analysis.preview)
+            self.assertIs(item.selected_candidate, analysis.recommended)
+            self.assertEqual(item.duplicates, analysis.duplicates)
+
+    def test_run_multiimport_batch_analysis_safe_match_is_ready_but_not_checked_by_default(self):
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: self._multiimport_analysis())
+
+        self.assertEqual(result[0].status, "ready")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_prechecks_safe_match_when_enabled(self):
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(
+            items,
+            lambda _path: self._multiimport_analysis(),
+            precheck_safe_matches=True,
+        )
+
+        self.assertEqual(result[0].status, "ready")
+        self.assertTrue(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_unsafe_match_needs_review(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=99)
+        analysis = self._multiimport_analysis(recommended=candidate)
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: analysis, precheck_safe_matches=True)
+
+        self.assertEqual(result[0].status, "needs_review")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_multiimport_precheck_explains_preview_url_mismatch(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        analysis = self._multiimport_analysis(
+            recommended=candidate,
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/2"),
+        )
+
+        self.assertEqual(cme.multiimport_precheck_issues(analysis), ["preview_url_mismatch"])
+
+    def test_multiimport_precheck_accepts_one_distinct_100_percent_url(self):
+        candidate = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        duplicate_url = replace(candidate, title="Stejna kniha")
+        analysis = self._multiimport_analysis(
+            recommended=candidate,
+            candidates=[candidate, duplicate_url],
+        )
+
+        self.assertEqual(cme.multiimport_precheck_issues(analysis), [])
+        self.assertTrue(cme.is_safe_multiimport_precheck(analysis))
+
+    def test_run_multiimport_batch_analysis_marks_duplicates_for_warning(self):
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", score=100, strong=True)
+        analysis = self._multiimport_analysis(duplicates=[duplicate])
+        items = cme.build_multiimport_batch_items([Path("book.epub")])
+
+        result = cme.run_multiimport_batch_analysis(items, lambda _path: analysis, precheck_safe_matches=True)
+
+        self.assertEqual(result[0].duplicates, [duplicate])
+        self.assertEqual(result[0].status, "duplicate_warning")
+        self.assertFalse(result[0].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_records_error_and_continues(self):
+        paths = [Path("broken.epub"), Path("good.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        calls = []
+
+        def analyze(path):
+            calls.append(path)
+            if path == paths[0]:
+                raise RuntimeError("analysis failed")
+            return self._multiimport_analysis()
+
+        result = cme.run_multiimport_batch_analysis(items, analyze, precheck_safe_matches=True)
+
+        self.assertEqual(calls, paths)
+        self.assertEqual(result[0].status, "analysis_error")
+        self.assertEqual(result[0].error_message, "analysis failed")
+        self.assertFalse(result[0].checked_for_import)
+        self.assertEqual(result[1].status, "ready")
+        self.assertTrue(result[1].checked_for_import)
+
+    def test_run_multiimport_batch_analysis_reports_progress_after_success_and_error(self):
+        paths = [Path("broken.epub"), Path("good.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        progress = []
+
+        def analyze(path):
+            if path == paths[0]:
+                raise RuntimeError("analysis failed")
+            return self._multiimport_analysis()
+
+        result = cme.run_multiimport_batch_analysis(
+            items,
+            analyze,
+            progress_callback=lambda current, total, item: progress.append(
+                (current, total, item, item.status)
+            ),
+        )
+
+        self.assertEqual(
+            progress,
+            [
+                (1, 2, result[0], "analysis_error"),
+                (2, 2, result[1], "ready"),
+            ],
+        )
+
+    def test_run_multiimport_batch_analysis_propagates_progress_callback_error(self):
+        paths = [Path("first.epub"), Path("second.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        analyzed = []
+
+        def analyze(path):
+            analyzed.append(path)
+            return self._multiimport_analysis()
+
+        def report_progress(_current, _total, _item):
+            raise RuntimeError("progress failed")
+
+        with self.assertRaisesRegex(RuntimeError, "progress failed"):
+            cme.run_multiimport_batch_analysis(
+                items,
+                analyze,
+                progress_callback=report_progress,
+            )
+
+        self.assertEqual(analyzed, [paths[0]])
+
+    def test_is_supported_import_file_accepts_all_configured_formats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for extension, _label in cme.BOOK_IMPORT_FORMATS:
+                path = root / f"book{extension}"
+                path.write_text("x", encoding="utf-8")
+
+                self.assertTrue(cme.is_supported_import_file(path), extension)
+
+    def test_is_supported_import_file_accepts_uppercase_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "book.EPUB"
+            path.write_text("x", encoding="utf-8")
+
+            self.assertTrue(cme.is_supported_import_file(path))
+
+    def test_is_supported_import_file_rejects_unsupported_suffix_and_no_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            txt = root / "book.txt"
+            no_suffix = root / "book"
+            txt.write_text("x", encoding="utf-8")
+            no_suffix.write_text("x", encoding="utf-8")
+
+            self.assertFalse(cme.is_supported_import_file(txt))
+            self.assertFalse(cme.is_supported_import_file(no_suffix))
+
+    def test_collect_import_files_from_paths_ignores_directories_and_unsupported_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            epub = root / "b.epub"
+            mobi = root / "a.mobi"
+            unsupported = root / "c.txt"
+            directory = root / "d.azw3"
+            epub.write_text("x", encoding="utf-8")
+            mobi.write_text("x", encoding="utf-8")
+            unsupported.write_text("x", encoding="utf-8")
+            directory.mkdir()
+
+            collected = cme.collect_import_files_from_paths([epub, unsupported, directory, mobi])
+
+            self.assertEqual(collected, [mobi, epub])
+
+    def test_collect_import_files_from_folder_is_non_recursive_and_sorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            z_epub = root / "z.epub"
+            a_pdb = root / "A.PDB"
+            unsupported = root / "middle.txt"
+            nested = root / "nested"
+            nested_mobi = nested / "nested.mobi"
+            z_epub.write_text("x", encoding="utf-8")
+            a_pdb.write_text("x", encoding="utf-8")
+            unsupported.write_text("x", encoding="utf-8")
+            nested.mkdir()
+            nested_mobi.write_text("x", encoding="utf-8")
+
+            collected = cme.collect_import_files_from_folder(root)
+
+            self.assertEqual(collected, [a_pdb, z_epub])
+
+    def test_collect_import_files_uses_book_import_formats_as_source_of_truth(self):
+        configured_extensions = {extension for extension, _label in cme.BOOK_IMPORT_FORMATS}
+
+        self.assertTrue(configured_extensions)
+        self.assertTrue(all(extension.startswith(".") for extension in configured_extensions))
+
     def test_book_detail_metadata_defaults_series_fields_to_empty(self):
         detail = cme.BookDetailMetadata()
 
@@ -1329,6 +2004,51 @@ class ImportCandidateScoringTests(unittest.TestCase):
 
         self.assertEqual(scored[0].url, "https://dk/good")
         self.assertGreater(scored[0].score, scored[1].score)
+
+    def test_lookup_import_candidates_tolerates_hatteras_inflection_without_bypassing_precheck(self):
+        signals = [
+            cme.ImportSourceSignal(
+                "epub-metadata",
+                "Dobrodru\u017estv\u00ed kapit\u00e1na Hatterasa",
+                "Verne, Jules",
+                language="cs",
+            ),
+            cme.ImportSourceSignal(
+                "epub-text",
+                "Dobrodru\u017estv\u00ed kapit\u00e1na Hatterasa",
+                "Verne, Jules",
+                language="cs",
+            ),
+        ]
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            if "Hatterase" not in urllib.parse.unquote_plus(url):
+                return ""
+            return """
+                <a href="/prehled-knihy/dobrodruzstvi-kapitana-hatterase-36039">
+                    <img title="Dobrodru\u017estv\u00ed kapit\u00e1na Hatterase" />
+                    Dobrodru\u017estv\u00ed kapit\u00e1na Hatterase
+                </a>
+                <p>Jules Verne</p>
+            """
+
+        candidates = cme.lookup_import_candidates(signals, fetcher=fetch)
+
+        self.assertTrue(any("Hatterase" in urllib.parse.unquote_plus(url) for url in calls))
+        self.assertEqual(candidates[0].url, "https://www.databazeknih.cz/knihy/dobrodruzstvi-kapitana-hatterase-36039")
+        self.assertEqual(candidates[0].score, 100)
+        analysis = cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=signals,
+            candidates=candidates,
+            recommended=candidates[0],
+            duplicates=[],
+            preview=cme.ImportPreview(title=candidates[0].title, authors="Jules Verne"),
+            messages=[],
+        )
+        self.assertFalse(cme.is_safe_multiimport_precheck(analysis))
 
     def test_score_import_candidates_requires_databaze_author_evidence_text(self):
         signals = [cme.ImportSourceSignal("epub-metadata", "Kniha", "Autor")]

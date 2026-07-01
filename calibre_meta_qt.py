@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import importlib.util
 import io
 import json
 import logging
 import os
+import socket
 import threading
 import webbrowser
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import calibre_meta_app as shared
 import calibre_meta_edit as cme
@@ -76,6 +78,239 @@ def book_import_file_filter() -> str:
     patterns = " ".join("*" + extension for extension, _label in sorted(cme.BOOK_IMPORT_FORMATS))
     epub_label = next(label for extension, label in cme.BOOK_IMPORT_FORMATS if extension == ".epub")
     return f"Knihy ({patterns});;{epub_label} (*.epub);;Vsechny soubory (*.*)"
+
+
+def is_probably_online(timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection(("1.1.1.1", 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def multiimport_analysis_summary(items: Sequence[cme.MultiImportBatchItem]) -> str:
+    counts = {
+        status: sum(item.status == status for item in items)
+        for status in ("ready", "needs_review", "duplicate_warning", "analysis_error")
+    }
+    successful = counts["ready"] + counts["needs_review"] + counts["duplicate_warning"]
+    return "\n".join(
+        (
+            "Multiimport analyza dokoncena.",
+            "",
+            f"Podporovane soubory: {len(items)}",
+            f"Analyzovano uspesne: {successful}",
+            f"Pripraveno: {counts['ready']}",
+            f"Vyzaduje kontrolu: {counts['needs_review']}",
+            f"Varovani na duplicitu: {counts['duplicate_warning']}",
+            f"Chyby: {counts['analysis_error']}",
+            "",
+            "Nic nebylo importovano.",
+        )
+    )
+
+
+def multiimport_status_label(status: str) -> str:
+    labels = {
+        "pending": "Čeká",
+        "analyzing": "Analyzuje se",
+        "ready": "Připraveno",
+        "needs_review": "Ke kontrole",
+        "duplicate_warning": "Možná duplicita",
+        "analysis_error": "Chyba analýzy",
+        "skipped": "Přeskočeno",
+        "writing": "Zapisuje se",
+        "written": "Zapsáno",
+        "write_error": "Chyba zápisu",
+    }
+    return labels.get(status, f"Neznámý stav: {status}")
+
+
+def multiimport_compact_status_label(status: str) -> str:
+    labels = {
+        "ready": "✓",
+        "needs_review": "👁",
+        "duplicate_warning": "⧉",
+        "analysis_error": "✕",
+        "writing": "↻",
+        "written": "✓",
+        "write_error": "✕",
+    }
+    return labels.get(status, multiimport_status_label(status))
+
+
+def multiimport_status_tooltip(status: str) -> str:
+    labels = {
+        "ready": "OK",
+        "needs_review": "Kontrola",
+        "duplicate_warning": "Duplicita",
+        "analysis_error": "Chyba",
+        "writing": "Zápis",
+        "written": "Hotovo",
+        "write_error": "Chyba zápisu",
+    }
+    return labels.get(status, multiimport_status_label(status))
+
+
+def multiimport_validation_reason_label(reason: str) -> str:
+    labels = {
+        "no_checked_items": "Není vybraná žádná položka.",
+        "status_not_ready": "Položka není ve stavu Připraveno.",
+        "missing_analysis": "Chybí analýza.",
+        "missing_preview": "Chybí náhled importu.",
+        "missing_candidate": "Chybí vybraný kandidát.",
+        "duplicate_warning": "Položka má varování na duplicitu.",
+        "analysis_error": "Položka má chybu analýzy.",
+        "invalid_preview": "Náhled importu není validní.",
+        "candidate_score_below_100": "Doporučený kandidát nemá 100% shodu.",
+        "missing_preview_url": "Náhled nemá zdrojový odkaz.",
+        "missing_candidate_url": "Doporučený kandidát nemá odkaz.",
+        "preview_url_mismatch": "Odkaz náhledu neodpovídá doporučenému kandidátovi.",
+        "multiple_100_candidate_urls": (
+            "Existuje více různých kandidátů se 100% shodou; aplikace nemůže "
+            "bezpečně vybrat jednu Databáze knih URL. Ponechte položku ke kontrole "
+            "a použijte jednopoložkový ruční postup."
+        ),
+        "recommended_not_unique_100_candidate": "Doporučený kandidát není jediná 100% shoda.",
+    }
+    return labels.get(reason, f"Neznámý důvod: {reason}")
+
+
+def multiimport_validation_summary_text(result: cme.MultiImportValidationResult) -> str:
+    if result.ok:
+        return (
+            "Výběr je validní. "
+            f"Položek připravených k budoucímu importu: {len(result.valid_items)}. "
+            "Nic nebylo importováno."
+        )
+
+    lines = [
+        "Výběr není validní.",
+        f"Položek připravených k budoucímu importu: {len(result.valid_items)}",
+        f"Blokující problémy: {len(result.issues)}",
+    ]
+    for issue in result.issues:
+        prefix = f"{issue.item.display_name}: " if issue.item is not None else ""
+        lines.append(f"- {prefix}{multiimport_validation_reason_label(issue.reason)}")
+    lines.extend(("", "Nic nebylo importováno."))
+    return "\n".join(lines)
+
+
+def multiimport_item_row_text(item: cme.MultiImportBatchItem) -> str:
+    parts = [
+        item.display_name,
+        multiimport_status_label(item.status),
+        f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
+        f"Duplicity: {len(item.duplicates)}",
+    ]
+    if item.error_message:
+        parts.append(item.error_message)
+    return " | ".join(parts)
+
+
+def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
+    preview = item.current_preview or cme.ImportPreview()
+    lines = [
+        f"Stav: {multiimport_status_label(item.status)}",
+        f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
+        "",
+        f"Nazev: {preview.title}",
+        f"Autori: {preview.authors}",
+        f"Zdroj: {preview.source}",
+        f"Odkaz: {preview.url}",
+    ]
+    if item.selected_candidate is not None:
+        candidate = item.selected_candidate
+        lines.extend(
+            (
+                "",
+                "Doporuceny kandidat:",
+                f"{candidate.title} / {candidate.authors} / {candidate.score}%",
+                f"{candidate.source}: {candidate.url}",
+            )
+        )
+    if item.status == "needs_review" and item.analysis is not None:
+        issues = cme.multiimport_precheck_issues(item.analysis)
+        if issues:
+            lines.extend(("", "Důvod kontroly:"))
+            lines.extend(f"- {multiimport_validation_reason_label(reason)}" for reason in issues)
+        if "multiple_100_candidate_urls" in issues:
+            candidates = []
+            seen_urls = set()
+            for candidate in item.analysis.candidates:
+                url = candidate.url.strip()
+                if candidate.score < 100 or not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                candidates.append(candidate)
+            if candidates:
+                lines.extend(("", "Konfliktní 100% kandidáti:"))
+                lines.extend(f"- {candidate.title}: {candidate.url}" for candidate in candidates)
+            lines.extend(
+                (
+                    "",
+                    "Automatický import je zablokován, protože nelze bezpečně vybrat jednu URL.",
+                    "Ponechte řádek ke kontrole a použijte jednopoložkový ruční postup.",
+                )
+            )
+    lines.extend(("", f"Duplicity: {len(item.duplicates)}"))
+    for duplicate in item.duplicates:
+        lines.append(f"ID {duplicate.book_id}: {duplicate.title} / {duplicate.authors} / {duplicate.score}%")
+    if item.error_message:
+        lines.extend(("", f"Chyba: {item.error_message}"))
+    return "\n".join(lines)
+
+
+MULTIIMPORT_EXPORT_COLUMNS = (
+    "file",
+    "status",
+    "status_label",
+    "checked_for_import",
+    "preview_title",
+    "preview_authors",
+    "preview_source",
+    "preview_url",
+    "recommended_title",
+    "recommended_authors",
+    "recommended_url",
+    "recommended_score",
+    "duplicate_count",
+    "error_message",
+)
+
+
+def multiimport_export_rows(items: Iterable[cme.MultiImportBatchItem]) -> list[dict[str, str]]:
+    rows = []
+    for item in items:
+        preview = item.current_preview
+        candidate = item.selected_candidate
+        rows.append(
+            {
+                "file": item.display_name,
+                "status": item.status,
+                "status_label": multiimport_status_label(item.status),
+                "checked_for_import": "true" if item.checked_for_import else "false",
+                "preview_title": preview.title if preview is not None else "",
+                "preview_authors": preview.authors if preview is not None else "",
+                "preview_source": preview.source if preview is not None else "",
+                "preview_url": preview.url if preview is not None else "",
+                "recommended_title": candidate.title if candidate is not None else "",
+                "recommended_authors": candidate.authors if candidate is not None else "",
+                "recommended_url": candidate.url if candidate is not None else "",
+                "recommended_score": str(candidate.score) if candidate is not None else "",
+                "duplicate_count": str(len(item.duplicates)),
+                "error_message": item.error_message,
+            }
+        )
+    return rows
+
+
+def write_multiimport_csv_report(path: Path, items: Iterable[cme.MultiImportBatchItem]) -> None:
+    rows = multiimport_export_rows(items)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=MULTIIMPORT_EXPORT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def filter_rows(
@@ -392,6 +627,8 @@ if PYSIDE6_AVAILABLE:
         QMainWindow,
         QMenu,
         QMessageBox,
+        QProgressDialog,
+        QProgressBar,
         QListWidget,
         QListWidgetItem,
         QStyleFactory,
@@ -422,6 +659,366 @@ if PYSIDE6_AVAILABLE:
         review_ready = Signal(int, int, str, object, str)
         import_ready = Signal(object, str)
         apply_ready = Signal(object, str)
+
+
+    class MultiImportProgressDialog(QDialog):
+        """Jednoduchý nenativní průběh synchronního multiimportu."""
+
+        def __init__(self, total: int, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setWindowTitle("Průběh importu")
+            self.setModal(True)
+            self.setMinimumWidth(420)
+            self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+            layout = QVBoxLayout(self)
+            self.progress_label = QLabel()
+            self.progress_label.setWordWrap(True)
+            layout.addWidget(self.progress_label)
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setFormat("%v / %m")
+            self.progress_bar.setTextVisible(True)
+            layout.addWidget(self.progress_bar)
+            self.prepare(total)
+
+        def prepare(self, total: int) -> None:
+            self.progress_label.setText("Připravuji import…")
+            self.progress_bar.setRange(0, total)
+            self.progress_bar.setValue(0)
+
+        def show_prepared(self) -> None:
+            self.ensurePolished()
+            layout = self.layout()
+            if layout is not None:
+                layout.activate()
+            self.adjustSize()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            self.progress_label.repaint()
+            self.progress_bar.repaint()
+            self.repaint()
+            QApplication.processEvents()
+
+        def update_progress(self, current: int, total: int, display_name: str) -> None:
+            self.progress_label.setText(f"Importuji {current}/{total}: {display_name}")
+            self.progress_bar.setValue(current)
+
+
+    class MultiImportResultsDialog(QDialog):
+        """Read-only prehled vysledku analyzy vice knih."""
+
+        def __init__(
+            self,
+            items: Sequence[cme.MultiImportBatchItem],
+            parent: QWidget | None = None,
+            *,
+            write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+            post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
+        ) -> None:
+            super().__init__(parent)
+            self.items = list(items)
+            self.write_one = write_one or getattr(parent, "_write_multiimport_item", None)
+            self.post_write_refresh = post_write_refresh or getattr(
+                parent,
+                "_refresh_after_multiimport_write",
+                None,
+            )
+            self.setWindowTitle("Vysledky multiimport analyzy")
+            self.resize(900, 600)
+
+            root = QVBoxLayout(self)
+            summary_label = QLabel(multiimport_analysis_summary(self.items))
+            root.addWidget(summary_label)
+            self.selected_summary_label = QLabel()
+            root.addWidget(self.selected_summary_label)
+
+            selection_buttons = QHBoxLayout()
+            self.select_safe_button = QPushButton("Vybrat 100 %")
+            self.select_safe_button.clicked.connect(self.select_safe_items)
+            selection_buttons.addWidget(self.select_safe_button)
+            self.select_all_button = QPushButton("Vybrat vše")
+            self.select_all_button.clicked.connect(self.select_all_items)
+            selection_buttons.addWidget(self.select_all_button)
+            self.clear_selection_button = QPushButton("Vše odznačit")
+            self.clear_selection_button.clicked.connect(self.clear_selected_items)
+            selection_buttons.addWidget(self.clear_selection_button)
+            selection_buttons.addStretch(1)
+            root.addLayout(selection_buttons)
+
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+            self.items_table = QTableWidget(len(self.items), 3)
+            self.items_table.setHorizontalHeaderLabels(("Import", "Stav", "Soubor"))
+            self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+            self.items_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+            self.items_table.verticalHeader().setVisible(False)
+            header = self.items_table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            for row, item in enumerate(self.items):
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                checkbox_item = QTableWidgetItem()
+                checkbox_item.setFlags(
+                    (checkbox_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    & ~Qt.ItemFlag.ItemIsEditable
+                )
+                if item.status == "analysis_error":
+                    checkbox_item.setFlags(
+                        checkbox_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                )
+                status_item = QTableWidgetItem(multiimport_compact_status_label(item.status))
+                status_item.setToolTip(multiimport_status_tooltip(item.status))
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                file_item = QTableWidgetItem(item.display_name)
+                file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.items_table.setItem(row, 0, checkbox_item)
+                self.items_table.setItem(row, 1, status_item)
+                self.items_table.setItem(row, 2, file_item)
+            body.addWidget(self.items_table, stretch=1)
+
+            self.detail_text = QTextEdit()
+            self.detail_text.setReadOnly(True)
+            body.addWidget(self.detail_text, stretch=2)
+
+            buttons = QHBoxLayout()
+            buttons.addStretch(1)
+            self.validate_button = QPushButton("Ověřit výběr")
+            self.validate_button.clicked.connect(self.validate_selection)
+            buttons.addWidget(self.validate_button)
+            self.export_button = QPushButton("Exportovat CSV")
+            self.export_button.clicked.connect(self.export_csv)
+            buttons.addWidget(self.export_button)
+            self.import_button = QPushButton("Importovat zaškrtnuté")
+            self.import_button.setEnabled(False)
+            self.import_button.clicked.connect(self.import_checked_items)
+            buttons.addWidget(self.import_button)
+            self.close_button = QPushButton("Zavrit")
+            self.close_button.clicked.connect(self.accept)
+            buttons.addWidget(self.close_button)
+            root.addLayout(buttons)
+
+            self._updating_check_state = False
+            self.items_table.itemChanged.connect(self.update_item_checked)
+            self.items_table.currentCellChanged.connect(
+                lambda row, _column, _previous_row, _previous_column: self.show_item_details(row)
+            )
+            self.update_selected_summary()
+            if self.items:
+                self.items_table.setCurrentCell(0, 0)
+
+        def update_item_checked(self, table_item: QTableWidgetItem) -> None:
+            if self._updating_check_state or table_item.column() != 0:
+                return
+            row = table_item.row()
+            if not 0 <= row < len(self.items):
+                return
+            item = self.items[row]
+            self._updating_check_state = True
+            try:
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                    table_item.setCheckState(Qt.CheckState.Unchecked)
+                else:
+                    item.checked_for_import = table_item.checkState() == Qt.CheckState.Checked
+                self.update_selected_summary()
+                if self.items_table.currentRow() == row:
+                    self.show_item_details(row)
+            finally:
+                self._updating_check_state = False
+
+        def update_selected_summary(self) -> None:
+            selected = sum(item.checked_for_import for item in self.items)
+            self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
+            self.update_import_button_enabled()
+
+        def update_import_button_enabled(self) -> None:
+            enabled = self.write_one is not None and any(item.checked_for_import for item in self.items)
+            self.import_button.setEnabled(enabled)
+            if self.write_one is None:
+                tooltip = "Zápis není dostupný."
+            elif enabled:
+                tooltip = "Ověří výběr a importuje pouze bezpečně připravené položky."
+            else:
+                tooltip = "Vyberte alespoň jednu položku."
+            self.import_button.setToolTip(tooltip)
+
+        def _set_bulk_selection(
+            self,
+            should_check: Callable[[cme.MultiImportBatchItem, QTableWidgetItem], bool],
+        ) -> None:
+            current_row = self.items_table.currentRow()
+            self._updating_check_state = True
+            try:
+                for row, item in enumerate(self.items):
+                    checkbox_item = self.items_table.item(row, 0)
+                    checked = should_check(item, checkbox_item)
+                    item.checked_for_import = checked
+                    checkbox_item.setCheckState(
+                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    )
+                self.update_selected_summary()
+                self.show_item_details(current_row)
+            finally:
+                self._updating_check_state = False
+
+        def select_safe_items(self) -> None:
+            def is_safe(item: cme.MultiImportBatchItem, checkbox_item: QTableWidgetItem) -> bool:
+                if not checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    return False
+                candidate = replace(item, checked_for_import=True)
+                return cme.validate_multiimport_checked_items([candidate]).ok
+
+            self._set_bulk_selection(is_safe)
+
+        def select_all_items(self) -> None:
+            self._set_bulk_selection(
+                lambda _item, checkbox_item: bool(
+                    checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                )
+            )
+
+        def clear_selected_items(self) -> None:
+            self._set_bulk_selection(lambda _item, _checkbox_item: False)
+
+        def export_csv(self) -> None:
+            selected_path, _filter = QFileDialog.getSaveFileName(
+                self,
+                "Exportovat multiimport CSV",
+                "multiimport-report.csv",
+                "CSV soubory (*.csv)",
+            )
+            if not selected_path:
+                return
+            path = Path(selected_path)
+            try:
+                write_multiimport_csv_report(path, self.items)
+            except Exception as exc:
+                QMessageBox.warning(self, "Export CSV", f"Export se nepodaril:\n{exc}")
+                return
+            QMessageBox.information(self, "Export CSV", f"CSV ulozeno:\n{path}")
+
+        def validate_selection(self) -> None:
+            result = cme.validate_multiimport_checked_items(self.items)
+            QMessageBox.information(
+                self,
+                "Ověření výběru",
+                multiimport_validation_summary_text(result),
+            )
+
+        def refresh_item_row(self, item: cme.MultiImportBatchItem) -> None:
+            row = next(
+                (index for index, current in enumerate(self.items) if current is item),
+                -1,
+            )
+            if row < 0:
+                return
+            self._updating_check_state = True
+            try:
+                checkbox_item = self.items_table.item(row, 0)
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked
+                    if item.checked_for_import
+                    else Qt.CheckState.Unchecked
+                )
+                status_item = self.items_table.item(row, 1)
+                status_item.setText(multiimport_compact_status_label(item.status))
+                status_item.setToolTip(multiimport_status_tooltip(item.status))
+                if self.items_table.currentRow() == row:
+                    self.show_item_details(row)
+            finally:
+                self._updating_check_state = False
+            self.update_selected_summary()
+
+        def import_checked_items(self) -> None:
+            validation = cme.validate_multiimport_checked_items(self.items)
+            if not validation.ok:
+                QMessageBox.warning(
+                    self,
+                    "Multiimport",
+                    multiimport_validation_summary_text(validation),
+                )
+                return
+            if self.write_one is None:
+                QMessageBox.warning(self, "Multiimport", "Zápis není dostupný.")
+                return
+            answer = QMessageBox.question(
+                self,
+                "Potvrdit multiimport",
+                f"Naimportovat {len(validation.valid_items)} vybraných knih do Calibre?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+            progress = MultiImportProgressDialog(len(validation.valid_items), self)
+            progress.prepare(len(validation.valid_items))
+            progress.show_prepared()
+
+            def update_progress(
+                current: int,
+                total: int,
+                item: cme.MultiImportBatchItem,
+            ) -> None:
+                self.refresh_item_row(item)
+                progress.update_progress(current, total, item.display_name)
+                QApplication.processEvents()
+
+            summaries: list[cme.MultiImportWriteSummary] = []
+            errors: list[BaseException] = []
+
+            def run_write() -> None:
+                try:
+                    summaries.append(
+                        cme.run_multiimport_batch_write(
+                            self.items,
+                            self.write_one,
+                            progress_callback=update_progress,
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    progress.accept()
+
+            QTimer.singleShot(0, run_write)
+            progress.exec()
+            try:
+                if errors:
+                    raise errors[0]
+                if not summaries:
+                    return
+                summary = summaries[0]
+            finally:
+                progress.close()
+                progress.deleteLater()
+                QApplication.processEvents()
+
+            if summary.succeeded > 0 and self.post_write_refresh is not None:
+                self.post_write_refresh(summary)
+            outcome = "Úspěch" if summary.ok else "Dokončeno s chybami"
+            QMessageBox.information(
+                self,
+                "Výsledek multiimportu",
+                f"{outcome}\n\n"
+                f"Pokusů: {summary.attempted}\n"
+                f"Úspěšně: {summary.succeeded}\n"
+                f"Selhalo: {summary.failed}",
+            )
+            self.update_import_button_enabled()
+            if summary.ok and summary.attempted > 0:
+                self.accept()
+
+        def show_item_details(self, row: int) -> None:
+            if 0 <= row < len(self.items):
+                self.detail_text.setPlainText(multiimport_item_detail_text(self.items[row]))
+            else:
+                self.detail_text.clear()
 
 
     class ImportDialog(QDialog):
@@ -913,6 +1510,7 @@ if PYSIDE6_AVAILABLE:
                 schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
+            self._build_multiimport_menu()
             root = QWidget()
             layout = QVBoxLayout(root)
             layout.setContentsMargins(10, 10, 10, 6)
@@ -926,6 +1524,13 @@ if PYSIDE6_AVAILABLE:
             self.statusBar().addPermanentWidget(self.calibre_indicator)
             self.set_status("Ready")
             self.apply_theme()
+
+        def _build_multiimport_menu(self) -> None:
+            menu = self.menuBar().addMenu("Multiimport")
+            self.multiimport_files_action = menu.addAction("Vybrat vice knih...")
+            self.multiimport_files_action.triggered.connect(lambda _checked=False: self.choose_multiimport_files())
+            self.multiimport_folder_action = menu.addAction("Vybrat slozku...")
+            self.multiimport_folder_action.triggered.connect(lambda _checked=False: self.choose_multiimport_folder())
 
         def _build_toolbar(self) -> QHBoxLayout:
             toolbar = QHBoxLayout()
@@ -1962,6 +2567,121 @@ if PYSIDE6_AVAILABLE:
             )
             return path
 
+        def choose_multiimport_files(self) -> None:
+            paths, _filter = QFileDialog.getOpenFileNames(
+                self,
+                "Vyber knihy",
+                "",
+                book_import_file_filter(),
+            )
+            if not paths:
+                return
+            files = cme.collect_import_files_from_paths([Path(path) for path in paths])
+            self.run_multiimport_analysis(files)
+
+        def choose_multiimport_folder(self) -> None:
+            folder = QFileDialog.getExistingDirectory(self, "Vyber slozku s knihami", "")
+            if not folder:
+                return
+            files = cme.collect_import_files_from_folder(Path(folder))
+            self.run_multiimport_analysis(files)
+
+        def _write_multiimport_item(
+            self,
+            preview: cme.ImportPreview,
+            source_path: Path,
+        ) -> cme.ImportApplyResult:
+            calibredb_path = cme.find_calibredb()
+            if not calibredb_path:
+                return cme.ImportApplyResult(
+                    book_id=0,
+                    status="failed",
+                    error="Nepodařilo se najít calibredb.",
+                )
+            return cme.apply_import_preview(
+                preview,
+                source_path,
+                library=self.library_path,
+                calibredb_path=calibredb_path,
+                quit_func=lambda force: shared.quit_calibre(allow_force=force),
+                allow_force=True,
+                matches_path=self.matches_path,
+            )
+
+        def _refresh_after_multiimport_write(
+            self,
+            summary: cme.MultiImportWriteSummary,
+        ) -> None:
+            if summary.succeeded <= 0:
+                return
+            self.show_import_review_filter()
+            self.load_csv(show_message=False)
+
+        def run_multiimport_analysis(
+            self,
+            files: Sequence[Path],
+            *,
+            analyze: Callable[[str], cme.ImportAnalysis] | None = None,
+            connectivity_check: Callable[[], bool] | None = None,
+        ) -> list[cme.MultiImportBatchItem]:
+            items = cme.build_multiimport_batch_items(files)
+            if items:
+                check_online = connectivity_check or is_probably_online
+                try:
+                    online = bool(check_online())
+                except Exception:
+                    online = False
+                if not online:
+                    answer = QMessageBox.question(
+                        self,
+                        "Bez připojení k internetu",
+                        "Zdá se, že počítač není online. Online vyhledávání metadat může "
+                        "selhat nebo vrátit neúplné výsledky.\n\n"
+                        "Chcete v analýze pokračovat?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if answer != QMessageBox.StandardButton.Yes:
+                        return items
+
+            analyze_book = analyze or self._build_import_analyze_callable()
+            progress = QProgressDialog(
+                "Připravuji analýzu…",
+                "",
+                0,
+                len(items),
+                self,
+            )
+            progress.setWindowTitle("Průběh načítání")
+            progress.setCancelButton(None)
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.setValue(0)
+            progress.show()
+            QApplication.processEvents()
+
+            def update_progress(
+                current: int,
+                total: int,
+                item: cme.MultiImportBatchItem,
+            ) -> None:
+                progress.setLabelText(f"Analyzuji {current}/{total}: {item.display_name}")
+                progress.setValue(current)
+                QApplication.processEvents()
+
+            try:
+                analyzed_items = cme.run_multiimport_batch_analysis(
+                    items,
+                    lambda path: analyze_book(str(path)),
+                    precheck_safe_matches=False,
+                    progress_callback=update_progress,
+                )
+            finally:
+                progress.close()
+            MultiImportResultsDialog(analyzed_items, parent=self).exec()
+            return analyzed_items
+
         def finish_import_analysis(self, analysis: object, error: str) -> None:
             """Zpracuje vysledek analyzy z workeru: dialog, nebo varovani."""
             self.worker_running = False
@@ -2272,8 +2992,7 @@ if PYSIDE6_AVAILABLE:
                 }
                 QLabel#coverStatus { font-weight: 700; padding: 4px; border-radius: 3px; background: #eeeeee; color: #111111; }
                 QLabel#coverImage { border: 1px solid #b8b8b8; background: #fafafa; color: #777777; }
-                QTableWidget { gridline-color: #b8b8b8; alternate-background-color: #f3f3f3; color: #111111; }
-                QTableWidget::item { color: #111111; }
+                QTableWidget { gridline-color: palette(mid); }
                 QTableWidget::item:selected, QTableWidget::item:selected:!active {
                     background: #0d6efd;
                     color: #ffffff;
