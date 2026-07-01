@@ -2171,16 +2171,17 @@ if PYSIDE6_AVAILABLE:
             except Exception as exc:
                 self.set_cover_placeholder("Obalku nejde nacist", str(exc))
                 return
-            if local_cover is not None:
-                self.set_cover_placeholder("Obalka uz je v Calibre")
-                return
             cover_urls = shared.cover_urls_from_row(row)
             if not cover_urls:
-                self.set_cover_placeholder("Bez obalky")
+                self.set_cover_placeholder(
+                    "Obalka uz je v Calibre" if local_cover is not None else "Bez obalky"
+                )
                 return
             selected_url = row.selected_cover_url.strip()
             preview_url = selected_url or cover_urls[0]
             status = "Vybrana kandidatni obalka" if selected_url else "Kandidatni obalky - vyber jednu"
+            if local_cover is not None:
+                status += " - Obalka uz je v Calibre"
             cached = self.cover_preview_cache.get(preview_url)
             if cached:
                 self.set_cover_pixmap(status, cached[1], preview_url)
@@ -2477,9 +2478,24 @@ if PYSIDE6_AVAILABLE:
             selected = self.selected_book_ids()
             self.rows = shared.sync_single_selected_url(self.rows, selected, self.url_edit.text())
             self.refresh_table()
+            include_existing_covers = bool(selected)
+            if not selected:
+                answer = QMessageBox.question(
+                    self,
+                    "Audit obalek",
+                    "Zahrnout i knihy, ktere uz maji obalku?\n\n"
+                    "Audit obalky pouze pripravi. Do Calibre se zapisi az pres Zapsat do Calibre.",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                include_existing_covers = answer == QMessageBox.StandardButton.Yes
             if not self.save_csv(show_message=False):
                 return
-            args = shared.make_cover_args(self.library_path, selected if selected else None)
+            args = shared.make_cover_args(
+                self.library_path,
+                selected if selected else None,
+                include_existing_covers=include_existing_covers,
+            )
             action = shared.make_cover_audit_action(args=args, matches_path=self.matches_path)
             self.run_background("Audit obalek", action, reload_after=True)
 

@@ -829,9 +829,10 @@ class AppModelTests(unittest.TestCase):
             args = app.make_script_args("D:\\Knihy")
             args.book_ids = [2]
 
-            def audit_func(rows, library):
+            def audit_func(rows, library, *, include_existing_covers=False):
                 self.assertEqual(library, "D:\\Knihy")
                 self.assertEqual([row.book_id for row in rows], [2])
+                self.assertFalse(include_existing_covers)
                 return [
                     cme.MatchRow(
                         2,
@@ -859,6 +860,34 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(rows[0].cover_urls, "")
         self.assertEqual(rows[1].cover_urls, "https://img.example/2.jpg")
         self.assertEqual(rows[1].cover_reason, "multiple-cover-candidates")
+
+    def test_make_cover_audit_action_passes_include_existing_covers_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_path = Path(tmp) / "matches.csv"
+            row = cme.MatchRow(1, "Kniha", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual")
+            cme.write_matches_csv(matches_path, [row], overwrite=False)
+            args = app.make_cover_args(
+                "D:\\Knihy",
+                {1},
+                include_existing_covers=True,
+            )
+            received = []
+
+            def audit_func(rows, library, *, include_existing_covers=False):
+                received.append((library, [item.book_id for item in rows], include_existing_covers))
+                return list(rows)
+
+            action = app.make_cover_audit_action(
+                args,
+                matches_path=matches_path,
+                audit_func=audit_func,
+            )
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = action()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(received, [("D:\\Knihy", [1], True)])
 
     def test_make_preview_with_audits_action_runs_cover_audit_after_links(self):
         with tempfile.TemporaryDirectory() as tmp:

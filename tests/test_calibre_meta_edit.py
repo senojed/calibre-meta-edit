@@ -4902,6 +4902,40 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].selected_cover_url, "https://img.databazeknih.cz/img/books/a.jpg")
         self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
 
+    def test_audit_cover_rows_can_include_existing_cover_but_still_skips_unsupported_link(self):
+        rows = [
+            cme.MatchRow(1, "Ma obalku", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
+            cme.MatchRow(2, "Bez odkazu", "Autor", "skip", "", "", "manual", "manual"),
+        ]
+        fetched = []
+
+        updated = cme.audit_cover_rows(
+            rows,
+            "library",
+            cover_flags_reader=lambda library, ids: {1: True, 2: True},
+            fetcher=lambda url: fetched.append(url) or '<script type="application/ld+json">{"@type":"Book","image":"https://img.databazeknih.cz/img/books/new.jpg"}</script>',
+            include_existing_covers=True,
+        )
+
+        self.assertEqual(len(fetched), 1)
+        self.assertEqual(updated[0].selected_cover_url, "https://img.databazeknih.cz/img/books/new.jpg")
+        self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
+        self.assertEqual(updated[1], rows[1])
+
+    def test_audit_cover_rows_skips_existing_cover_by_default(self):
+        row = cme.MatchRow(1, "Ma obalku", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual")
+        fetched = []
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {1: True},
+            fetcher=lambda url: fetched.append(url) or "",
+        )
+
+        self.assertEqual(updated, [row])
+        self.assertEqual(fetched, [])
+
     def test_apply_cover_candidate_writes_cover_field(self):
         candidate = cme.CoverCandidate(1, "Kniha", "https://www.databazeknih.cz/prehled-knihy/a-1")
         calls = []

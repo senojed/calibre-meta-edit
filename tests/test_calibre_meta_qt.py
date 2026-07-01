@@ -2429,6 +2429,118 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(calls[0][2])
         app.processEvents()
 
+    def test_run_covers_selected_rows_include_existing_covers_without_prompt(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+
+        with (
+            patch.object(window, "selected_book_ids", return_value={7}),
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.QMessageBox, "question") as question,
+            patch.object(
+                qt.shared,
+                "make_cover_audit_action",
+                side_effect=lambda args, matches_path: captured.append(args) or (lambda: 0),
+            ),
+            patch.object(qt.shared, "make_cover_action") as write_action,
+        ):
+            window.run_covers()
+
+        question.assert_not_called()
+        self.assertEqual(captured[0].book_ids, [7])
+        self.assertTrue(captured[0].include_existing_covers)
+        write_action.assert_not_called()
+        app.processEvents()
+
+    def test_run_covers_all_rows_asks_and_defaults_to_excluding_existing_covers(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+
+        with (
+            patch.object(window, "selected_book_ids", return_value=set()),
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.No) as question,
+            patch.object(
+                qt.shared,
+                "make_cover_audit_action",
+                side_effect=lambda args, matches_path: captured.append(args) or (lambda: 0),
+            ),
+        ):
+            window.run_covers()
+
+        self.assertIn("Zahrnout i knihy", question.call_args.args[2])
+        self.assertFalse(captured[0].include_existing_covers)
+        app.processEvents()
+
+    def test_run_covers_all_rows_can_include_existing_covers(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+
+        with (
+            patch.object(window, "selected_book_ids", return_value=set()),
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+            patch.object(
+                qt.shared,
+                "make_cover_audit_action",
+                side_effect=lambda args, matches_path: captured.append(args) or (lambda: 0),
+            ),
+        ):
+            window.run_covers()
+
+        self.assertTrue(captured[0].include_existing_covers)
+        app.processEvents()
+
+    def test_cover_preview_shows_candidates_and_existing_cover_note_together(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "skip",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.example/new.jpg",
+            selected_cover_url="https://img.example/new.jpg",
+            cover_reason="single-cover-candidate",
+        )
+
+        with (
+            patch.object(qt.cme, "get_local_cover_path", return_value=Path("cover.jpg")),
+            patch.object(window, "load_cover_url") as load_cover,
+        ):
+            window.update_cover_preview([row])
+
+        self.assertIn("Obalka uz je v Calibre", window.cover_status.text())
+        self.assertIn("https://img.example/new.jpg", window.cover_option_buttons)
+        load_cover.assert_called()
+        app.processEvents()
+
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class PreferencesDialogAITests(unittest.TestCase):
