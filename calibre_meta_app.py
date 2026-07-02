@@ -243,7 +243,13 @@ def center_dialog(dialog: object, parent: object) -> None:
     dialog.geometry(f"+{x}+{y}")
 
 
-def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
+def update_row(
+    row: cme.MatchRow,
+    status: str,
+    chosen_url: str,
+    *,
+    manual_selection: bool = False,
+) -> cme.MatchRow:
     """Vrati upraveny radek, ale zachova vsechny ostatni hodnoty."""
     if status not in VALID_STATUSES:
         raise ValueError(f"Neznamy status: {status}")
@@ -268,11 +274,14 @@ def update_row(row: cme.MatchRow, status: str, chosen_url: str) -> cme.MatchRow:
     elif cme.is_valid_openlibrary_url(url):
         source = "openlibrary"
         work_type = ""
-    if url != row.chosen_url.strip():
+    url_changed = url != row.chosen_url.strip()
+    if url_changed or manual_selection:
         confidence = "manual"
         reason = "manual"
-    clear_review = url != row.chosen_url.strip() or source != original_source
+    clear_review = url_changed or source != original_source
     updated = replace(row, status=status, chosen_url=url, confidence=confidence, reason=reason, source=source, work_type=work_type)
+    if url_changed:
+        updated = replace(updated, cover_urls="", selected_cover_url="", cover_reason="")
     if not clear_review:
         return updated
     return replace(
@@ -296,7 +305,12 @@ def update_rows_status(rows: Sequence[cme.MatchRow], book_ids: set[int], status:
 
 def update_rows_url(rows: Sequence[cme.MatchRow], book_ids: set[int], chosen_url: str) -> list[cme.MatchRow]:
     """Pouzije stejny odkaz pro vsechny vybrane knihy."""
-    return [update_row(row, row.status, chosen_url) if row.book_id in book_ids else row for row in rows]
+    return [
+        update_row(row, row.status, chosen_url, manual_selection=True)
+        if row.book_id in book_ids
+        else row
+        for row in rows
+    ]
 
 
 def cover_urls_from_row(row: cme.MatchRow) -> list[str]:

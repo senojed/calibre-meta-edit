@@ -2179,6 +2179,25 @@ class ImportOnlineLookupTests(unittest.TestCase):
         self.assertEqual(authors, "Terry Pratchett")
         self.assertEqual(detail.publisher, "Talpress")
 
+    def test_fetch_import_link_data_keeps_selected_databaze_url_when_detail_uses_oldest_edition(self):
+        from unittest.mock import patch
+
+        selected_url = "https://www.databazeknih.cz/knihy/current-2016"
+        oldest_url = "https://www.databazeknih.cz/prehled-knihy/oldest-1971"
+        with patch.object(
+            cme,
+            "fetch_databaze_book_detail_metadata",
+            return_value=(oldest_url, cme.BookDetailMetadata(published_year="1971", publisher="Svoboda")),
+        ):
+            _title, _authors, written_url, detail = cme.fetch_import_link_data(
+                selected_url,
+                fetcher=lambda _url: "<h1>Book</h1>",
+            )
+
+        self.assertEqual(written_url, selected_url)
+        self.assertEqual(detail.published_year, "1971")
+        self.assertEqual(detail.publisher, "Svoboda")
+
     def test_fetch_import_detail_routes_google(self):
         from unittest.mock import patch
         url = cme.google_books_url("vol123")
@@ -4037,6 +4056,37 @@ class CsvAndFilesystemTests(unittest.TestCase):
         self.assertEqual(merged[0].chosen_url, "https://new")
         self.assertEqual(merged[0].review_published_year, "1999")
 
+    def test_replace_match_rows_does_not_copy_cover_candidates_to_changed_url(self):
+        old_row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/old-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/old.jpg",
+            selected_cover_url="https://img/old.jpg",
+            cover_reason="single-cover-candidate",
+        )
+        refreshed = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/new-2",
+            "",
+            "exact",
+            "exact",
+        )
+
+        merged = cme.replace_match_rows([old_row], [refreshed])
+
+        self.assertEqual(merged[0].cover_urls, "")
+        self.assertEqual(merged[0].selected_cover_url, "")
+        self.assertEqual(merged[0].cover_reason, "")
+
     def test_run_preview_existing_matches_processes_only_new_books(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "matches.csv"
@@ -5011,7 +5061,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("--field", calls[0])
         self.assertTrue(next(arg for arg in calls[0] if arg.startswith("cover:")).endswith(".jpg"))
 
-    def test_apply_match_row_uses_oldest_available_edition_for_pubdate_publisher_and_link(self):
+    def test_apply_match_row_uses_oldest_metadata_but_preserves_canonical_selected_url(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
         calls = []
         fetched_urls = []
@@ -5049,7 +5099,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "updated")
-        self.assertEqual(result.chosen_url, "https://www.databazeknih.cz/prehled-knihy/oldest-1971")
+        self.assertEqual(result.chosen_url, "https://www.databazeknih.cz/knihy/current-2016")
         self.assertEqual(
             fetched_urls,
             [
@@ -5061,7 +5111,18 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertIn("pubdate:1971-00-00", calls[0])
         self.assertIn("publisher:Svoboda", calls[0])
         comments_field = next(arg for arg in calls[0] if arg.startswith("comments:"))
-        self.assertIn('href="https://www.databazeknih.cz/prehled-knihy/oldest-1971"', comments_field)
+        self.assertIn('href="https://www.databazeknih.cz/knihy/current-2016"', comments_field)
+        self.assertNotIn("oldest-1971", comments_field)
+
+    def test_mark_finished_apply_rows_keeps_canonical_url_from_success_result(self):
+        canonical = "https://www.databazeknih.cz/knihy/current-2016"
+        row = cme.MatchRow(1, "Kniha", "Autor", "approve", canonical, "", "manual", "manual")
+        result = cme.ApplyResult(1, "Kniha", "updated", canonical, "")
+
+        updated = cme.mark_finished_apply_rows_skipped([row], [result])
+
+        self.assertEqual(updated[0].status, "skip")
+        self.assertEqual(updated[0].chosen_url, canonical)
 
     def test_apply_match_row_fails_when_editions_tab_has_no_parseable_edition(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")

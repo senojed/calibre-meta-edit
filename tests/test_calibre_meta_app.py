@@ -288,6 +288,55 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(updated.confidence, "manual")
         self.assertEqual(updated.reason, "manual")
 
+    def test_explicit_use_link_marks_unchanged_url_manual_and_keeps_cover_candidates(self):
+        url = "https://www.databazeknih.cz/knihy/rucni-2"
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            url,
+            "",
+            "imported",
+            "imported",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            selected_cover_url="https://img/1.jpg",
+            cover_reason="multiple-cover-candidates",
+        )
+
+        updated = app.update_rows_url([row], {1}, url)[0]
+
+        self.assertEqual(updated.confidence, "manual")
+        self.assertEqual(updated.reason, "manual")
+        self.assertEqual(updated.cover_urls, row.cover_urls)
+        self.assertEqual(updated.selected_cover_url, row.selected_cover_url)
+        self.assertEqual(updated.cover_reason, row.cover_reason)
+
+    def test_changing_canonical_url_clears_stale_cover_candidates(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/stara-1",
+            "",
+            "imported",
+            "imported",
+            cover_urls="https://img/old.jpg",
+            selected_cover_url="https://img/old.jpg",
+            cover_reason="single-cover-candidate",
+        )
+
+        updated = app.update_rows_url(
+            [row],
+            {1},
+            "https://www.databazeknih.cz/knihy/nova-2",
+        )[0]
+
+        self.assertEqual(updated.cover_urls, "")
+        self.assertEqual(updated.selected_cover_url, "")
+        self.assertEqual(updated.cover_reason, "")
+
     def test_update_row_marks_manual_legie_story_url_as_legie_povidka(self):
         row = cme.MatchRow(1, "Povidka", "Autor", "review", "", "", "none", "no-candidates")
 
