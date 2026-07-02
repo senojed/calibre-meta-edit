@@ -1368,11 +1368,12 @@ def analyze_epub_for_import(
 
 def copy_cover_fields(source: MatchRow, target: MatchRow) -> MatchRow:
     """Prenese stav obalek ze stareho radku do noveho radku."""
+    same_url = source.chosen_url.strip() == target.chosen_url.strip()
     return replace(
         target,
-        cover_urls=source.cover_urls,
-        selected_cover_url=source.selected_cover_url,
-        cover_reason=source.cover_reason,
+        cover_urls=source.cover_urls if same_url else "",
+        selected_cover_url=source.selected_cover_url if same_url else "",
+        cover_reason=source.cover_reason if same_url else "",
         review_published_year=source.review_published_year,
         review_publisher=source.review_publisher,
         review_tags=source.review_tags,
@@ -1965,6 +1966,12 @@ def overview_to_book_url(url: str) -> str:
 def book_url_to_overview_url(url: str) -> str:
     clean = databaze_absolute_url(url)
     return clean.replace(BASE_URL + "/knihy/", BASE_URL + "/prehled-knihy/", 1)
+
+
+def canonical_detail_output_url(selected_url: str, resolved_url: str) -> str:
+    """Pro DK zachova uzivatelem vybrany odkaz; ostatni zdroje nemeni."""
+    selected = selected_url.strip()
+    return selected if is_valid_apply_url(selected) else resolved_url
 
 
 def databaze_book_id_from_url(url: str) -> str:
@@ -4644,6 +4651,7 @@ def fetch_import_link_data(
 ) -> tuple[str, str, str, BookDetailMetadata]:
     """Pro 'Pouzit odkaz': vrati (nazev, autori, kanonicky_url, detail) z odkazu."""
     written_url, detail = fetch_import_detail_for_url(url, fetcher)
+    written_url = canonical_detail_output_url(url, written_url)
     title, authors = fetch_import_identity(url, fetcher)
     return title, authors, written_url, detail
 
@@ -4740,8 +4748,9 @@ def apply_match_row(
     except RuntimeError as exc:
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
     detail = apply_review_overrides(row, detail)
+    canonical_url = canonical_detail_output_url(row.chosen_url, written_url)
 
-    new_comment = format_enriched_comment(written_url, detail)
+    new_comment = format_enriched_comment(canonical_url, detail)
     args = [
         calibredb_path,
         "set_metadata",
@@ -4767,7 +4776,7 @@ def apply_match_row(
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
         return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
-    return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+    return ApplyResult(row.book_id, row.title, "updated", canonical_url, "")
 
 
 def clear_comment_row(

@@ -2275,8 +2275,9 @@ if PYSIDE6_AVAILABLE:
                         return
                     if cme.is_valid_apply_url(url):
                         written_url, detail = cme.fetch_databaze_book_detail_metadata(url)
-                        comment = cme.format_enriched_comment(written_url, detail)
-                        self.bridge.review_ready.emit(request_id, row.book_id, written_url, detail, comment)
+                        canonical_url = cme.canonical_detail_output_url(url, written_url)
+                        comment = cme.format_enriched_comment(canonical_url, detail)
+                        self.bridge.review_ready.emit(request_id, row.book_id, canonical_url, detail, comment)
                         return
                     self.bridge.review_ready.emit(request_id, row.book_id, url, None, cme.format_link_html(url))
                 except Exception as exc:
