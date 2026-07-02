@@ -2429,6 +2429,92 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(calls[0][2])
         app.processEvents()
 
+    def test_run_apply_without_cover_overwrite_does_not_ask_cover_question(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+        with (
+            patch.object(window, "ask_apply_confirmation", return_value=(True, False)),
+            patch.object(window, "ask_cover_overwrite_confirmation") as cover_question,
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.shared, "cover_overwrite_book_ids", return_value=set()),
+            patch.object(qt.shared, "make_apply_action", side_effect=lambda args, **kwargs: captured.append(args) or (lambda: 0)),
+        ):
+            window.run_apply()
+
+        cover_question.assert_not_called()
+        self.assertEqual(captured[0].skip_cover_book_ids, [])
+        window.close()
+        app.processEvents()
+
+    def test_run_apply_declined_cover_overwrite_skips_only_affected_covers(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+        with (
+            patch.object(window, "ask_apply_confirmation", return_value=(True, False)),
+            patch.object(window, "ask_cover_overwrite_confirmation", return_value=False) as cover_question,
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.shared, "cover_overwrite_book_ids", return_value={7, 9}),
+            patch.object(qt.shared, "make_apply_action", side_effect=lambda args, **kwargs: captured.append(args) or (lambda: 0)),
+        ):
+            window.run_apply()
+
+        cover_question.assert_called_once_with(2)
+        self.assertEqual(captured[0].skip_cover_book_ids, [7, 9])
+        window.close()
+        app.processEvents()
+
+    def test_run_apply_accepted_cover_overwrite_keeps_existing_cover_write(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        captured = []
+        with (
+            patch.object(window, "ask_apply_confirmation", return_value=(True, False)),
+            patch.object(window, "ask_cover_overwrite_confirmation", return_value=True),
+            patch.object(window, "save_csv", return_value=True),
+            patch.object(window, "run_background"),
+            patch.object(qt.shared, "cover_overwrite_book_ids", return_value={7}),
+            patch.object(qt.shared, "make_apply_action", side_effect=lambda args, **kwargs: captured.append(args) or (lambda: 0)),
+        ):
+            window.run_apply()
+
+        self.assertEqual(captured[0].skip_cover_book_ids, [])
+        window.close()
+        app.processEvents()
+
+    def test_cover_overwrite_confirmation_defaults_to_preserving_cover(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with (
+            patch.object(qt.QMessageBox, "exec", return_value=QMessageBox.StandardButton.Cancel),
+            patch.object(qt.QMessageBox, "setDefaultButton") as set_default,
+        ):
+            accepted = window.ask_cover_overwrite_confirmation(2)
+
+        self.assertFalse(accepted)
+        set_default.assert_called_once_with(QMessageBox.StandardButton.No)
+        window.close()
+        app.processEvents()
+
     def test_run_covers_selected_rows_include_existing_covers_without_prompt(self):
         from PySide6.QtWidgets import QApplication
         import sys

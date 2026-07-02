@@ -4526,6 +4526,35 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
         self.assertTrue(cover_field.endswith(".jpg"))
 
+    def test_apply_match_row_can_skip_cover_while_writing_other_metadata(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/new-2",
+            "",
+            "exact-title-author",
+            "exact-title-author",
+            cover_urls="https://img/1.jpg",
+            selected_cover_url="https://img/1.jpg",
+        )
+        calls = []
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: "<div></div>",
+            cover_fetcher=lambda url: self.fail("cover must not be fetched"),
+            write_cover=False,
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertTrue(any(arg.startswith("comments:") for arg in calls[0]))
+        self.assertFalse(any(arg.startswith("cover:") for arg in calls[0]))
+
     def test_apply_match_row_writes_selected_cover_with_legie_metadata(self):
         row = cme.MatchRow(
             429,

@@ -45,6 +45,22 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(args.library, "B:\\")
         self.assertEqual(args.book_ids, [1, 3])
 
+    def test_cover_overwrite_book_ids_finds_only_writable_rows_with_prepared_cover(self):
+        rows = [
+            cme.MatchRow(1, "Prvni", "Autor", "approve", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual", selected_cover_url="https://img/1.jpg"),
+            cme.MatchRow(2, "Druha", "Autor", "approve", "https://www.databazeknih.cz/knihy/b-2", "", "manual", "manual"),
+            cme.MatchRow(3, "Treti", "Autor", "review", "https://www.databazeknih.cz/knihy/c-3", "", "manual", "manual", selected_cover_url="https://img/3.jpg"),
+            cme.MatchRow(4, "Ctvrta", "Autor", "approve", "https://www.databazeknih.cz/knihy/d-4", "", "manual", "manual", selected_cover_url="https://img/4.jpg"),
+        ]
+
+        affected = app.cover_overwrite_book_ids(
+            rows,
+            "B:\\",
+            cover_flags_reader=lambda library, ids: {1: True, 4: False},
+        )
+
+        self.assertEqual(affected, {1})
+
     def test_make_cover_action_quits_calibre_before_cover_runner(self):
         calls = []
         args = app.make_cover_args("B:\\")
