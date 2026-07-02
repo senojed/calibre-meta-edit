@@ -814,6 +814,18 @@ class TextAndUrlTests(unittest.TestCase):
             "https://www.databazeknih.cz/prehled-knihy/foo-123",
         )
 
+    def test_databaze_book_id_from_supported_book_urls(self):
+        self.assertEqual(
+            cme.databaze_book_id_from_url(
+                "https://www.databazeknih.cz/knihy/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111"
+            ),
+            "12111",
+        )
+        self.assertEqual(
+            cme.databaze_book_id_from_url("https://www.databazeknih.cz/prehled-knihy/vladci-stinu-32773"),
+            "32773",
+        )
+
     def test_legie_url_normalizes_double_slash_story_path(self):
         self.assertEqual(
             cme.legie_absolute_url("https://www.legie.info//povidka/31031-anatolij-petrovic-dneprov-purpurova-mumie"),
@@ -4855,6 +4867,35 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             ],
         )
 
+    def test_cover_options_for_databaze_url_rejects_other_book_recommendations(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://cdn.example/main-cover.jpg"}
+        </script>
+        <meta property="og:image" content="https://img.databazeknih.cz/img/books/12111/og.jpg">
+        <img src="https://img.databazeknih.cz/img/books/12111/selected-a.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/14845/recommendation.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/14841/recommendation.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/2957/recommendation.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/14843/recommendation.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/12111/selected-a.jpg" class="cover">
+        """
+
+        options = cme.cover_options_for_url(
+            "https://www.databazeknih.cz/knihy/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111",
+            fetcher=lambda url: html,
+        )
+
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://cdn.example/main-cover.jpg",
+                "https://img.databazeknih.cz/img/books/12111/og.jpg",
+                "https://img.databazeknih.cz/img/books/12111/selected-a.jpg",
+            ],
+        )
+        self.assertEqual({option.source for option in options}, {"databazeknih"})
+
     def test_parse_legie_cover_options_reads_multiple_story_covers(self):
         html = """
         <div id="pro_obal">
@@ -4980,6 +5021,43 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].cover_urls, "https://img.databazeknih.cz/img/books/a.jpg")
         self.assertEqual(updated[0].selected_cover_url, "https://img.databazeknih.cz/img/books/a.jpg")
         self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
+
+    def test_audit_cover_rows_replaces_polluted_databaze_candidates(self):
+        row = cme.MatchRow(
+            1,
+            "Devet princu Amberu",
+            "Roger Zelazny",
+            "review",
+            "https://www.databazeknih.cz/knihy/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.databazeknih.cz/img/books/14845/old.jpg",
+            selected_cover_url="https://img.databazeknih.cz/img/books/14845/old.jpg",
+            cover_reason="multiple-cover-candidates",
+        )
+        html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://img.databazeknih.cz/img/books/12111/main.jpg"}
+        </script>
+        <img src="https://img.databazeknih.cz/img/books/12111/alternate.jpg" class="cover">
+        <img src="https://img.databazeknih.cz/img/books/14845/recommendation.jpg" class="cover">
+        """
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=lambda url: html,
+        )
+
+        self.assertEqual(
+            updated[0].cover_urls,
+            "https://img.databazeknih.cz/img/books/12111/main.jpg|"
+            "https://img.databazeknih.cz/img/books/12111/alternate.jpg",
+        )
+        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
 
     def test_audit_cover_rows_can_include_existing_cover_but_still_skips_unsupported_link(self):
         rows = [

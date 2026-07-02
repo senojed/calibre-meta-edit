@@ -2374,6 +2374,7 @@ class BookDetailParser(HTMLParser):
         self.user_tags: list[str] = []
         self.cover_url = ""
         self.cover_urls: list[str] = []
+        self.main_cover_urls: list[str] = []
         self.visible_text_parts: list[str] = []
         self.detail_fields: list[tuple[str, str]] = []
         self.series_blocks_before_title: list[tuple[list[str], str]] = []
@@ -2455,6 +2456,13 @@ class BookDetailParser(HTMLParser):
             normalized = normalize_image_url(image_url)
             if normalized not in self.cover_urls:
                 self.cover_urls.append(normalized)
+        if image_url and _looks_like_cover_image(image_url, image_key) and (
+            (lowered_tag == "meta" and attrs_dict.get("property", "").lower() == "og:image")
+            or attrs_dict.get("itemprop", "").lower() == "image"
+        ):
+            normalized = normalize_image_url(image_url)
+            if normalized not in self.main_cover_urls:
+                self.main_cover_urls.append(normalized)
 
         if "ratValue" in classes:
             self._rating_depth = 1
@@ -3176,13 +3184,26 @@ def parse_book_detail_metadata(html_text: str) -> BookDetailMetadata:
     )
 
 
-def parse_databaze_cover_options(html_text: str) -> list[CoverOption]:
+def _databaze_cover_book_id_from_url(url: str) -> str:
+    """Vrati ID knihy vlozene v ceste DK obrazku obalky."""
+    path = urllib.parse.unquote(urllib.parse.urlparse(url).path)
+    match = re.search(r"/img/books/(?:\d+_/)?(\d+)(?:/|[_-])", path, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def parse_databaze_cover_options(html_text: str, selected_book_id: str = "") -> list[CoverOption]:
     """Vrati vsechny rozpoznane kandidatni obalky z detailu Databaze knih."""
     parser = BookDetailParser()
     parser.feed(html_text)
     parser.close()
     book_json = _book_json_from_blocks(parser.json_ld_blocks)
-    urls = _image_urls_from_json(book_json.get("image")) + parser.cover_urls
+    urls = _image_urls_from_json(book_json.get("image")) + parser.main_cover_urls
+    if selected_book_id:
+        urls.extend(
+            url for url in parser.cover_urls if _databaze_cover_book_id_from_url(url) == selected_book_id
+        )
+    else:
+        urls.extend(parser.cover_urls)
     return _dedupe_cover_options(CoverOption(url, "databazeknih", "Databaze knih") for url in urls)
 
 
@@ -4311,7 +4332,8 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         _written_url, detail = fetch_openlibrary_detail_metadata(url, fetch)
         return [CoverOption(detail.cover_url, "openlibrary", "Open Library")] if detail.cover_url else []
     if is_valid_apply_url(url):
-        return parse_databaze_cover_options(fetch(book_url_to_overview_url(url)))
+        detail_url = book_url_to_overview_url(url)
+        return parse_databaze_cover_options(fetch(detail_url), databaze_book_id_from_url(detail_url))
     return []
 
 
