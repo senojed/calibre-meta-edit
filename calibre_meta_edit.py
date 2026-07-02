@@ -86,7 +86,7 @@ MATCHES_FIELDS = [
     "review_original_publication",
     "review_original_publisher",
 ]
-APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error"]
+APPLY_RESULTS_FIELDS = ["book_id", "title", "status", "chosen_url", "error", "cover_status"]
 
 
 @dataclass(frozen=True)
@@ -187,6 +187,7 @@ class ApplyResult:
     status: str
     chosen_url: str
     error: str = ""
+    cover_status: str = "not-requested"
 
 
 @dataclass(frozen=True)
@@ -4689,28 +4690,45 @@ def apply_match_row(
     cover_fetcher: Callable[[str], bytes] = fetch_binary,
     write_cover: bool = True,
 ) -> ApplyResult:
+    selected_cover_requested = bool(row.selected_cover_url.strip())
+
+    def with_cover_status(result: ApplyResult) -> ApplyResult:
+        if not selected_cover_requested:
+            cover_status = "not-requested"
+        elif not write_cover:
+            cover_status = "overwrite-declined"
+        elif result.status == "updated":
+            cover_status = "written"
+        elif result.status == "failed":
+            cover_status = "failed"
+        else:
+            cover_status = "not-requested"
+        return replace(result, cover_status=cover_status)
+
     if row.status != "approve":
-        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
+        return with_cover_status(ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, ""))
     if not row.chosen_url.strip():
-        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "empty-url")
+        return with_cover_status(ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "empty-url"))
     if not write_cover and row.selected_cover_url:
         row = replace(row, selected_cover_url="")
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
-        return apply_legie_story_row(
-            row,
-            library,
-            calibredb_path,
-            runner,
-            fetcher or fetch_text,
-            identifiers_reader,
-            tags_reader,
-            cover_fetcher,
+        return with_cover_status(
+            apply_legie_story_row(
+                row,
+                library,
+                calibredb_path,
+                runner,
+                fetcher or fetch_text,
+                identifiers_reader,
+                tags_reader,
+                cover_fetcher,
+            )
         )
     if row.source == "googlebooks" or is_valid_google_books_url(row.chosen_url):
         try:
             written_url, detail = fetch_google_books_detail_metadata(row.chosen_url, fetcher or fetch_text)
         except RuntimeError as exc:
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+            return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc)))
         detail = apply_review_overrides(row, detail)
         args = [
             calibredb_path,
@@ -4730,13 +4748,13 @@ def apply_match_row(
         result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
         if result.returncode != 0:
             error = (result.stderr or result.stdout or "calibredb failed").strip()
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
-        return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+            return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error))
+        return with_cover_status(ApplyResult(row.book_id, row.title, "updated", written_url, ""))
     if row.source == "openlibrary" or is_valid_openlibrary_url(row.chosen_url):
         try:
             written_url, detail = fetch_openlibrary_detail_metadata(row.chosen_url, fetcher or fetch_text)
         except RuntimeError as exc:
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+            return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc)))
         detail = apply_review_overrides(row, detail)
         args = [
             calibredb_path,
@@ -4756,19 +4774,19 @@ def apply_match_row(
         result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
         if result.returncode != 0:
             error = (result.stderr or result.stdout or "calibredb failed").strip()
-            return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
-        return ApplyResult(row.book_id, row.title, "updated", written_url, "")
+            return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error))
+        return with_cover_status(ApplyResult(row.book_id, row.title, "updated", written_url, ""))
     if is_valid_databaze_story_url(row.chosen_url):
-        return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
+        return with_cover_status(apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher))
     if not is_valid_apply_url(row.chosen_url):
         if is_manual_external_url(row):
-            return apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher)
-        return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url")
+            return with_cover_status(apply_manual_link_row(row, library, calibredb_path, runner, cover_fetcher))
+        return with_cover_status(ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "invalid-url"))
 
     try:
         written_url, detail = fetch_databaze_book_detail_metadata(row.chosen_url, fetcher or fetch_text)
     except RuntimeError as exc:
-        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc))
+        return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, str(exc)))
     detail = apply_review_overrides(row, detail)
     canonical_url = canonical_detail_output_url(row.chosen_url, written_url)
 
@@ -4797,8 +4815,8 @@ def apply_match_row(
     result = run_metadata_command_with_cover(args, row.selected_cover_url, runner, cover_fetcher)
     if result.returncode != 0:
         error = (result.stderr or result.stdout or "calibredb failed").strip()
-        return ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error)
-    return ApplyResult(row.book_id, row.title, "updated", canonical_url, "")
+        return with_cover_status(ApplyResult(row.book_id, row.title, "failed", row.chosen_url, error))
+    return with_cover_status(ApplyResult(row.book_id, row.title, "updated", canonical_url, ""))
 
 
 def clear_comment_row(
@@ -5173,11 +5191,17 @@ def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence
     for row in rows:
         if row.status == "approve" and row.book_id in finished_results:
             result = finished_results[row.book_id]
+            cover_updates: dict[str, str] = {}
+            if getattr(result, "cover_status", "not-requested") == "written":
+                cover_updates = {"selected_cover_url": "", "cover_reason": ""}
+            elif getattr(result, "cover_status", "not-requested") == "overwrite-declined":
+                cover_updates = {"cover_reason": "cover-overwrite-declined"}
             updated_rows.append(
                 replace(
                     row,
                     status="skip",
                     chosen_url=result.chosen_url or row.chosen_url,
+                    **cover_updates,
                 )
             )
             continue

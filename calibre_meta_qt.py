@@ -2179,7 +2179,14 @@ if PYSIDE6_AVAILABLE:
                 return
             selected_url = row.selected_cover_url.strip()
             preview_url = selected_url or cover_urls[0]
-            status = "Vybrana kandidatni obalka" if selected_url else "Kandidatni obalky - vyber jednu"
+            if row.cover_reason == "cover-overwrite-declined":
+                status = "Vybrana kandidatni obalka - prepsani odmitnuto"
+            elif selected_url:
+                status = "Vybrana kandidatni obalka"
+            elif row.status == "skip":
+                status = "Kandidatni obalky - historie"
+            else:
+                status = "Kandidatni obalky - vyber jednu"
             if local_cover is not None:
                 status += " - Obalka uz je v Calibre"
             cached = self.cover_preview_cache.get(preview_url)

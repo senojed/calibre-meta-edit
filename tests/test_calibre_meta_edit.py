@@ -4585,6 +4585,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "updated")
+        self.assertEqual(result.cover_status, "written")
         cover_field = next(arg for arg in calls[0] if arg.startswith("cover:"))
         self.assertTrue(cover_field.endswith(".jpg"))
 
@@ -4614,8 +4615,38 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "updated")
+        self.assertEqual(result.cover_status, "overwrite-declined")
         self.assertTrue(any(arg.startswith("comments:") for arg in calls[0]))
         self.assertFalse(any(arg.startswith("cover:") for arg in calls[0]))
+
+    def test_apply_match_row_failed_cover_write_has_failed_cover_status(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/new-2",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg",
+            selected_cover_url="https://img/1.jpg",
+        )
+
+        result = cme.apply_match_row(
+            row,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: cme.CommandResult(1, "", "write failed"),
+            fetcher=lambda url: "<div></div>",
+            cover_fetcher=lambda url: b"cover-bytes",
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.cover_status, "failed")
+        updated = cme.mark_finished_apply_rows_skipped([row], [result])
+        self.assertEqual(updated[0].status, "approve")
+        self.assertEqual(updated[0].selected_cover_url, row.selected_cover_url)
 
     def test_apply_match_row_writes_selected_cover_with_legie_metadata(self):
         row = cme.MatchRow(
@@ -5202,6 +5233,90 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].status, "skip")
         self.assertEqual(updated[0].chosen_url, canonical)
 
+    def test_mark_finished_apply_rows_clears_written_cover_selection_but_keeps_candidates(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            selected_cover_url="https://img/2.jpg",
+            cover_reason="multiple-cover-candidates",
+        )
+        result = SimpleNamespace(
+            book_id=1,
+            status="updated",
+            chosen_url=row.chosen_url,
+            error="",
+            cover_status="written",
+        )
+
+        updated = cme.mark_finished_apply_rows_skipped([row], [result])
+
+        self.assertEqual(updated[0].status, "skip")
+        self.assertEqual(updated[0].cover_urls, row.cover_urls)
+        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertEqual(updated[0].cover_reason, "")
+
+    def test_mark_finished_apply_rows_preserves_declined_cover_selection(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg",
+            selected_cover_url="https://img/1.jpg",
+            cover_reason="single-cover-candidate",
+        )
+        result = SimpleNamespace(
+            book_id=1,
+            status="updated",
+            chosen_url=row.chosen_url,
+            error="",
+            cover_status="overwrite-declined",
+        )
+
+        updated = cme.mark_finished_apply_rows_skipped([row], [result])
+
+        self.assertEqual(updated[0].selected_cover_url, row.selected_cover_url)
+        self.assertEqual(updated[0].cover_urls, row.cover_urls)
+        self.assertEqual(updated[0].cover_reason, "cover-overwrite-declined")
+
+    def test_mark_finished_apply_rows_preserves_metadata_only_cover_history(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            cover_reason="multiple-cover-candidates",
+        )
+        result = SimpleNamespace(
+            book_id=1,
+            status="updated",
+            chosen_url=row.chosen_url,
+            error="",
+            cover_status="not-requested",
+        )
+
+        updated = cme.mark_finished_apply_rows_skipped([row], [result])
+
+        self.assertEqual(updated[0].cover_urls, row.cover_urls)
+        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertEqual(updated[0].cover_reason, row.cover_reason)
+
     def test_apply_match_row_fails_when_editions_tab_has_no_parseable_edition(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
         calls = []
@@ -5251,6 +5366,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             )
 
             self.assertEqual(result.status, "updated")
+            self.assertEqual(result.cover_status, "not-requested")
             self.assertEqual(calls[0][0], r"C:\calibredb.exe")
             self.assertIn("--field", calls[0])
             self.assertIn("comments:", next(arg for arg in calls[0] if arg.startswith("comments:")))
