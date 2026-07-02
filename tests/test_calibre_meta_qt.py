@@ -2627,6 +2627,65 @@ class QtImportTests(unittest.TestCase):
         load_cover.assert_called()
         app.processEvents()
 
+    def test_cover_preview_shows_written_candidates_as_history_without_pending_selection(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "skip",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.example/written.jpg",
+        )
+
+        with (
+            patch.object(qt.cme, "get_local_cover_path", return_value=Path("cover.jpg")),
+            patch.object(window, "load_cover_url"),
+        ):
+            window.update_cover_preview([row])
+
+        self.assertIn("historie", window.cover_status.text().lower())
+        self.assertNotIn("Vybrana kandidatni obalka", window.cover_status.text())
+        app.processEvents()
+
+    def test_cover_preview_labels_declined_overwrite_explicitly(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "skip",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.example/declined.jpg",
+            selected_cover_url="https://img.example/declined.jpg",
+            cover_reason="cover-overwrite-declined",
+        )
+
+        with (
+            patch.object(qt.cme, "get_local_cover_path", return_value=Path("cover.jpg")),
+            patch.object(window, "load_cover_url"),
+        ):
+            window.update_cover_preview([row])
+
+        self.assertIn("prepsani odmitnuto", window.cover_status.text().lower())
+        app.processEvents()
+
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class PreferencesDialogAITests(unittest.TestCase):
