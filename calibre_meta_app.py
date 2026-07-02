@@ -203,6 +203,23 @@ def make_cover_args(
     return args
 
 
+def cover_overwrite_book_ids(
+    rows: Sequence[cme.MatchRow],
+    library: str | Path,
+    cover_flags_reader: Callable[[str | Path, set[int] | None], dict[int, bool]] = cme.get_cover_flags,
+) -> set[int]:
+    """Vrati zapisovatelne radky, jejichz pripravena obalka by prepsala existujici."""
+    candidates = {
+        row.book_id
+        for row in rows
+        if cme.is_writable_match_row(row) and row.selected_cover_url.strip()
+    }
+    if not candidates:
+        return set()
+    flags = cover_flags_reader(library, candidates)
+    return {book_id for book_id in candidates if flags.get(book_id, False)}
+
+
 def match_row_book_ids(matches_path: Path) -> set[int]:
     """Precte Calibre ID z pracovniho uloziste; kdyz soubor neni, vrati prazdno."""
     if not cme.matches_storage_exists(matches_path):

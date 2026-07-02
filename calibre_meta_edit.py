@@ -4657,11 +4657,14 @@ def apply_match_row(
     identifiers_reader: Callable[[str | Path, int], dict[str, str]] = get_current_identifiers,
     tags_reader: Callable[[str | Path, int], list[str]] = get_current_tags,
     cover_fetcher: Callable[[str], bytes] = fetch_binary,
+    write_cover: bool = True,
 ) -> ApplyResult:
     if row.status != "approve":
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "")
     if not row.chosen_url.strip():
         return ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "empty-url")
+    if not write_cover and row.selected_cover_url:
+        row = replace(row, selected_cover_url="")
     if row.source == "legie" or is_valid_legie_story_url(row.chosen_url):
         return apply_legie_story_row(
             row,
@@ -5182,11 +5185,18 @@ def run_apply(args: argparse.Namespace) -> int:
     print(f"Zaloha: {backup_path}")
 
     results: list[ApplyResult] = []
+    skip_cover_book_ids = set(getattr(args, "skip_cover_book_ids", None) or [])
+    skipped_cover_count = sum(
+        1 for row in writable_rows if row.book_id in skip_cover_book_ids and row.selected_cover_url.strip()
+    )
     for row in rows:
         if row.status != "approve":
             results.append(ApplyResult(row.book_id, row.title, "skipped", row.chosen_url, "status-not-approve"))
             continue
-        result = apply_match_row(row, library, calibredb_path)
+        if row.book_id in skip_cover_book_ids:
+            result = apply_match_row(row, library, calibredb_path, write_cover=False)
+        else:
+            result = apply_match_row(row, library, calibredb_path)
         results.append(result)
         if result.status == "failed" and _is_global_calibredb_error(result.error):
             print("Globalni chyba knihovny. Batch zastaven.")
@@ -5203,6 +5213,8 @@ def run_apply(args: argparse.Namespace) -> int:
     counts = {status: sum(1 for result in results if result.status == status) for status in ("updated", "skipped", "failed")}
     print(f"Vysledek: {results_path}")
     print(f"updated={counts['updated']} skipped={counts['skipped']} failed={counts['failed']}")
+    if skipped_cover_count:
+        print(f"Obalky preskoceny: {skipped_cover_count}")
     return 1 if counts["failed"] else 0
 
 

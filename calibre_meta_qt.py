@@ -2468,9 +2468,14 @@ if PYSIDE6_AVAILABLE:
             confirmed, allow_force = self.ask_apply_confirmation()
             if not confirmed:
                 return
+            overwrite_ids = shared.cover_overwrite_book_ids(self.rows, self.library_path)
+            skip_cover_book_ids: list[int] = []
+            if overwrite_ids and not self.ask_cover_overwrite_confirmation(len(overwrite_ids)):
+                skip_cover_book_ids = sorted(overwrite_ids)
             if not self.save_csv(show_message=False):
                 return
             args = shared.make_script_args(self.library_path)
+            args.skip_cover_book_ids = skip_cover_book_ids
             action = shared.make_apply_action(args=args, allow_force=allow_force, matches_path=self.matches_path)
             self.run_background("Zapis do Calibre", action, reload_after=True)
 
@@ -2894,6 +2899,18 @@ if PYSIDE6_AVAILABLE:
             box.setDefaultButton(QMessageBox.StandardButton.Ok)
             result = box.exec() == QMessageBox.StandardButton.Ok
             return result, force.isChecked()
+
+        def ask_cover_overwrite_confirmation(self, count: int) -> bool:
+            box = QMessageBox(self)
+            box.setWindowTitle("Prepsat existujici obalky?")
+            box.setText(f"Nektere vybrane knihy uz maji v Calibre obalku. Pocet: {count}")
+            box.setInformativeText(
+                "Pokud zvolite Ne, puvodni obalky zustanou zachovane. "
+                "Ostatni zmeny se zapisi beze zmeny, pokud je to mozne."
+            )
+            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            box.setDefaultButton(QMessageBox.StandardButton.No)
+            return box.exec() == QMessageBox.StandardButton.Yes
 
         def ask_cover_confirmation(self, candidates: Sequence[cme.CoverCandidate], selected_only: bool) -> tuple[bool, bool]:
             if not candidates:
