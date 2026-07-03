@@ -1969,6 +1969,25 @@ def book_url_to_overview_url(url: str) -> str:
     return clean.replace(BASE_URL + "/knihy/", BASE_URL + "/prehled-knihy/", 1)
 
 
+def databaze_editions_url(detail_url: str, explicit_url: str = "") -> str:
+    """Vrati bezpecny explicitni nebo deterministicky odvozeny odkaz na DK vydani."""
+    clean_detail = databaze_absolute_url(detail_url)
+    book_id = databaze_book_id_from_url(clean_detail)
+    clean_explicit = databaze_absolute_url(explicit_url)
+    parsed_explicit = urllib.parse.urlparse(clean_explicit)
+    if (
+        book_id
+        and parsed_explicit.netloc.lower() == "www.databazeknih.cz"
+        and parsed_explicit.path.startswith("/dalsi-vydani/")
+        and databaze_book_id_from_url(clean_explicit) == book_id
+    ):
+        return clean_explicit
+    for prefix in (BASE_URL + "/prehled-knihy/", BASE_URL + "/knihy/"):
+        if clean_detail.startswith(prefix) and book_id:
+            return BASE_URL + "/dalsi-vydani/" + clean_detail[len(prefix) :]
+    return ""
+
+
 def canonical_detail_output_url(selected_url: str, resolved_url: str) -> str:
     """Pro DK zachova uzivatelem vybrany odkaz; ostatni zdroje nemeni."""
     selected = selected_url.strip()
@@ -3192,6 +3211,98 @@ def _databaze_cover_book_id_from_url(url: str) -> str:
     return match.group(1) if match else ""
 
 
+def _normalize_databaze_cover_url(url: str) -> str:
+    """Sjednoti stabilni DK varianty URL jedne obalky."""
+    parsed = urllib.parse.urlparse(normalize_image_url(url))
+    if parsed.netloc.lower() not in {"www.databazeknih.cz", "img.databazeknih.cz"}:
+        return urllib.parse.urlunparse(parsed)
+    path = re.sub(r"(?<=/)bmid_", "", parsed.path, count=1, flags=re.IGNORECASE)
+    return urllib.parse.urlunparse(parsed._replace(path=path, query="", fragment=""))
+
+
+def _dedupe_databaze_cover_options(options: Sequence[CoverOption]) -> list[CoverOption]:
+    normalized = (
+        CoverOption(_normalize_databaze_cover_url(option.url), option.source, option.label)
+        for option in options
+    )
+    return _dedupe_cover_options(normalized)
+
+
+class DatabazeEditionCoverParser(HTMLParser):
+    """Parser tiskovych obalek z duveryhodnych radku dalsich vydani DK."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cover_urls: list[str] = []
+        self._content_depth = 0
+        self._entry_book_id = ""
+        self._entry_cover_url = ""
+        self._entry_is_audiobook = False
+
+    def _finish_entry(self) -> None:
+        if self._entry_cover_url and not self._entry_is_audiobook:
+            self.cover_urls.append(self._entry_cover_url)
+        self._entry_book_id = ""
+        self._entry_cover_url = ""
+        self._entry_is_audiobook = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered_tag = tag.lower()
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        if not self._content_depth:
+            if lowered_tag == "div" and attrs_dict.get("id", "").lower() == "left":
+                self._content_depth = 1
+            return
+        classes = set(attrs_dict.get("class", "").split())
+        if lowered_tag == "hr" and "oddown" in classes:
+            self._finish_entry()
+            return
+        if lowered_tag not in HTML_VOID_TAGS:
+            self._content_depth += 1
+        href = attrs_dict.get("href", "")
+        if lowered_tag == "a" and href.startswith(("/prehled-knihy/", BASE_URL + "/prehled-knihy/")):
+            linked_book_id = databaze_book_id_from_url(href)
+            if linked_book_id and linked_book_id != self._entry_book_id:
+                self._finish_entry()
+                self._entry_book_id = linked_book_id
+        context = " ".join(attrs_dict.values()).lower()
+        if self._entry_book_id and any(
+            marker in context for marker in ("audiokniha", "audiobook", "format_audio", "img_100_left_audiobook")
+        ):
+            self._entry_is_audiobook = True
+        if lowered_tag != "img":
+            return
+        if "img_100_left" not in classes or "img_100_left_audiobook" in classes:
+            return
+        url = normalize_image_url(attrs_dict.get("src", ""))
+        host = urllib.parse.urlparse(url).netloc.lower()
+        if host not in {"www.databazeknih.cz", "img.databazeknih.cz"}:
+            return
+        if _databaze_cover_book_id_from_url(url) == self._entry_book_id:
+            self._entry_cover_url = url
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._content_depth or tag.lower() in HTML_VOID_TAGS:
+            return
+        if self._content_depth == 1:
+            self._finish_entry()
+        self._content_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._entry_book_id and any(marker in data.lower() for marker in ("audiokniha", "audiobook")):
+            self._entry_is_audiobook = True
+
+
+def parse_databaze_edition_cover_options(html_text: str) -> list[CoverOption]:
+    """Vrati pouze tiskove obalky z explicitniho seznamu dalsich vydani DK."""
+    parser = DatabazeEditionCoverParser()
+    parser.feed(html_text)
+    parser.close()
+    return _dedupe_databaze_cover_options(
+        CoverOption(url, "databazeknih", "Databaze knih") for url in parser.cover_urls
+    )
+
+
 def parse_databaze_cover_options(html_text: str, selected_book_id: str = "") -> list[CoverOption]:
     """Vrati vsechny rozpoznane kandidatni obalky z detailu Databaze knih."""
     parser = BookDetailParser()
@@ -3205,7 +3316,9 @@ def parse_databaze_cover_options(html_text: str, selected_book_id: str = "") -> 
         )
     else:
         urls.extend(parser.cover_urls)
-    return _dedupe_cover_options(CoverOption(url, "databazeknih", "Databaze knih") for url in urls)
+    return _dedupe_databaze_cover_options(
+        CoverOption(url, "databazeknih", "Databaze knih") for url in urls
+    )
 
 
 class LegieStoryParser(HTMLParser):
@@ -4334,7 +4447,22 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         return [CoverOption(detail.cover_url, "openlibrary", "Open Library")] if detail.cover_url else []
     if is_valid_apply_url(url):
         detail_url = book_url_to_overview_url(url)
-        return parse_databaze_cover_options(fetch(detail_url), databaze_book_id_from_url(detail_url))
+        detail_html = fetch(detail_url)
+        options = parse_databaze_cover_options(detail_html, databaze_book_id_from_url(detail_url))
+        parser = BookDetailParser()
+        parser.feed(detail_html)
+        parser.close()
+        editions_url = databaze_editions_url(detail_url, parser.editions_url)
+        parsed_editions_url = urllib.parse.urlparse(editions_url)
+        if (
+            parsed_editions_url.netloc.lower() == "www.databazeknih.cz"
+            and parsed_editions_url.path.startswith("/dalsi-vydani/")
+        ):
+            try:
+                options.extend(parse_databaze_edition_cover_options(fetch(editions_url)))
+            except Exception:
+                pass
+        return _dedupe_databaze_cover_options(options)
     return []
 
 
