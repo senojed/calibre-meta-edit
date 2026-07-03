@@ -4898,6 +4898,216 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_databaze_cover_options_normalizes_same_edition_aliases(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://www.databazeknih.cz/img/books/12_/12111/bmid_devet-princu-amberu-12111.jpg?v=1"}
+        </script>
+        <meta property="og:image" content="https://www.databazeknih.cz/img/books/12_/12111/devet-princu-amberu-12111.jpg?v=2">
+        """
+
+        options = cme.parse_databaze_cover_options(html, "12111")
+
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.databazeknih.cz/img/books/12_/12111/devet-princu-amberu-12111.jpg"],
+        )
+
+    def test_parse_databaze_cover_options_preserves_external_image_query(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://cdn.example/cover.jpg?signature=required"}
+        </script>
+        """
+
+        options = cme.parse_databaze_cover_options(html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://cdn.example/cover.jpg?signature=required"],
+        )
+
+    def test_cover_options_for_databaze_url_follows_print_editions_only(self):
+        detail_url = (
+            "https://www.databazeknih.cz/prehled-knihy/"
+            "tajemny-amber-kroniky-amberu-devet-princu-amberu-12111"
+        )
+        editions_url = (
+            "https://www.databazeknih.cz/dalsi-vydani/"
+            "tajemny-amber-kroniky-amberu-devet-princu-amberu-12111"
+        )
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://www.databazeknih.cz/img/books/12_/12111/bmid_devet-princu-amberu-12111.jpg?v=1"}
+        </script>
+        <a href="/dalsi-vydani/tajemny-amber-kroniky-amberu-devet-princu-amberu-12111">Vydani</a>
+        <img class="kniha_img" src="https://www.databazeknih.cz/img/books/99_/99999/recommendation-99999.jpg">
+        """
+        editions_html = """
+        <div id="left">
+          <hr class="oddown">
+          <a href="/prehled-knihy/devet-princu-amberu-241881">
+            <picture>
+              <img class="img_100_left" src="https://www.databazeknih.cz/img/books/24_/241881/bmid_devet-princu-amberu-241881.jpg?v=10">
+            </picture>
+          </a>
+          <p class="new odtopm">2015</p>
+          <div class="clear"></div>
+          <hr class="oddown">
+          <a href="/prehled-knihy/devet-princu-amberu-48798">
+            <picture>
+              <img class="img_100_left" src="https://www.databazeknih.cz/img/books/48_/48798/devet-princu-amberu-48798.jpg?v=11">
+            </picture>
+          </a>
+          <p class="new odtopm">1999</p>
+          <div class="clear"></div>
+          <hr class="oddown">
+        </div>
+        <div id="right" class="recommendation-carousel">
+          <img class="img_100_left" src="https://www.databazeknih.cz/img/books/14_/14845/recommendation-14845.jpg">
+        </div>
+        """
+        fetched_urls = []
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == detail_url:
+                return detail_html
+            if url == editions_url:
+                return editions_html
+            raise AssertionError(url)
+
+        options = cme.cover_options_for_url(
+            "https://www.databazeknih.cz/knihy/"
+            "tajemny-amber-kroniky-amberu-devet-princu-amberu-12111",
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(fetched_urls, [detail_url, editions_url])
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://www.databazeknih.cz/img/books/12_/12111/devet-princu-amberu-12111.jpg",
+                "https://www.databazeknih.cz/img/books/24_/241881/devet-princu-amberu-241881.jpg",
+                "https://www.databazeknih.cz/img/books/48_/48798/devet-princu-amberu-48798.jpg",
+            ],
+        )
+
+    def test_parse_databaze_edition_cover_options_excludes_audiobook_entry_by_context(self):
+        editions_html = """
+        <div id="left">
+          <hr class="oddown">
+          <a href="/prehled-knihy/devet-princu-amberu-543357">
+            <picture>
+              <img class="img_100_left" src="https://www.databazeknih.cz/img/books/54_/543357/devet-princu-amberu-543357.jpg">
+            </picture>
+          </a>
+          <p class="new odtopm">
+            <img class="format_audio" title="audiokniha" src="/img/icons/formats/audio.svg">
+            2017
+          </p>
+          <div class="clear"></div>
+          <hr class="oddown">
+          <a href="/prehled-knihy/devet-princu-amberu-241881">
+            <picture>
+              <img class="img_100_left" src="https://www.databazeknih.cz/img/books/24_/241881/devet-princu-amberu-241881.jpg">
+            </picture>
+          </a>
+          <p class="new odtopm">2015</p>
+          <div class="clear"></div>
+          <hr class="oddown">
+        </div>
+        """
+
+        options = cme.parse_databaze_edition_cover_options(editions_html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.databazeknih.cz/img/books/24_/241881/devet-princu-amberu-241881.jpg"],
+        )
+
+    def test_cover_options_for_databaze_url_keeps_detail_cover_when_editions_fetch_fails(self):
+        detail_url = "https://www.databazeknih.cz/prehled-knihy/book-1"
+        editions_url = "https://www.databazeknih.cz/dalsi-vydani/book-1"
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://www.databazeknih.cz/img/books/1/main-1.jpg"}
+        </script>
+        <a href="/dalsi-vydani/book-1">Vydani</a>
+        """
+        fetched_urls = []
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == detail_url:
+                return detail_html
+            if url == editions_url:
+                raise OSError("editions unavailable")
+            raise AssertionError(url)
+
+        try:
+            options = cme.cover_options_for_url(
+                "https://www.databazeknih.cz/knihy/book-1",
+                fetcher=fetcher,
+            )
+        except OSError as exc:
+            self.fail(f"editions fetch escaped fallback: {exc}")
+
+        self.assertEqual(fetched_urls, [detail_url, editions_url])
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.databazeknih.cz/img/books/1/main-1.jpg"],
+        )
+
+    def test_cover_options_for_databaze_url_derives_editions_url_when_link_is_missing(self):
+        fetched_urls = []
+        detail_html = """
+        <script type="application/ld+json">
+        {"@type": "Book", "image": "https://www.databazeknih.cz/img/books/1/main-1.jpg"}
+        </script>
+        """
+        editions_html = """
+        <div id="left">
+          <hr class="oddown">
+          <a href="/prehled-knihy/older-book-2">
+            <picture>
+              <img class="img_100_left" src="https://www.databazeknih.cz/img/books/2/older-2.jpg">
+            </picture>
+          </a>
+          <p class="new odtopm">1990</p>
+          <div class="clear"></div>
+          <hr class="oddown">
+        </div>
+        """
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return detail_html
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return editions_html
+            raise AssertionError(url)
+
+        options = cme.cover_options_for_url(
+            "https://www.databazeknih.cz/knihy/book-1",
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(
+            fetched_urls,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/book-1",
+                "https://www.databazeknih.cz/dalsi-vydani/book-1",
+            ],
+        )
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://www.databazeknih.cz/img/books/1/main-1.jpg",
+                "https://www.databazeknih.cz/img/books/2/older-2.jpg",
+            ],
+        )
+
     def test_cover_options_for_databaze_url_rejects_other_book_recommendations(self):
         html = """
         <script type="application/ld+json">
@@ -5105,7 +5315,13 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             include_existing_covers=True,
         )
 
-        self.assertEqual(len(fetched), 1)
+        self.assertEqual(
+            fetched,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/a-1",
+                "https://www.databazeknih.cz/dalsi-vydani/a-1",
+            ],
+        )
         self.assertEqual(updated[0].selected_cover_url, "https://img.databazeknih.cz/img/books/new.jpg")
         self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
         self.assertEqual(updated[1], rows[1])
