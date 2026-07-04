@@ -2042,6 +2042,31 @@ def legie_id_from_url(url: str) -> str:
     return match.group(1) if match else ""
 
 
+def legie_book_id_from_url(url: str) -> str:
+    """Vytahne ID knihy z kanonickeho Legie book URL nebo jeho podstranky."""
+    match = re.search(r"/kniha/(\d+)(?:[-/]|$)", urllib.parse.urlparse(legie_absolute_url(url)).path)
+    return match.group(1) if match else ""
+
+
+def legie_editions_url(detail_url: str, explicit_url: str = "") -> str:
+    """Vrati bezpecny explicitni nebo odvozeny Legie odkaz na vydani knihy."""
+    clean_detail = legie_absolute_url(detail_url)
+    parsed_detail = urllib.parse.urlparse(clean_detail)
+    detail_match = re.fullmatch(r"/kniha/(\d+)(?:-[^/]+)?/?", parsed_detail.path)
+    if parsed_detail.netloc.lower() != "www.legie.info" or not detail_match:
+        return ""
+    clean_explicit = legie_absolute_url(explicit_url)
+    parsed_explicit = urllib.parse.urlparse(clean_explicit)
+    explicit_match = re.fullmatch(r"/kniha/(\d+)(?:-[^/]+)?/vydani/?", parsed_explicit.path)
+    if (
+        parsed_explicit.netloc.lower() == "www.legie.info"
+        and explicit_match
+        and explicit_match.group(1) == detail_match.group(1)
+    ):
+        return clean_explicit.rstrip("/")
+    return clean_detail.rstrip("/") + "/vydani"
+
+
 def format_link_html(url: str) -> str:
     return f'<div>\n<p><a href="{url}" target="_blank"><span style="color: #6cb4ee">{url}</span></a></p></div>'
 
@@ -3455,9 +3480,122 @@ def parse_legie_cover_options(html_text: str) -> list[CoverOption]:
     parser = LegieStoryParser()
     parser.feed(html_text)
     parser.close()
-    return _dedupe_cover_options(
+    return _dedupe_legie_cover_options(
         CoverOption(url, "legie", f"Legie {index}") for index, url in enumerate(parser.cover_urls, start=1)
     )
+
+
+def _normalize_legie_cover_url(url: str) -> str:
+    """Sjednoti stabilni Legie varianty URL jedne obalky."""
+    parsed = urllib.parse.urlparse(normalize_legie_image_url(url))
+    if parsed.netloc.lower() != "www.legie.info":
+        return urllib.parse.urlunparse(parsed)
+    return urllib.parse.urlunparse(parsed._replace(query="", fragment=""))
+
+
+def _dedupe_legie_cover_options(options: Iterable[CoverOption]) -> list[CoverOption]:
+    normalized = (
+        CoverOption(_normalize_legie_cover_url(option.url), option.source, option.label)
+        for option in options
+    )
+    return _dedupe_cover_options(normalized)
+
+
+class LegieEditionCoverParser(HTMLParser):
+    """Parser obalek z duveryhodnych polozek seznamu vydani Legie."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cover_urls: list[str] = []
+        self._content_depth = 0
+        self._entry_depth = 0
+        self._entry_cover_url = ""
+        self._entry_is_audio = False
+
+    def _finish_entry(self) -> None:
+        if self._entry_cover_url and not self._entry_is_audio:
+            self.cover_urls.append(self._entry_cover_url)
+        self._entry_cover_url = ""
+        self._entry_is_audio = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered_tag = tag.lower()
+        attrs_dict = {name.lower(): value or "" for name, value in attrs}
+        classes = set(attrs_dict.get("class", "").split())
+        if not self._content_depth:
+            if lowered_tag == "div" and attrs_dict.get("id", "").lower() == "vycet_vydani":
+                self._content_depth = 1
+            return
+        if lowered_tag not in HTML_VOID_TAGS:
+            self._content_depth += 1
+        if not self._entry_depth:
+            if lowered_tag != "div" or "vydani" not in classes:
+                return
+            self._entry_depth = 1
+            self._entry_cover_url = ""
+            self._entry_is_audio = False
+        elif lowered_tag not in HTML_VOID_TAGS:
+            self._entry_depth += 1
+        context = " ".join(attrs_dict.values()).lower()
+        if any(marker in context for marker in ("audio", "audiokniha", "audiobook")):
+            self._entry_is_audio = True
+        if lowered_tag != "img" or "obalk" not in classes:
+            return
+        url = normalize_legie_image_url(attrs_dict.get("src", ""))
+        parsed = urllib.parse.urlparse(url)
+        if parsed.netloc.lower() == "www.legie.info" and parsed.path.startswith("/images/kniha-small/"):
+            self._entry_cover_url = url
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered_tag = tag.lower()
+        if not self._content_depth or lowered_tag in HTML_VOID_TAGS:
+            return
+        if self._entry_depth:
+            self._entry_depth -= 1
+            if not self._entry_depth:
+                self._finish_entry()
+        self._content_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._entry_depth and any(marker in data.lower() for marker in ("audio", "audiokniha", "audiobook")):
+            self._entry_is_audio = True
+
+
+def parse_legie_edition_cover_options(html_text: str) -> list[CoverOption]:
+    """Vrati tiskove obalky z vyctu vydani Legie."""
+    parser = LegieEditionCoverParser()
+    parser.feed(html_text)
+    parser.close()
+    return _dedupe_legie_cover_options(
+        CoverOption(url, "legie", f"Legie vydani {index}")
+        for index, url in enumerate(parser.cover_urls, start=1)
+    )
+
+
+class LegieEditionsLinkParser(HTMLParser):
+    """Najde prvni explicitni Legie odkaz na vydani knihy."""
+
+    def __init__(self, book_id: str = "") -> None:
+        super().__init__()
+        self.editions_url = ""
+        self.book_id = book_id
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.editions_url or tag.lower() != "a":
+            return
+        href = dict(attrs).get("href") or ""
+        if (
+            re.search(r"/vydani(?:[/?#]|$)", "/" + href.lstrip("/"), flags=re.IGNORECASE)
+            and (not self.book_id or legie_book_id_from_url(href) == self.book_id)
+        ):
+            self.editions_url = legie_absolute_url(href)
+
+
+def parse_legie_editions_link(html_text: str, book_id: str = "") -> str:
+    parser = LegieEditionsLinkParser(book_id)
+    parser.feed(html_text)
+    parser.close()
+    return parser.editions_url
 
 
 def _candidate_urls(candidates: Sequence[Candidate]) -> str:
@@ -4216,6 +4354,13 @@ def is_valid_legie_story_url(url: str) -> bool:
     return legie_absolute_url(url).startswith(LEGIE_BASE_URL + "/povidka/")
 
 
+def is_valid_legie_book_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(legie_absolute_url(url))
+    return parsed.netloc.lower() == "www.legie.info" and re.fullmatch(
+        r"/kniha/\d+(?:-[^/]+)?/?", parsed.path
+    ) is not None
+
+
 def is_manual_external_url(row: MatchRow) -> bool:
     """Pozna rucni odkaz mimo podporovane zdroje, ktery se ma zapsat jen jako link."""
     clean = row.chosen_url.strip().lower()
@@ -4412,6 +4557,7 @@ def cover_candidate_rows(
         and (
             is_valid_apply_url(row.chosen_url)
             or is_valid_legie_story_url(row.chosen_url)
+            or is_valid_legie_book_url(row.chosen_url)
             or is_valid_google_books_url(row.chosen_url)
             or is_valid_openlibrary_url(row.chosen_url)
         )
@@ -4424,7 +4570,7 @@ def cover_candidate_rows(
             row.book_id,
             row.title,
             legie_absolute_url(row.chosen_url)
-            if is_valid_legie_story_url(row.chosen_url)
+            if is_valid_legie_story_url(row.chosen_url) or is_valid_legie_book_url(row.chosen_url)
             else row.chosen_url
             if is_valid_google_books_url(row.chosen_url) or is_valid_openlibrary_url(row.chosen_url)
             else book_url_to_overview_url(row.chosen_url),
@@ -4437,6 +4583,20 @@ def cover_candidate_rows(
 def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None) -> list[CoverOption]:
     """Stahne detail podporovaneho zdroje a vrati kandidatni obalky."""
     fetch = fetcher or fetch_text
+    if is_valid_legie_book_url(url):
+        detail_url = legie_absolute_url(url)
+        detail_html = fetch(detail_url)
+        options = parse_legie_cover_options(detail_html)
+        editions_url = legie_editions_url(
+            detail_url,
+            parse_legie_editions_link(detail_html, legie_book_id_from_url(detail_url)),
+        )
+        if editions_url:
+            try:
+                options.extend(parse_legie_edition_cover_options(fetch(editions_url)))
+            except Exception:
+                pass
+        return _dedupe_legie_cover_options(options)
     if is_valid_legie_story_url(url):
         return parse_legie_cover_options(fetch(legie_absolute_url(url)))
     if is_valid_google_books_url(url):
@@ -4504,6 +4664,7 @@ def audit_cover_rows(
         if not (
             is_valid_apply_url(row.chosen_url)
             or is_valid_legie_story_url(row.chosen_url)
+            or is_valid_legie_book_url(row.chosen_url)
             or is_valid_google_books_url(row.chosen_url)
             or is_valid_openlibrary_url(row.chosen_url)
         ):
@@ -4556,6 +4717,10 @@ def apply_cover_candidate(
         if is_valid_legie_story_url(candidate.source_url):
             detail_html = fetch_detail(candidate.source_url)
             cover_url = parse_legie_story_detail(detail_html, candidate.source_url).cover_url
+        elif is_valid_legie_book_url(candidate.source_url):
+            detail_html = fetch_detail(candidate.source_url)
+            options = parse_legie_cover_options(detail_html)
+            cover_url = options[0].url if options else ""
         elif is_valid_google_books_url(candidate.source_url):
             cover_url = fetch_google_books_detail_metadata(candidate.source_url, fetch_detail)[1].cover_url
         elif is_valid_openlibrary_url(candidate.source_url):
