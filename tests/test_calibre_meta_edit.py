@@ -837,6 +837,39 @@ class TextAndUrlTests(unittest.TestCase):
             )
         )
 
+    def test_legie_book_url_is_cover_source_but_editions_url_is_not_canonical(self):
+        self.assertTrue(hasattr(cme, "is_valid_legie_book_url"))
+        self.assertTrue(
+            cme.is_valid_legie_book_url(
+                "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+            )
+        )
+        self.assertFalse(
+            cme.is_valid_legie_book_url(
+                "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu/vydani#zalozky"
+            )
+        )
+
+    def test_legie_editions_url_prefers_safe_explicit_link_and_derives_fallback(self):
+        self.assertTrue(hasattr(cme, "legie_editions_url"))
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+
+        self.assertEqual(
+            cme.legie_editions_url(
+                detail_url,
+                "kniha/2561-explicitni-vydani/vydani#zalozky",
+            ),
+            "https://www.legie.info/kniha/2561-explicitni-vydani/vydani",
+        )
+        self.assertEqual(
+            cme.legie_editions_url(detail_url),
+            "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu/vydani",
+        )
+        self.assertEqual(
+            cme.legie_editions_url(detail_url, "https://evil.example/kniha/2561/vydani"),
+            "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu/vydani",
+        )
+
     def test_build_search_url_puts_authors_before_title(self):
         # Databazeknih fulltext je citlivy na poradi: 'autor nazev' vraci spravny
         # zaznam, 'nazev autor' ho casto vynecha. Proto autori jdou prvni.
@@ -4329,6 +4362,22 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         self.assertTrue(cme.is_writable_match_row(row))
 
+    def test_is_writable_match_row_rejects_legie_book_metadata_write(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu",
+            "",
+            "manual",
+            "manual",
+            "legie",
+            "kniha",
+        )
+
+        self.assertFalse(cme.is_writable_match_row(row))
+
     def test_is_writable_match_row_accepts_databaze_story_url_for_manual_link(self):
         row = cme.MatchRow(
             284,
@@ -5155,6 +5204,135 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_legie_edition_cover_options_scopes_multiple_print_editions(self):
+        self.assertTrue(hasattr(cme, "parse_legie_edition_cover_options"))
+        html = """
+        <div id="vycet_vydani">
+          <div class="vydani cl">
+            <div class="ob"><img src="images/kniha-small/2/2561-18588.jpg?v=1" class="obalk"></div>
+            <div class="data_vydani">rok 2015, brozovana</div>
+          </div>
+          <div class="vydani cl">
+            <div class="ob"><img src="images/kniha-small/2/2561-3164.jpg" class="obalk"></div>
+            <div class="data_vydani">rok 2006, vazana</div>
+          </div>
+        </div>
+        <aside class="recommendation-carousel">
+          <img src="images/kniha-small/9/9999-9999.jpg" class="obalk">
+        </aside>
+        """
+
+        options = cme.parse_legie_edition_cover_options(html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://www.legie.info/images/kniha-small/2/2561-18588.jpg",
+                "https://www.legie.info/images/kniha-small/2/2561-3164.jpg",
+            ],
+        )
+
+    def test_parse_legie_edition_cover_options_excludes_audio_entry_by_context(self):
+        self.assertTrue(hasattr(cme, "parse_legie_edition_cover_options"))
+        html = """
+        <div id="vycet_vydani">
+          <div class="vydani cl">
+            <div class="ob"><img src="images/kniha-small/2/2561-18588.jpg" class="obalk"></div>
+            <div class="data_vydani"><span class="format_audio">audiokniha</span></div>
+          </div>
+          <div class="vydani cl">
+            <div class="ob"><img src="images/kniha-small/2/2561-3164.jpg" class="obalk"></div>
+            <div class="data_vydani">tistena kniha</div>
+          </div>
+        </div>
+        """
+
+        options = cme.parse_legie_edition_cover_options(html)
+
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.legie.info/images/kniha-small/2/2561-3164.jpg"],
+        )
+
+    def test_cover_options_for_legie_book_prefers_explicit_editions_link_and_keeps_detail_first(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        editions_url = "https://www.legie.info/kniha/2561-explicitni-vydani/vydani"
+        detail_html = """
+        <aside><a href="kniha/9999-unrelated/vydani#zalozky">Cizi vydani</a></aside>
+        <div id="pro_obal">
+          <a href="kniha/2561-explicitni-vydani/vydani#zalozky">
+            <img src="images/kniha-small/2/2561-3163.jpg?v=1" class="obal_kniha">
+          </a>
+        </div>
+        """
+        editions_html = """
+        <div id="vycet_vydani">
+          <div class="vydani cl"><img src="images/kniha-small/2/2561-18588.jpg" class="obalk"></div>
+          <div class="vydani cl"><img src="images/kniha-small/2/2561-3163.jpg" class="obalk"></div>
+        </div>
+        """
+        fetched_urls = []
+
+        def fetcher(url):
+            self.assertTrue(url.startswith("https://www.legie.info/"), url)
+            fetched_urls.append(url)
+            if url == detail_url:
+                return detail_html
+            if url == editions_url:
+                return editions_html
+            raise AssertionError(url)
+
+        options = cme.cover_options_for_url(detail_url, fetcher=fetcher)
+
+        self.assertEqual(fetched_urls, [detail_url, editions_url])
+        self.assertEqual(
+            [option.url for option in options],
+            [
+                "https://www.legie.info/images/kniha-small/2/2561-3163.jpg",
+                "https://www.legie.info/images/kniha-small/2/2561-18588.jpg",
+            ],
+        )
+        self.assertEqual({option.source for option in options}, {"legie"})
+
+    def test_cover_options_for_legie_book_derives_editions_url_and_falls_back_on_fetch_error(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        editions_url = detail_url + "/vydani"
+        detail_html = '<div id="pro_obal"><img src="images/kniha-small/2/2561-3163.jpg" class="obal_kniha"></div>'
+        fetched_urls = []
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == detail_url:
+                return detail_html
+            if url == editions_url:
+                raise OSError("editions unavailable")
+            raise AssertionError(url)
+
+        try:
+            options = cme.cover_options_for_url(detail_url, fetcher=fetcher)
+        except OSError as exc:
+            self.fail(f"Legie editions fetch escaped fallback: {exc}")
+
+        self.assertEqual(fetched_urls, [detail_url, editions_url])
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.legie.info/images/kniha-small/2/2561-3163.jpg"],
+        )
+
+    def test_cover_options_for_legie_book_ignores_unusable_editions_html(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        detail_html = '<div id="pro_obal"><img src="images/kniha-small/2/2561-3163.jpg" class="obal_kniha"></div>'
+
+        options = cme.cover_options_for_url(
+            detail_url,
+            fetcher=lambda url: detail_html if url == detail_url else "<div>broken editions page</div>",
+        )
+
+        self.assertEqual(
+            [option.url for option in options],
+            ["https://www.legie.info/images/kniha-small/2/2561-3163.jpg"],
+        )
+
     def test_cover_candidate_rows_uses_only_books_without_cover_and_supported_url(self):
         rows = [
             cme.MatchRow(1, "Bez obalky", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
@@ -5176,6 +5354,18 @@ class CalibreDbAndApplyTests(unittest.TestCase):
                 cme.CoverCandidate(4, "Legie", "https://www.legie.info/povidka/1"),
             ],
         )
+
+    def test_cover_candidate_rows_supports_legie_book_url(self):
+        url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        row = cme.MatchRow(5, "Kniha", "Autor", "skip", url, "", "manual", "manual", "legie", "kniha")
+
+        candidates = cme.cover_candidate_rows(
+            [row],
+            Path("library"),
+            cover_flags_reader=lambda library, book_ids: {5: False},
+        )
+
+        self.assertEqual(candidates, [cme.CoverCandidate(5, "Kniha", url)])
 
     def test_get_local_cover_path_returns_existing_cover_when_calibre_has_cover(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5245,6 +5435,41 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
         self.assertEqual(updated[0].selected_cover_url, "")
         self.assertIn("https://www.legie.info/images/kniha-small/1/a.jpg", updated[0].cover_urls)
+
+    def test_audit_cover_rows_supports_legie_book_url_without_cross_source_fetch(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        editions_url = detail_url + "/vydani"
+        row = cme.MatchRow(5, "Kniha", "Autor", "skip", detail_url, "", "manual", "manual", "legie", "kniha")
+        fetched_urls = []
+
+        def fetcher(url):
+            self.assertTrue(url.startswith("https://www.legie.info/"), url)
+            fetched_urls.append(url)
+            if url == detail_url:
+                return '<div id="pro_obal"><img src="images/kniha-small/2/2561-3163.jpg" class="obal_kniha"></div>'
+            if url == editions_url:
+                return """
+                <div id="vycet_vydani">
+                  <div class="vydani cl"><img src="images/kniha-small/2/2561-18588.jpg" class="obalk"></div>
+                </div>
+                """
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {5: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(fetched_urls, [detail_url, editions_url])
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
+        self.assertEqual(
+            updated[0].cover_urls,
+            "https://www.legie.info/images/kniha-small/2/2561-3163.jpg|"
+            "https://www.legie.info/images/kniha-small/2/2561-18588.jpg",
+        )
 
     def test_audit_cover_rows_selects_single_cover_without_approve(self):
         rows = [
@@ -5385,6 +5610,28 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(result.chosen_url, "https://www.legie.info/images/kniha-small/1/138-2213.jpg")
         self.assertIn("--field", calls[0])
         self.assertTrue(next(arg for arg in calls[0] if arg.startswith("cover:")).endswith(".jpg"))
+
+    def test_apply_cover_candidate_uses_legie_book_detail_cover(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        candidate = cme.CoverCandidate(5, "Kniha", detail_url)
+        calls = []
+
+        result = cme.apply_cover_candidate(
+            candidate,
+            Path("library"),
+            r"C:\calibredb.exe",
+            runner=lambda args: calls.append(args) or cme.CommandResult(0, "ok", ""),
+            fetcher=lambda url: """
+                <div id="pro_obal">
+                  <img src="images/kniha-small/2/2561-3163.jpg" class="obal_kniha" />
+                </div>
+            """,
+            binary_fetcher=lambda url: b"jpg",
+        )
+
+        self.assertEqual(result.status, "updated")
+        self.assertEqual(result.chosen_url, "https://www.legie.info/images/kniha-small/2/2561-3163.jpg")
+        self.assertIn("--field", calls[0])
 
     def test_apply_match_row_uses_oldest_metadata_but_preserves_canonical_selected_url(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "approve", "https://www.databazeknih.cz/knihy/current-2016", "", "exact-title-author", "exact-title-author")
