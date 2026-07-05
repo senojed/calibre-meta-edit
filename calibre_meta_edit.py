@@ -4638,6 +4638,47 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
     return []
 
 
+def cover_options_for_urls(
+    source_urls: Sequence[str],
+    fetcher: Callable[[str], str] | None = None,
+) -> list[CoverOption]:
+    """Spoji hotove source-specific obalky v poradi zdroju a odstrani duplicity."""
+    options: list[CoverOption] = []
+    for index, source_url in enumerate(source_urls):
+        try:
+            options.extend(cover_options_for_url(source_url, fetcher))
+        except Exception:
+            if index == 0:
+                raise
+    return _dedupe_cover_options(options)
+
+
+def _cover_source_urls_for_row(row: MatchRow) -> list[str]:
+    """Vrati primarni a prvni existujici opacny DK/Legie book zdroj radku."""
+    primary_url = row.chosen_url.strip()
+    primary_source = (
+        "databazeknih"
+        if is_valid_apply_url(primary_url)
+        else "legie"
+        if is_valid_legie_book_url(primary_url)
+        else ""
+    )
+    if not primary_source:
+        return [primary_url]
+    for candidate_url in row.candidate_urls.split("|"):
+        candidate_url = candidate_url.strip()
+        candidate_source = (
+            "databazeknih"
+            if is_valid_apply_url(candidate_url)
+            else "legie"
+            if is_valid_legie_book_url(candidate_url)
+            else ""
+        )
+        if candidate_source and candidate_source != primary_source:
+            return [primary_url, candidate_url]
+    return [primary_url]
+
+
 def _cover_urls_text(options: Sequence[CoverOption]) -> str:
     return "|".join(option.url for option in options)
 
@@ -4683,7 +4724,7 @@ def audit_cover_rows(
             updated.append(row)
             continue
         try:
-            options = cover_options_for_url(row.chosen_url, fetcher)
+            options = cover_options_for_urls(_cover_source_urls_for_row(row), fetcher)
         except Exception:
             updated.append(with_cover_fields(row, "", "", "cover-fetch-error"))
             continue

@@ -5369,6 +5369,127 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             ["https://www.legie.info/images/kniha-small/2/2561-3163.jpg"],
         )
 
+    def test_cover_options_for_urls_keeps_single_databaze_behavior_isolated(self):
+        self.assertTrue(hasattr(cme, "cover_options_for_urls"))
+        detail_url = "https://www.databazeknih.cz/knihy/book-1"
+        fetched_urls = []
+
+        def fetcher(url):
+            self.assertIn("databazeknih.cz", url)
+            fetched_urls.append(url)
+            if "/prehled-knihy/" in url:
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            return '<div id="left"></div>'
+
+        options = cme.cover_options_for_urls([detail_url], fetcher=fetcher)
+
+        self.assertEqual(
+            [(option.url, option.source, option.label) for option in options],
+            [("https://cdn.example/dk-cover.jpg", "databazeknih", "Databaze knih")],
+        )
+        self.assertEqual(
+            fetched_urls,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/book-1",
+                "https://www.databazeknih.cz/dalsi-vydani/book-1",
+            ],
+        )
+
+    def test_cover_options_for_urls_keeps_single_legie_behavior_isolated(self):
+        detail_url = "https://www.legie.info/kniha/2-book"
+        fetched_urls = []
+
+        def fetcher(url):
+            self.assertIn("legie.info", url)
+            fetched_urls.append(url)
+            if url == detail_url:
+                return '<div id="pro_obal"><img src="https://cdn.example/legie-cover.jpg" class="obal_kniha"></div>'
+            return '<div id="vycet_vydani"></div>'
+
+        options = cme.cover_options_for_urls([detail_url], fetcher=fetcher)
+
+        self.assertEqual(
+            [(option.url, option.source, option.label) for option in options],
+            [("https://cdn.example/legie-cover.jpg", "legie", "Legie 1")],
+        )
+        self.assertEqual(fetched_urls, [detail_url, detail_url + "/vydani"])
+
+    def test_cover_options_for_urls_aggregates_both_primary_orders(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                return '<div id="pro_obal"><img src="https://cdn.example/legie-cover.jpg" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                return '<div id="vycet_vydani"></div>'
+            raise AssertionError(url)
+
+        cases = [
+            (
+                [databaze_url, legie_url],
+                [
+                    ("https://cdn.example/dk-cover.jpg", "databazeknih"),
+                    ("https://cdn.example/legie-cover.jpg", "legie"),
+                ],
+            ),
+            (
+                [legie_url, databaze_url],
+                [
+                    ("https://cdn.example/legie-cover.jpg", "legie"),
+                    ("https://cdn.example/dk-cover.jpg", "databazeknih"),
+                ],
+            ),
+        ]
+        for source_urls, expected in cases:
+            with self.subTest(primary=source_urls[0]):
+                options = cme.cover_options_for_urls(source_urls, fetcher=fetcher)
+                self.assertEqual([(option.url, option.source) for option in options], expected)
+
+    def test_cover_options_for_urls_dedupes_normalized_cross_source_image_url(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/shared-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                return '<div id="pro_obal"><img src="https://cdn.example/shared-cover.jpg" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                return '<div id="vycet_vydani"></div>'
+            raise AssertionError(url)
+
+        options = cme.cover_options_for_urls([databaze_url, legie_url], fetcher=fetcher)
+
+        self.assertEqual(
+            [(option.url, option.source) for option in options],
+            [("https://cdn.example/shared-cover.jpg", "databazeknih")],
+        )
+
+    def test_cover_options_for_urls_keeps_primary_when_secondary_fetch_fails(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+
+        def fetcher(url):
+            if "legie.info" in url:
+                raise OSError("secondary unavailable")
+            if "/prehled-knihy/" in url:
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            return '<div id="left"></div>'
+
+        options = cme.cover_options_for_urls([databaze_url, legie_url], fetcher=fetcher)
+
+        self.assertEqual(
+            [(option.url, option.source) for option in options],
+            [("https://cdn.example/dk-cover.jpg", "databazeknih")],
+        )
+
     def test_cover_candidate_rows_uses_only_books_without_cover_and_supported_url(self):
         rows = [
             cme.MatchRow(1, "Bez obalky", "Autor", "skip", "https://www.databazeknih.cz/knihy/a-1", "", "manual", "manual"),
@@ -5506,6 +5627,57 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             "https://www.legie.info/images/kniha-small/2/2561-3163.jpg|"
             "https://www.legie.info/images/kniha-small/2/2561-18588.jpg",
         )
+
+    def test_audit_cover_rows_aggregates_existing_opposite_source_candidate(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "skip",
+            databaze_url,
+            databaze_url + "|" + legie_url,
+            "manual",
+            "manual",
+            selected_cover_url="https://cdn.example/dk-cover.jpg",
+        )
+        fetched_urls = []
+
+        def fetcher(url):
+            fetched_urls.append(url)
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                return '<div id="pro_obal"><img src="https://cdn.example/legie-cover.jpg" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                return '<div id="vycet_vydani"></div>'
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(
+            fetched_urls,
+            [
+                "https://www.databazeknih.cz/prehled-knihy/book-1",
+                "https://www.databazeknih.cz/dalsi-vydani/book-1",
+                legie_url,
+                legie_url + "/vydani",
+            ],
+        )
+        self.assertEqual(
+            updated[0].cover_urls,
+            "https://cdn.example/dk-cover.jpg|https://cdn.example/legie-cover.jpg",
+        )
+        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertEqual(updated[0].status, "review")
 
     def test_audit_cover_rows_selects_single_cover_without_approve(self):
         rows = [
