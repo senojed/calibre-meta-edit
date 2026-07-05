@@ -5294,6 +5294,42 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
         self.assertEqual({option.source for option in options}, {"legie"})
 
+    def test_cover_options_for_legie_book_renumbers_edition_labels_after_dedupe(self):
+        detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
+        editions_url = detail_url + "/vydani"
+        detail_html = """
+        <div id="pro_obal">
+          <img src="images/kniha-small/2/2561-18588.jpg?v=detail" class="obal_kniha">
+        </div>
+        """
+        editions_html = """
+        <div id="vycet_vydani">
+          <div class="vydani cl"><img src="images/kniha-small/2/2561-18588.jpg?v=edition" class="obalk"></div>
+          <div class="vydani cl"><img src="images/kniha-small/2/2561-3164.jpg" class="obalk"></div>
+        </div>
+        """
+
+        options = cme.cover_options_for_url(
+            detail_url,
+            fetcher=lambda url: detail_html if url == detail_url else editions_html,
+        )
+
+        self.assertEqual(
+            [(option.url, option.source, option.label) for option in options],
+            [
+                (
+                    "https://www.legie.info/images/kniha-small/2/2561-18588.jpg",
+                    "legie",
+                    "Legie 1",
+                ),
+                (
+                    "https://www.legie.info/images/kniha-small/2/2561-3164.jpg",
+                    "legie",
+                    "Legie vydani 1",
+                ),
+            ],
+        )
+
     def test_cover_options_for_legie_book_derives_editions_url_and_falls_back_on_fetch_error(self):
         detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
         editions_url = detail_url + "/vydani"

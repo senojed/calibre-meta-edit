@@ -3501,6 +3501,18 @@ def _dedupe_legie_cover_options(options: Iterable[CoverOption]) -> list[CoverOpt
     return _dedupe_cover_options(normalized)
 
 
+def _renumber_legie_edition_labels(options: Iterable[CoverOption]) -> list[CoverOption]:
+    """Precisluje zachovane Legie edition labely po odstraneni duplicit."""
+    result: list[CoverOption] = []
+    edition_number = 0
+    for option in options:
+        if option.source == "legie" and option.label.startswith("Legie vydani "):
+            edition_number += 1
+            option = CoverOption(option.url, option.source, f"Legie vydani {edition_number}")
+        result.append(option)
+    return result
+
+
 class LegieEditionCoverParser(HTMLParser):
     """Parser obalek z duveryhodnych polozek seznamu vydani Legie."""
 
@@ -4596,7 +4608,7 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
                 options.extend(parse_legie_edition_cover_options(fetch(editions_url)))
             except Exception:
                 pass
-        return _dedupe_legie_cover_options(options)
+        return _renumber_legie_edition_labels(_dedupe_legie_cover_options(options))
     if is_valid_legie_story_url(url):
         return parse_legie_cover_options(fetch(legie_absolute_url(url)))
     if is_valid_google_books_url(url):
