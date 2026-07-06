@@ -346,6 +346,46 @@ def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
     return f"{status} | {csv_text} | {APP_VERSION}"
 
 
+def unified_import_preflight_preview(rows: Sequence[cme.MatchRow]) -> str:
+    """Shrne dostupne DK/Legie URL bez site, zmen vyberu nebo zapisu."""
+    if not rows:
+        return (
+            "Unified import preflight: neni vybrana zadna kniha. Nelze vytvorit nahled.\n"
+            "Nic nebylo zapsano ani zmeneno."
+        )
+
+    source_urls: list[str] = []
+    seen_urls: set[str] = set()
+    for row in rows:
+        for raw_url in (row.chosen_url, *row.candidate_urls.split("|")):
+            url = raw_url.strip()
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                source_urls.append(url)
+
+    lines = [
+        "Unified import preflight (pouze nahled).",
+        f"Vybrane knihy: {len(rows)}",
+    ]
+    if not source_urls:
+        lines.append("Zdrojove URL nejsou k dispozici.")
+    else:
+        databaze_urls = [url for url in source_urls if cme.is_valid_apply_url(url)]
+        legie_urls = [
+            url
+            for url in source_urls
+            if cme.is_valid_legie_book_url(url) or cme.is_valid_legie_story_url(url)
+        ]
+        lines.append(f"Zdrojove URL: {len(source_urls)}")
+        lines.append(f"Databaze knih ({len(databaze_urls)}):")
+        lines.extend(f"- {url}" for url in databaze_urls)
+        lines.append(f"Legie ({len(legie_urls)}):")
+        lines.extend(f"- {url}" for url in legie_urls)
+
+    lines.append("Nic nebylo zapsano ani zmeneno.")
+    return "\n".join(lines)
+
+
 def filter_label(value: str) -> str:
     """Zobrazi prazdnou hodnotu filtru lidsky."""
     return value or "bez typu"
@@ -2496,9 +2536,9 @@ if PYSIDE6_AVAILABLE:
             self.run_background("Zapis do Calibre", action, reload_after=True)
 
         def on_unified_import_clicked(self) -> None:
-            message = "Unified import zatim neni implementovan."
-            self.write_output(message)
-            self.set_status(message)
+            preview = unified_import_preflight_preview(self.selected_rows())
+            self.write_output(preview)
+            self.set_status(preview.splitlines()[0])
 
         def run_covers(self) -> None:
             selected = self.selected_book_ids()

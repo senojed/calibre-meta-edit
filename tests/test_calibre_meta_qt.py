@@ -2938,6 +2938,73 @@ class RunImportAnalysisTests(unittest.TestCase):
         self.assertEqual(result.preview.title, "Kniha")
 
 
+class UnifiedImportPreflightTests(unittest.TestCase):
+    DK_URL = "https://www.databazeknih.cz/knihy/foo-123"
+    LEGIE_URL = "https://www.legie.info/kniha/2561-foo"
+
+    def _row(self, chosen_url="", candidate_urls=""):
+        return cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            chosen_url,
+            candidate_urls,
+            "",
+            "",
+        )
+
+    def test_preflight_without_selected_context_is_safe(self):
+        import calibre_meta_qt as qt
+
+        preview = qt.unified_import_preflight_preview([])
+
+        self.assertIn("neni vybrana zadna kniha", preview)
+        self.assertIn("Nic nebylo zapsano ani zmeneno", preview)
+
+    def test_preflight_reports_databaze_knih_candidate(self):
+        import calibre_meta_qt as qt
+
+        preview = qt.unified_import_preflight_preview([self._row(self.DK_URL)])
+
+        self.assertIn("Zdrojove URL: 1", preview)
+        self.assertIn("Databaze knih (1)", preview)
+        self.assertIn(self.DK_URL, preview)
+        self.assertIn("Legie (0)", preview)
+
+    def test_preflight_reports_legie_candidate(self):
+        import calibre_meta_qt as qt
+
+        preview = qt.unified_import_preflight_preview([self._row(self.LEGIE_URL)])
+
+        self.assertIn("Zdrojove URL: 1", preview)
+        self.assertIn("Databaze knih (0)", preview)
+        self.assertIn("Legie (1)", preview)
+        self.assertIn(self.LEGIE_URL, preview)
+
+    def test_preflight_reports_both_sources_without_fetching(self):
+        import calibre_meta_qt as qt
+
+        preview = qt.unified_import_preflight_preview(
+            [self._row(self.DK_URL, f"{self.DK_URL}|{self.LEGIE_URL}")]
+        )
+
+        self.assertIn("Zdrojove URL: 2", preview)
+        self.assertIn("Databaze knih (1)", preview)
+        self.assertIn("Legie (1)", preview)
+        self.assertIn(self.DK_URL, preview)
+        self.assertIn(self.LEGIE_URL, preview)
+
+    def test_preflight_reports_selected_row_without_source_urls(self):
+        import calibre_meta_qt as qt
+
+        preview = qt.unified_import_preflight_preview([self._row()])
+
+        self.assertIn("Vybrane knihy: 1", preview)
+        self.assertIn("Zdrojove URL nejsou k dispozici", preview)
+        self.assertIn("Nic nebylo zapsano ani zmeneno", preview)
+
+
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class QtImportWiringTests(unittest.TestCase):
     def _make_analysis(self):
@@ -2975,26 +3042,34 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.unified_import_button.toolTip(), "Unified import")
         app.processEvents()
 
-    def test_unified_import_skeleton_is_safe_noop(self):
+    def test_unified_import_handler_shows_safe_preflight(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
+        window.rows = []
+        window.refresh_table()
+        selected_before = window.selected_book_ids()
 
         with (
             patch.object(window, "start_epub_import") as start_import,
             patch.object(window, "run_multiimport_analysis") as run_multiimport,
             patch.object(window, "run_apply") as run_apply,
+            patch.object(window, "run_covers") as run_covers,
+            patch.object(window, "save_csv") as save_csv,
         ):
             window.unified_import_button.click()
 
         start_import.assert_not_called()
         run_multiimport.assert_not_called()
         run_apply.assert_not_called()
-        self.assertIn("Unified import zatim neni implementovan", window.output.toPlainText())
-        self.assertIn("Unified import zatim neni implementovan", window.statusBar().currentMessage())
+        run_covers.assert_not_called()
+        save_csv.assert_not_called()
+        self.assertEqual(window.selected_book_ids(), selected_before)
+        self.assertIn("neni vybrana zadna kniha", window.output.toPlainText())
+        self.assertIn("Unified import preflight", window.statusBar().currentMessage())
         app.processEvents()
 
     def test_multiimport_menu_has_file_and_folder_picker_actions(self):
