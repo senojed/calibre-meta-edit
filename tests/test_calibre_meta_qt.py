@@ -2941,6 +2941,7 @@ class RunImportAnalysisTests(unittest.TestCase):
 class UnifiedImportPreflightTests(unittest.TestCase):
     DK_URL = "https://www.databazeknih.cz/knihy/foo-123"
     LEGIE_URL = "https://www.legie.info/kniha/2561-foo"
+    UNSUPPORTED_URL = "https://example.com/book/1"
 
     def _row(self, chosen_url="", candidate_urls=""):
         return cme.MatchRow(
@@ -2954,55 +2955,98 @@ class UnifiedImportPreflightTests(unittest.TestCase):
             "",
         )
 
-    def test_preflight_without_selected_context_is_safe(self):
+    def test_plan_without_selected_context_is_safe(self):
         import calibre_meta_qt as qt
 
-        preview = qt.unified_import_preflight_preview([])
+        plan = qt.build_unified_import_plan([])
 
+        self.assertFalse(plan.has_selection)
+        self.assertFalse(plan.has_source_urls)
+        self.assertFalse(plan.can_continue)
+        self.assertEqual(plan.source_urls, ())
+        self.assertTrue(plan.is_read_only)
+        preview = qt.unified_import_preflight_preview(plan)
         self.assertIn("neni vybrana zadna kniha", preview)
         self.assertIn("Nic nebylo zapsano ani zmeneno", preview)
 
-    def test_preflight_reports_databaze_knih_candidate(self):
+    def test_plan_with_selected_row_without_urls_cannot_continue(self):
         import calibre_meta_qt as qt
 
-        preview = qt.unified_import_preflight_preview([self._row(self.DK_URL)])
+        plan = qt.build_unified_import_plan([self._row()])
 
+        self.assertTrue(plan.has_selection)
+        self.assertFalse(plan.has_source_urls)
+        self.assertFalse(plan.can_continue)
+        self.assertEqual(plan.source_urls, ())
+        preview = qt.unified_import_preflight_preview(plan)
+        self.assertIn("Vybrane knihy: 1", preview)
+        self.assertIn("Zdrojove URL nejsou k dispozici", preview)
+
+    def test_plan_classifies_databaze_knih_url(self):
+        import calibre_meta_qt as qt
+
+        plan = qt.build_unified_import_plan([self._row(self.DK_URL)])
+
+        self.assertEqual(plan.dk_urls, (self.DK_URL,))
+        self.assertEqual(plan.legie_urls, ())
+        self.assertEqual(plan.unsupported_urls, ())
+        self.assertTrue(plan.can_continue)
+        preview = qt.unified_import_preflight_preview(plan)
         self.assertIn("Zdrojove URL: 1", preview)
         self.assertIn("Databaze knih (1)", preview)
         self.assertIn(self.DK_URL, preview)
-        self.assertIn("Legie (0)", preview)
 
-    def test_preflight_reports_legie_candidate(self):
+    def test_plan_classifies_legie_url(self):
         import calibre_meta_qt as qt
 
-        preview = qt.unified_import_preflight_preview([self._row(self.LEGIE_URL)])
+        plan = qt.build_unified_import_plan([self._row(self.LEGIE_URL)])
 
-        self.assertIn("Zdrojove URL: 1", preview)
-        self.assertIn("Databaze knih (0)", preview)
+        self.assertEqual(plan.dk_urls, ())
+        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
+        self.assertEqual(plan.unsupported_urls, ())
+        self.assertTrue(plan.can_continue)
+        preview = qt.unified_import_preflight_preview(plan)
         self.assertIn("Legie (1)", preview)
         self.assertIn(self.LEGIE_URL, preview)
 
-    def test_preflight_reports_both_sources_without_fetching(self):
+    def test_plan_classifies_and_dedupes_both_sources(self):
         import calibre_meta_qt as qt
 
-        preview = qt.unified_import_preflight_preview(
+        plan = qt.build_unified_import_plan(
             [self._row(self.DK_URL, f"{self.DK_URL}|{self.LEGIE_URL}")]
         )
 
+        self.assertEqual(plan.source_urls, (self.DK_URL, self.LEGIE_URL))
+        self.assertEqual(plan.dk_urls, (self.DK_URL,))
+        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
+        self.assertTrue(plan.can_continue)
+        preview = qt.unified_import_preflight_preview(plan)
         self.assertIn("Zdrojove URL: 2", preview)
         self.assertIn("Databaze knih (1)", preview)
         self.assertIn("Legie (1)", preview)
-        self.assertIn(self.DK_URL, preview)
-        self.assertIn(self.LEGIE_URL, preview)
 
-    def test_preflight_reports_selected_row_without_source_urls(self):
+    def test_plan_retains_unsupported_url_without_misclassification(self):
         import calibre_meta_qt as qt
 
-        preview = qt.unified_import_preflight_preview([self._row()])
+        plan = qt.build_unified_import_plan([self._row(self.UNSUPPORTED_URL)])
 
-        self.assertIn("Vybrane knihy: 1", preview)
-        self.assertIn("Zdrojove URL nejsou k dispozici", preview)
-        self.assertIn("Nic nebylo zapsano ani zmeneno", preview)
+        self.assertEqual(plan.source_urls, (self.UNSUPPORTED_URL,))
+        self.assertEqual(plan.dk_urls, ())
+        self.assertEqual(plan.legie_urls, ())
+        self.assertEqual(plan.unsupported_urls, (self.UNSUPPORTED_URL,))
+        self.assertFalse(plan.can_continue)
+        self.assertIn("Nepodporovane URL (1)", qt.unified_import_preflight_preview(plan))
+
+    def test_plan_dedupes_urls_deterministically(self):
+        import calibre_meta_qt as qt
+
+        plan = qt.build_unified_import_plan(
+            [self._row(self.LEGIE_URL, f" {self.DK_URL} | {self.LEGIE_URL} | {self.DK_URL} ")]
+        )
+
+        self.assertEqual(plan.source_urls, (self.LEGIE_URL, self.DK_URL))
+        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
+        self.assertEqual(plan.dk_urls, (self.DK_URL,))
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
