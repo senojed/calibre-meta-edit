@@ -4683,6 +4683,29 @@ def _cover_urls_text(options: Sequence[CoverOption]) -> str:
     return "|".join(option.url for option in options)
 
 
+def _cover_url_comparison_key(url: str) -> str:
+    """Normalizuje URL obalky pro bezpecne porovnani existujiciho vyberu."""
+    parsed = urllib.parse.urlparse(html.unescape(url.strip()))
+    host = parsed.netloc.lower()
+    if host in {"www.databazeknih.cz", "img.databazeknih.cz"}:
+        return _normalize_databaze_cover_url(url)
+    if host == "www.legie.info":
+        return _normalize_legie_cover_url(url)
+    normalized = urllib.parse.urlparse(normalize_image_url(url))
+    return urllib.parse.urlunparse(
+        normalized._replace(scheme=normalized.scheme.lower(), netloc=normalized.netloc.lower(), fragment="")
+    )
+
+
+def _preserved_selected_cover_url(selected_cover_url: str, options: Sequence[CoverOption]) -> str:
+    """Zachova existujici vyber, pokud stale odpovida aktualnimu kandidatovi."""
+    selected = selected_cover_url.strip()
+    if not selected:
+        return ""
+    selected_key = _cover_url_comparison_key(selected)
+    return selected if any(_cover_url_comparison_key(option.url) == selected_key for option in options) else ""
+
+
 def with_cover_fields(
     row: MatchRow,
     cover_urls: str,
@@ -4732,10 +4755,26 @@ def audit_cover_rows(
             updated.append(with_cover_fields(row, "", "", "cover-not-found"))
             continue
         urls_text = _cover_urls_text(options)
+        preserved_selection = _preserved_selected_cover_url(row.selected_cover_url, options)
         if len(options) == 1:
-            updated.append(with_cover_fields(row, urls_text, options[0].url, "single-cover-candidate"))
+            updated.append(
+                with_cover_fields(
+                    row,
+                    urls_text,
+                    preserved_selection or options[0].url,
+                    "single-cover-candidate",
+                )
+            )
             continue
-        updated.append(with_cover_fields(row, urls_text, "", "multiple-cover-candidates", status="review"))
+        updated.append(
+            with_cover_fields(
+                row,
+                urls_text,
+                preserved_selection,
+                "multiple-cover-candidates",
+                status="review",
+            )
+        )
     return updated
 
 
