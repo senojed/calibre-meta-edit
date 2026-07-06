@@ -2963,6 +2963,40 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.import_button.toolTip(), "Import knihy")
         app.processEvents()
 
+    def test_toolbar_has_unified_import_skeleton_button(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertTrue(hasattr(window, "unified_import_button"))
+        self.assertEqual(window.unified_import_button.toolTip(), "Unified import")
+        app.processEvents()
+
+    def test_unified_import_skeleton_is_safe_noop(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(window, "start_epub_import") as start_import,
+            patch.object(window, "run_multiimport_analysis") as run_multiimport,
+            patch.object(window, "run_apply") as run_apply,
+        ):
+            window.unified_import_button.click()
+
+        start_import.assert_not_called()
+        run_multiimport.assert_not_called()
+        run_apply.assert_not_called()
+        self.assertIn("Unified import zatim neni implementovan", window.output.toPlainText())
+        self.assertIn("Unified import zatim neni implementovan", window.statusBar().currentMessage())
+        app.processEvents()
+
     def test_multiimport_menu_has_file_and_folder_picker_actions(self):
         from PySide6.QtWidgets import QApplication
         import sys

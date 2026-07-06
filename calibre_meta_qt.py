@@ -1545,6 +1545,14 @@ if PYSIDE6_AVAILABLE:
             # Velky odstup deli levou skupinu (u leveho okraje) od prave (u praveho okraje).
             toolbar.addStretch(1)
             # Prava skupina: import, obalky, odkaz, Calibre - odstup - smazat - odstup - zapsat.
+            self.unified_import_button = self._add_button(
+                toolbar,
+                "Unified import",
+                self.on_unified_import_clicked,
+                "neutralButton",
+                "import-epub",
+                show_text=False,
+            )
             self.import_button = self._add_button(
                 toolbar, "Import knihy", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
@@ -2486,6 +2494,11 @@ if PYSIDE6_AVAILABLE:
             args.skip_cover_book_ids = skip_cover_book_ids
             action = shared.make_apply_action(args=args, allow_force=allow_force, matches_path=self.matches_path)
             self.run_background("Zapis do Calibre", action, reload_after=True)
+
+        def on_unified_import_clicked(self) -> None:
+            message = "Unified import zatim neni implementovan."
+            self.write_output(message)
+            self.set_status(message)
 
         def run_covers(self) -> None:
             selected = self.selected_book_ids()
