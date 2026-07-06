@@ -5676,8 +5676,91 @@ class CalibreDbAndApplyTests(unittest.TestCase):
             updated[0].cover_urls,
             "https://cdn.example/dk-cover.jpg|https://cdn.example/legie-cover.jpg",
         )
-        self.assertEqual(updated[0].selected_cover_url, "")
+        self.assertEqual(updated[0].selected_cover_url, "https://cdn.example/dk-cover.jpg")
         self.assertEqual(updated[0].status, "review")
+
+    def test_audit_cover_rows_preserves_selected_legie_cover_after_aggregation(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+        legie_cover = "https://www.legie.info/images/kniha-small/2/2-cover.jpg"
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            legie_url,
+            legie_url + "|" + databaze_url,
+            "manual",
+            "manual",
+            selected_cover_url=legie_cover,
+        )
+
+        def fetcher(url):
+            if url == legie_url:
+                return f'<div id="pro_obal"><img src="{legie_cover}" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                return '<div id="vycet_vydani"></div>'
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(
+            updated[0].cover_urls,
+            legie_cover + "|https://cdn.example/dk-cover.jpg",
+        )
+        self.assertEqual(updated[0].selected_cover_url, legie_cover)
+        self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
+
+    def test_audit_cover_rows_preserves_selected_databaze_alias_after_normalization(self):
+        databaze_url = "https://www.databazeknih.cz/knihy/book-12111"
+        legie_url = "https://www.legie.info/kniha/2-book"
+        canonical_cover = "https://www.databazeknih.cz/img/books/12_/12111/cover.jpg"
+        selected_alias = "https://www.databazeknih.cz/img/books/12_/12111/bmid_cover.jpg?size=small#selected"
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            databaze_url,
+            databaze_url + "|" + legie_url,
+            "manual",
+            "manual",
+            selected_cover_url=selected_alias,
+        )
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-12111":
+                return f'<img src="{canonical_cover}" class="cover">'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-12111":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                return '<div id="pro_obal"><img src="images/kniha-small/2/2-cover.jpg" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                return '<div id="vycet_vydani"></div>'
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row],
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(
+            updated[0].cover_urls,
+            canonical_cover + "|https://www.legie.info/images/kniha-small/2/2-cover.jpg",
+        )
+        self.assertEqual(updated[0].selected_cover_url, selected_alias)
+        self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
 
     def test_audit_cover_rows_selects_single_cover_without_approve(self):
         rows = [
