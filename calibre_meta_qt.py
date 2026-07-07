@@ -12,7 +12,7 @@ import os
 import socket
 import threading
 import webbrowser
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -346,14 +346,21 @@ def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
     return f"{status} | {csv_text} | {APP_VERSION}"
 
 
-def unified_import_preflight_preview(rows: Sequence[cme.MatchRow]) -> str:
-    """Shrne dostupne DK/Legie URL bez site, zmen vyberu nebo zapisu."""
-    if not rows:
-        return (
-            "Unified import preflight: neni vybrana zadna kniha. Nelze vytvorit nahled.\n"
-            "Nic nebylo zapsano ani zmeneno."
-        )
+@dataclass(frozen=True)
+class UnifiedImportPlan:
+    has_selection: bool
+    has_source_urls: bool
+    source_urls: tuple[str, ...]
+    dk_urls: tuple[str, ...]
+    legie_urls: tuple[str, ...]
+    unsupported_urls: tuple[str, ...]
+    messages: tuple[str, ...]
+    can_continue: bool
+    is_read_only: bool = True
 
+
+def build_unified_import_plan(rows: Sequence[cme.MatchRow]) -> UnifiedImportPlan:
+    """Sestavi read-only plan z existujicich URL bez site nebo mutaci."""
     source_urls: list[str] = []
     seen_urls: set[str] = set()
     for row in rows:
@@ -363,27 +370,52 @@ def unified_import_preflight_preview(rows: Sequence[cme.MatchRow]) -> str:
                 seen_urls.add(url)
                 source_urls.append(url)
 
-    lines = [
-        "Unified import preflight (pouze nahled).",
-        f"Vybrane knihy: {len(rows)}",
-    ]
-    if not source_urls:
-        lines.append("Zdrojove URL nejsou k dispozici.")
+    dk_urls: list[str] = []
+    legie_urls: list[str] = []
+    unsupported_urls: list[str] = []
+    for url in source_urls:
+        if cme.is_valid_apply_url(url):
+            dk_urls.append(url)
+        elif cme.is_valid_legie_book_url(url) or cme.is_valid_legie_story_url(url):
+            legie_urls.append(url)
+        else:
+            unsupported_urls.append(url)
+
+    if not rows:
+        lines = ["Unified import preflight: neni vybrana zadna kniha. Nelze vytvorit nahled."]
     else:
-        databaze_urls = [url for url in source_urls if cme.is_valid_apply_url(url)]
-        legie_urls = [
-            url
-            for url in source_urls
-            if cme.is_valid_legie_book_url(url) or cme.is_valid_legie_story_url(url)
+        lines = [
+            "Unified import preflight (pouze nahled).",
+            f"Vybrane knihy: {len(rows)}",
         ]
+    if rows and not source_urls:
+        lines.append("Zdrojove URL nejsou k dispozici.")
+    elif source_urls:
         lines.append(f"Zdrojove URL: {len(source_urls)}")
-        lines.append(f"Databaze knih ({len(databaze_urls)}):")
-        lines.extend(f"- {url}" for url in databaze_urls)
+        lines.append(f"Databaze knih ({len(dk_urls)}):")
+        lines.extend(f"- {url}" for url in dk_urls)
         lines.append(f"Legie ({len(legie_urls)}):")
         lines.extend(f"- {url}" for url in legie_urls)
+        if unsupported_urls:
+            lines.append(f"Nepodporovane URL ({len(unsupported_urls)}):")
+            lines.extend(f"- {url}" for url in unsupported_urls)
 
     lines.append("Nic nebylo zapsano ani zmeneno.")
-    return "\n".join(lines)
+    return UnifiedImportPlan(
+        has_selection=bool(rows),
+        has_source_urls=bool(source_urls),
+        source_urls=tuple(source_urls),
+        dk_urls=tuple(dk_urls),
+        legie_urls=tuple(legie_urls),
+        unsupported_urls=tuple(unsupported_urls),
+        messages=tuple(lines),
+        can_continue=bool(dk_urls or legie_urls),
+    )
+
+
+def unified_import_preflight_preview(plan: UnifiedImportPlan) -> str:
+    """Prevede read-only plan na text pro existujici log a status UI."""
+    return "\n".join(plan.messages)
 
 
 def filter_label(value: str) -> str:
@@ -2536,7 +2568,8 @@ if PYSIDE6_AVAILABLE:
             self.run_background("Zapis do Calibre", action, reload_after=True)
 
         def on_unified_import_clicked(self) -> None:
-            preview = unified_import_preflight_preview(self.selected_rows())
+            plan = build_unified_import_plan(self.selected_rows())
+            preview = unified_import_preflight_preview(plan)
             self.write_output(preview)
             self.set_status(preview.splitlines()[0])
 
