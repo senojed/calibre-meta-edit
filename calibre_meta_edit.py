@@ -448,6 +448,76 @@ def is_supported_import_file(path: Path) -> bool:
     return any(suffix == extension for extension, _label in BOOK_IMPORT_FORMATS)
 
 
+@dataclass(frozen=True)
+class ImportFolderScanResult:
+    files: tuple[Path, ...]
+    skipped_directories: tuple[Path, ...]
+
+
+def is_import_directory_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction is not None and is_junction())
+
+
+def _sorted_unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    unique: dict[str, Path] = {}
+    for path in paths:
+        absolute = Path(os.path.abspath(path))
+        unique.setdefault(os.path.normcase(str(absolute)), absolute)
+    return tuple(sorted(unique.values(), key=lambda path: str(path).casefold()))
+
+
+def scan_import_files_from_folder(
+    folder: Path,
+    recursive: bool = False,
+    walk_func: Callable[..., Iterable[tuple[str, list[str], list[str]]]] | None = None,
+) -> ImportFolderScanResult:
+    root = Path(os.path.abspath(folder))
+    if not root.is_dir():
+        return ImportFolderScanResult((), (root,))
+
+    files: list[Path] = []
+    skipped: list[Path] = []
+    if not recursive:
+        try:
+            files.extend(path for path in root.iterdir() if is_supported_import_file(path))
+        except OSError:
+            skipped.append(root)
+        return ImportFolderScanResult(_sorted_unique_paths(files), _sorted_unique_paths(skipped))
+
+    def record_error(error: OSError) -> None:
+        skipped.append(Path(error.filename) if error.filename else root)
+
+    walker = walk_func or os.walk
+    for current, directory_names, file_names in walker(
+        root,
+        topdown=True,
+        onerror=record_error,
+        followlinks=False,
+    ):
+        current_path = Path(current)
+        allowed_directories: list[str] = []
+        for name in directory_names:
+            candidate = current_path / name
+            try:
+                if not is_import_directory_link(candidate):
+                    allowed_directories.append(name)
+            except OSError:
+                skipped.append(candidate)
+        directory_names[:] = allowed_directories
+        for name in file_names:
+            candidate = current_path / name
+            try:
+                if is_supported_import_file(candidate):
+                    files.append(candidate)
+            except OSError:
+                continue
+
+    return ImportFolderScanResult(_sorted_unique_paths(files), _sorted_unique_paths(skipped))
+
+
 def collect_import_files_from_paths(paths: Iterable[Path]) -> list[Path]:
     return sorted(
         (path for path in paths if is_supported_import_file(path)),
@@ -456,9 +526,7 @@ def collect_import_files_from_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 def collect_import_files_from_folder(folder: Path) -> list[Path]:
-    if not folder.is_dir():
-        return []
-    return collect_import_files_from_paths(folder.iterdir())
+    return list(scan_import_files_from_folder(folder).files)
 
 
 def build_multiimport_batch_items(paths: Iterable[Path]) -> list[MultiImportBatchItem]:

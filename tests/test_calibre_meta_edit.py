@@ -13,6 +13,7 @@ import zipfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import calibre_meta_edit as cme
 
@@ -726,6 +727,81 @@ class TextAndUrlTests(unittest.TestCase):
             collected = cme.collect_import_files_from_folder(root)
 
             self.assertEqual(collected, [a_pdb, z_epub])
+
+    def test_scan_import_files_from_folder_returns_result_and_preserves_non_recursive_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "A.PDB"
+            second = root / "z.epub"
+            nested = root / "nested"
+            first.write_text("x", encoding="utf-8")
+            second.write_text("x", encoding="utf-8")
+            nested.mkdir()
+            (nested / "inside.mobi").write_text("x", encoding="utf-8")
+
+            result = cme.scan_import_files_from_folder(root)
+
+            self.assertEqual(result.files, (first, second))
+            self.assertEqual(result.skipped_directories, ())
+
+    def test_scan_import_files_from_folder_recurses_and_ignores_unsupported_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "nested"
+            nested.mkdir()
+            top = root / "top.epub"
+            inside = nested / "inside.mobi"
+            top.write_text("x", encoding="utf-8")
+            inside.write_text("x", encoding="utf-8")
+            (nested / "notes.txt").write_text("x", encoding="utf-8")
+
+            result = cme.scan_import_files_from_folder(root, recursive=True)
+
+            self.assertEqual(result.files, tuple(sorted((inside, top), key=lambda path: str(path).casefold())))
+            self.assertEqual(result.skipped_directories, ())
+
+    def test_scan_import_files_reports_walk_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = root / "blocked"
+
+            def fake_walk(path, topdown=True, onerror=None, followlinks=False):
+                self.assertEqual(Path(path), root)
+                self.assertTrue(topdown)
+                self.assertFalse(followlinks)
+                error = PermissionError(13, "blocked", str(blocked))
+                if onerror is not None:
+                    onerror(error)
+                return iter([(str(root), [], [])])
+
+            result = cme.scan_import_files_from_folder(root, recursive=True, walk_func=fake_walk)
+
+            self.assertEqual(result.files, ())
+            self.assertEqual(result.skipped_directories, (blocked,))
+
+    def test_import_directory_link_detects_symlink_without_following_it(self):
+        path = Path("linked-folder")
+        with patch.object(Path, "is_symlink", return_value=True):
+            self.assertTrue(cme.is_import_directory_link(path))
+
+    def test_recursive_scan_removes_directory_links_from_walk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remaining_directories = []
+
+            def fake_walk(path, topdown=True, onerror=None, followlinks=False):
+                directory_names = ["linked", "real"]
+                yield str(root), directory_names, []
+                remaining_directories.extend(directory_names)
+
+            with patch.object(
+                cme,
+                "is_import_directory_link",
+                side_effect=lambda path: path.name == "linked",
+            ):
+                cme.scan_import_files_from_folder(root, recursive=True, walk_func=fake_walk)
+
+            self.assertEqual(remaining_directories, ["real"])
 
     def test_collect_import_files_uses_book_import_formats_as_source_of_truth(self):
         configured_extensions = {extension for extension, _label in cme.BOOK_IMPORT_FORMATS}

@@ -12,7 +12,7 @@ import os
 import socket
 import threading
 import webbrowser
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.4"
+APP_VERSION = "0.4.5"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -49,6 +49,8 @@ AUTO_SETTING_DEFAULTS = {
     "auto_cover_audit": True,
 }
 AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120}
+UNIFIED_IMPORT_LAST_FOLDER_KEY = "unified_import_last_folder"
+UNIFIED_IMPORT_DIALOG_STATE_KEY = "unified_import_dialog_state"
 # Default model pro kazdeho providera; pouzije se, kdyz uzivatel nechal pole prazdne.
 AI_PROVIDER_DEFAULT_MODELS = {
     "off": "llama3",
@@ -346,78 +348,6 @@ def statusbar_text(status: str, calibre_running: bool, csv_loaded: bool) -> str:
     return f"{status} | {csv_text} | {APP_VERSION}"
 
 
-@dataclass(frozen=True)
-class UnifiedImportPlan:
-    has_selection: bool
-    has_source_urls: bool
-    source_urls: tuple[str, ...]
-    dk_urls: tuple[str, ...]
-    legie_urls: tuple[str, ...]
-    unsupported_urls: tuple[str, ...]
-    messages: tuple[str, ...]
-    can_continue: bool
-    is_read_only: bool = True
-
-
-def build_unified_import_plan(rows: Sequence[cme.MatchRow]) -> UnifiedImportPlan:
-    """Sestavi read-only plan z existujicich URL bez site nebo mutaci."""
-    source_urls: list[str] = []
-    seen_urls: set[str] = set()
-    for row in rows:
-        for raw_url in (row.chosen_url, *row.candidate_urls.split("|")):
-            url = raw_url.strip()
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                source_urls.append(url)
-
-    dk_urls: list[str] = []
-    legie_urls: list[str] = []
-    unsupported_urls: list[str] = []
-    for url in source_urls:
-        if cme.is_valid_apply_url(url):
-            dk_urls.append(url)
-        elif cme.is_valid_legie_book_url(url) or cme.is_valid_legie_story_url(url):
-            legie_urls.append(url)
-        else:
-            unsupported_urls.append(url)
-
-    if not rows:
-        lines = ["Unified import preflight: neni vybrana zadna kniha. Nelze vytvorit nahled."]
-    else:
-        lines = [
-            "Unified import preflight (pouze nahled).",
-            f"Vybrane knihy: {len(rows)}",
-        ]
-    if rows and not source_urls:
-        lines.append("Zdrojove URL nejsou k dispozici.")
-    elif source_urls:
-        lines.append(f"Zdrojove URL: {len(source_urls)}")
-        lines.append(f"Databaze knih ({len(dk_urls)}):")
-        lines.extend(f"- {url}" for url in dk_urls)
-        lines.append(f"Legie ({len(legie_urls)}):")
-        lines.extend(f"- {url}" for url in legie_urls)
-        if unsupported_urls:
-            lines.append(f"Nepodporovane URL ({len(unsupported_urls)}):")
-            lines.extend(f"- {url}" for url in unsupported_urls)
-
-    lines.append("Nic nebylo zapsano ani zmeneno.")
-    return UnifiedImportPlan(
-        has_selection=bool(rows),
-        has_source_urls=bool(source_urls),
-        source_urls=tuple(source_urls),
-        dk_urls=tuple(dk_urls),
-        legie_urls=tuple(legie_urls),
-        unsupported_urls=tuple(unsupported_urls),
-        messages=tuple(lines),
-        can_continue=bool(dk_urls or legie_urls),
-    )
-
-
-def unified_import_preflight_preview(plan: UnifiedImportPlan) -> str:
-    """Prevede read-only plan na text pro existujici log a status UI."""
-    return "\n".join(plan.messages)
-
-
 def filter_label(value: str) -> str:
     """Zobrazi prazdnou hodnotu filtru lidsky."""
     return value or "bez typu"
@@ -624,6 +554,105 @@ def save_app_settings(library: str, theme: str, settings_path: Path | None = Non
     )
 
 
+def unified_import_start_folder(
+    settings: dict[str, Any] | None = None,
+    fallback: Path | None = None,
+) -> Path:
+    current_settings = read_app_settings() if settings is None else settings
+    fallback_path = Path(os.path.abspath(fallback or Path.home()))
+    if not fallback_path.is_dir():
+        fallback_path = Path.cwd().absolute()
+    raw = current_settings.get(UNIFIED_IMPORT_LAST_FOLDER_KEY, "")
+    if isinstance(raw, str) and raw.strip():
+        candidate = Path(os.path.abspath(Path(raw).expanduser()))
+        try:
+            if candidate.is_dir():
+                return candidate
+        except OSError:
+            pass
+    return fallback_path
+
+
+def unified_import_tree_root(folder: Path) -> Path:
+    candidate = Path(os.path.abspath(folder))
+    anchor = Path(candidate.anchor) if candidate.anchor else candidate
+    try:
+        if anchor.is_dir():
+            return anchor
+    except OSError:
+        pass
+    return candidate
+
+
+def save_unified_import_last_folder(
+    folder: Path,
+    settings_path: Path | None = None,
+) -> None:
+    target = settings_path or shared.SETTINGS_PATH
+    settings = read_app_settings(target)
+    settings[UNIFIED_IMPORT_LAST_FOLDER_KEY] = str(Path(os.path.abspath(folder)))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def unified_import_dialog_state(settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    current_settings = read_app_settings() if settings is None else settings
+    raw = current_settings.get(UNIFIED_IMPORT_DIALOG_STATE_KEY, {})
+    if not isinstance(raw, dict):
+        return {}
+    state: dict[str, Any] = {}
+    size = raw.get("size")
+    if (
+        isinstance(size, list)
+        and len(size) == 2
+        and all(isinstance(value, int) and value > 0 for value in size)
+    ):
+        state["size"] = size
+    splitter_sizes = raw.get("splitter_sizes")
+    if (
+        isinstance(splitter_sizes, list)
+        and len(splitter_sizes) == 2
+        and all(isinstance(value, int) and value > 0 for value in splitter_sizes)
+    ):
+        state["splitter_sizes"] = splitter_sizes
+    widths = raw.get("file_column_widths")
+    if (
+        isinstance(widths, list)
+        and len(widths) == 3
+        and all(isinstance(value, int) and value >= MIN_COLUMN_WIDTH for value in widths)
+    ):
+        state["file_column_widths"] = widths
+    sort_column = raw.get("sort_column")
+    sort_order = raw.get("sort_order")
+    if isinstance(sort_column, int) and 0 <= sort_column <= 2 and sort_order in {"asc", "desc"}:
+        state["sort_column"] = sort_column
+        state["sort_order"] = sort_order
+    return state
+
+
+def save_unified_import_dialog_state(
+    state: dict[str, Any],
+    settings_path: Path | None = None,
+) -> None:
+    target = settings_path or shared.SETTINGS_PATH
+    settings = read_app_settings(target)
+    settings[UNIFIED_IMPORT_DIALOG_STATE_KEY] = unified_import_dialog_state(
+        {UNIFIED_IMPORT_DIALOG_STATE_KEY: state}
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def normalize_unified_import_files(paths: Iterable[Path]) -> list[Path]:
+    unique: dict[str, Path] = {}
+    for raw_path in paths:
+        path = Path(os.path.abspath(raw_path))
+        if not cme.is_supported_import_file(path):
+            continue
+        unique.setdefault(os.path.normcase(str(path)), path)
+    return sorted(unique.values(), key=lambda path: str(path).casefold())
+
+
 def should_auto_import(analysis: cme.ImportAnalysis) -> bool:
     """Auto-import jen pri jiste shode: nejlepsi kandidat 100 % a zadna duplicita.
 
@@ -681,14 +710,16 @@ def normalize_column_settings(raw: Any) -> dict[str, dict[str, bool | int]]:
 
 
 if PYSIDE6_AVAILABLE:
-    from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
+    from PySide6.QtCore import QDir, QEvent, QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
     from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
+        QAbstractItemView,
         QCheckBox,
         QComboBox,
         QDialog,
         QFileDialog,
+        QFileSystemModel,
         QFormLayout,
         QFrame,
         QGridLayout,
@@ -714,6 +745,7 @@ if PYSIDE6_AVAILABLE:
         QTabWidget,
         QTextEdit,
         QToolButton,
+        QTreeView,
         QVBoxLayout,
         QWidget,
     )
@@ -721,6 +753,17 @@ if PYSIDE6_AVAILABLE:
     def schedule_qt_startup_preview(preview_func: Callable[[], object]) -> None:
         """Po startu Qt event loopu automaticky spusti nacitani novych knih."""
         QTimer.singleShot(250, preview_func)
+
+
+    class FileSizeTableWidgetItem(QTableWidgetItem):
+        def __init__(self, text: str, size: int | None) -> None:
+            super().__init__(text)
+            self._sort_size = -1 if size is None else size
+
+        def __lt__(self, other) -> bool:
+            if isinstance(other, FileSizeTableWidgetItem):
+                return self._sort_size < other._sort_size
+            return super().__lt__(other)
 
 
     class WorkerBridge(QObject):
@@ -731,6 +774,324 @@ if PYSIDE6_AVAILABLE:
         review_ready = Signal(int, int, str, object, str)
         import_ready = Signal(object, str)
         apply_ready = Signal(object, str)
+
+
+    class UnifiedImportDialog(QDialog):
+        def __init__(
+            self,
+            initial_folder: Path,
+            parent: QWidget | None = None,
+            *,
+            scan_folder: Callable[[Path, bool], cme.ImportFolderScanResult] | None = None,
+            dialog_state: dict[str, Any] | None = None,
+        ) -> None:
+            super().__init__(parent)
+            self._scan_folder = scan_folder or cme.scan_import_files_from_folder
+            self._dialog_state = dialog_state if dialog_state is not None else unified_import_dialog_state()
+            self._current_folder = Path(os.path.abspath(initial_folder))
+            self._selected_files: tuple[Path, ...] = ()
+            self._history: list[Path] = []
+            self.setWindowTitle("Unified import")
+            size = self._dialog_state.get("size")
+            if isinstance(size, list) and len(size) == 2:
+                self.resize(size[0], size[1])
+            else:
+                self.resize(900, 600)
+
+            root = QVBoxLayout(self)
+            navigation = QHBoxLayout()
+            self.back_button = QPushButton("←")
+            self.back_button.setToolTip("Zpět")
+            self.back_button.setAutoDefault(False)
+            self.back_button.clicked.connect(self._go_back)
+            navigation.addWidget(self.back_button)
+            self.up_button = QPushButton("↑")
+            self.up_button.setToolTip("O úroveň výše")
+            self.up_button.setAutoDefault(False)
+            self.up_button.clicked.connect(self._go_up)
+            navigation.addWidget(self.up_button)
+            self.path_edit = QLineEdit()
+            self.path_edit.setReadOnly(False)
+            self.path_edit.installEventFilter(self)
+            self.path_edit.returnPressed.connect(self._apply_path_edit)
+            navigation.addWidget(self.path_edit, stretch=1)
+            self.go_path_button = QPushButton("Přejít")
+            self.go_path_button.setAutoDefault(False)
+            self.go_path_button.clicked.connect(self._apply_path_edit)
+            navigation.addWidget(self.go_path_button)
+            self.refresh_button = QPushButton("Obnovit")
+            self.refresh_button.setAutoDefault(False)
+            self.refresh_button.clicked.connect(self._refresh_files)
+            navigation.addWidget(self.refresh_button)
+            root.addLayout(navigation)
+
+            self.body_splitter = QSplitter()
+            self.directory_model = QFileSystemModel(self)
+            self.directory_model.setFilter(
+                QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot
+            )
+            self.directory_model.setResolveSymlinks(False)
+            tree_root = unified_import_tree_root(self._current_folder)
+            self.directory_model.setRootPath(str(tree_root))
+            self.folder_tree = QTreeView()
+            self.folder_tree.setModel(self.directory_model)
+            self.folder_tree.header().hide()
+            self.folder_tree.setRootIndex(self.directory_model.index(str(tree_root)))
+            for column in range(1, 4):
+                self.folder_tree.hideColumn(column)
+            self.folder_tree.clicked.connect(self._on_folder_clicked)
+            self.body_splitter.addWidget(self.folder_tree)
+
+            self.file_table = QTableWidget(0, 3)
+            self.file_table.setHorizontalHeaderLabels(["Název", "Typ", "Velikost"])
+            self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.file_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            self.file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.file_table.verticalHeader().hide()
+            self.file_table.setSortingEnabled(True)
+            self.file_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            self.file_table.horizontalHeader().setStretchLastSection(False)
+            self.file_table.itemSelectionChanged.connect(self._update_selected_button)
+            self.body_splitter.addWidget(self.file_table)
+            self.body_splitter.setStretchFactor(0, 1)
+            self.body_splitter.setStretchFactor(1, 3)
+            root.addWidget(self.body_splitter, stretch=1)
+
+            formats = ", ".join("*" + suffix for suffix, _label in cme.BOOK_IMPORT_FORMATS)
+            root.addWidget(QLabel(f"Podporované knihy: {formats}"))
+
+            actions = QHBoxLayout()
+            self.include_subfolders_check = QCheckBox("Včetně podsložek")
+            self.include_subfolders_check.setChecked(False)
+            actions.addWidget(self.include_subfolders_check)
+            actions.addStretch(1)
+            cancel_button = QPushButton("Zrušit")
+            cancel_button.setAutoDefault(False)
+            cancel_button.clicked.connect(self.reject)
+            actions.addWidget(cancel_button)
+            self.import_folder_button = QPushButton("Importovat tuto složku")
+            self.import_folder_button.setAutoDefault(False)
+            self.import_folder_button.clicked.connect(self._accept_current_folder)
+            actions.addWidget(self.import_folder_button)
+            self.import_selected_button = QPushButton("Importovat vybrané (0)")
+            self.import_selected_button.setAutoDefault(False)
+            self.import_selected_button.setEnabled(False)
+            self.import_selected_button.clicked.connect(self._accept_selected_files)
+            actions.addWidget(self.import_selected_button)
+            root.addLayout(actions)
+
+            self._apply_saved_layout_state()
+            self._set_current_folder(self._current_folder, add_history=False)
+            self._apply_saved_sort_state()
+
+        @property
+        def selected_files(self) -> tuple[Path, ...]:
+            return self._selected_files
+
+        @property
+        def current_folder(self) -> Path:
+            return self._current_folder
+
+        def _apply_saved_layout_state(self) -> None:
+            splitter_sizes = self._dialog_state.get("splitter_sizes")
+            if isinstance(splitter_sizes, list) and len(splitter_sizes) == 2:
+                self.body_splitter.setSizes(splitter_sizes)
+            widths = self._dialog_state.get("file_column_widths")
+            if isinstance(widths, list) and len(widths) == 3:
+                for column, width in enumerate(widths):
+                    self.file_table.setColumnWidth(column, width)
+
+        def _apply_saved_sort_state(self) -> None:
+            sort_column = self._dialog_state.get("sort_column")
+            sort_order = self._dialog_state.get("sort_order")
+            if not isinstance(sort_column, int) or sort_order not in {"asc", "desc"}:
+                return
+            order = (
+                Qt.SortOrder.DescendingOrder
+                if sort_order == "desc"
+                else Qt.SortOrder.AscendingOrder
+            )
+            self.file_table.sortItems(sort_column, order)
+
+        def export_ui_state(self) -> dict[str, Any]:
+            header = self.file_table.horizontalHeader()
+            return {
+                "size": [self.size().width(), self.size().height()],
+                "splitter_sizes": self.body_splitter.sizes(),
+                "file_column_widths": [
+                    self.file_table.columnWidth(column)
+                    for column in range(self.file_table.columnCount())
+                ],
+                "sort_column": header.sortIndicatorSection(),
+                "sort_order": (
+                    "desc"
+                    if header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+                    else "asc"
+                ),
+            }
+
+        def _set_current_folder(self, folder: Path, *, add_history: bool = True) -> None:
+            candidate = Path(os.path.abspath(folder))
+            try:
+                valid = candidate.is_dir()
+            except OSError:
+                valid = False
+            if not valid:
+                QMessageBox.warning(self, "Unified import", "Složka není dostupná.")
+                return
+            if add_history and candidate != self._current_folder:
+                self._history.append(self._current_folder)
+            self._current_folder = candidate
+            self.path_edit.setText(str(candidate))
+            tree_root = unified_import_tree_root(candidate)
+            self.directory_model.setRootPath(str(tree_root))
+            root_index = self.directory_model.index(str(tree_root))
+            if root_index.isValid():
+                self.folder_tree.setRootIndex(root_index)
+            model_index = self.directory_model.index(str(candidate))
+            if model_index.isValid():
+                self.folder_tree.setCurrentIndex(model_index)
+                self.folder_tree.scrollTo(model_index)
+            self._refresh_files()
+            self.back_button.setEnabled(bool(self._history))
+            self.up_button.setEnabled(candidate.parent != candidate)
+
+        def _apply_path_edit(self) -> None:
+            text = self.path_edit.text().strip()
+            if not text:
+                self.path_edit.setText(str(self._current_folder))
+                return
+            requested = Path(text).expanduser()
+            before = self._current_folder
+            self._set_current_folder(requested)
+            if self._current_folder == before and Path(os.path.abspath(requested)) != before:
+                self.path_edit.setText(str(before))
+
+        def keyPressEvent(self, event) -> None:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                text = self.path_edit.text().strip()
+                if text and Path(os.path.abspath(Path(text).expanduser())) != self._current_folder:
+                    self._apply_path_edit()
+                    event.accept()
+                    return
+            super().keyPressEvent(event)
+
+        def eventFilter(self, watched, event) -> bool:
+            if (
+                watched is self.path_edit
+                and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            ):
+                self._apply_path_edit()
+                event.accept()
+                return True
+            return super().eventFilter(watched, event)
+
+        def _on_folder_clicked(self, index) -> None:
+            self._set_current_folder(Path(self.directory_model.filePath(index)))
+
+        def _go_back(self) -> None:
+            if not self._history:
+                return
+            self._set_current_folder(self._history.pop(), add_history=False)
+
+        def _go_up(self) -> None:
+            parent = self._current_folder.parent
+            if parent != self._current_folder:
+                self._set_current_folder(parent)
+
+        def _refresh_files(self) -> None:
+            result = self._scan_folder(self._current_folder, False)
+            header = self.file_table.horizontalHeader()
+            sort_column = header.sortIndicatorSection()
+            sort_order = header.sortIndicatorOrder()
+            self.file_table.setSortingEnabled(False)
+            self.file_table.setRowCount(0)
+            for path in result.files:
+                row = self.file_table.rowCount()
+                self.file_table.insertRow(row)
+                name_item = QTableWidgetItem(path.name)
+                name_item.setData(Qt.ItemDataRole.UserRole, str(path))
+                self.file_table.setItem(row, 0, name_item)
+                self.file_table.setItem(row, 1, QTableWidgetItem(path.suffix.lstrip(".").upper()))
+                try:
+                    size = path.stat().st_size
+                    size_text = self._format_size(size)
+                except OSError:
+                    size = None
+                    size_text = "—"
+                self.file_table.setItem(row, 2, FileSizeTableWidgetItem(size_text, size))
+            self.file_table.setSortingEnabled(True)
+            if 0 <= sort_column < self.file_table.columnCount():
+                self.file_table.sortItems(sort_column, sort_order)
+            self._update_selected_button()
+
+        @staticmethod
+        def _format_size(size: int) -> str:
+            if size < 1024:
+                return f"{size} B"
+            if size < 1024 * 1024:
+                return f"{size / 1024:.1f} kB"
+            return f"{size / (1024 * 1024):.1f} MB"
+
+        def _selected_table_files(self) -> list[Path]:
+            rows = sorted({index.row() for index in self.file_table.selectionModel().selectedRows()})
+            paths = [
+                Path(self.file_table.item(row, 0).data(Qt.ItemDataRole.UserRole))
+                for row in rows
+            ]
+            return normalize_unified_import_files(paths)
+
+        def _update_selected_button(self) -> None:
+            count = len(self._selected_table_files())
+            self.import_selected_button.setText(f"Importovat vybrané ({count})")
+            self.import_selected_button.setEnabled(count > 0)
+
+        def _accept_selected_files(self) -> None:
+            files = self._selected_table_files()
+            if not files:
+                QMessageBox.warning(
+                    self,
+                    "Unified import",
+                    "Vybrané soubory již nejsou dostupné.",
+                )
+                return
+            self._selected_files = tuple(files)
+            self.accept()
+
+        def _accept_current_folder(self) -> None:
+            result = self._scan_folder(
+                self._current_folder,
+                self.include_subfolders_check.isChecked(),
+            )
+            files = normalize_unified_import_files(result.files)
+            if not files:
+                if self._current_folder in result.skipped_directories:
+                    QMessageBox.warning(
+                        self,
+                        "Unified import",
+                        "Aktuální složku nelze přečíst.",
+                    )
+                    return
+                QMessageBox.information(
+                    self,
+                    "Unified import",
+                    "V této složce nebyly nalezeny podporované knihy.",
+                )
+                return
+            if result.skipped_directories:
+                answer = QMessageBox.question(
+                    self,
+                    "Některé složky nebylo možné přečíst",
+                    f"Přeskočené složky: {len(result.skipped_directories)}\n\n"
+                    "Pokračovat s nalezenými knihami?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            self._selected_files = tuple(files)
+            self.accept()
 
 
     class MultiImportProgressDialog(QDialog):
@@ -2568,10 +2929,46 @@ if PYSIDE6_AVAILABLE:
             self.run_background("Zapis do Calibre", action, reload_after=True)
 
         def on_unified_import_clicked(self) -> None:
-            plan = build_unified_import_plan(self.selected_rows())
-            preview = unified_import_preflight_preview(plan)
-            self.write_output(preview)
-            self.set_status(preview.splitlines()[0])
+            dialog = UnifiedImportDialog(
+                unified_import_start_folder(),
+                self,
+                dialog_state=unified_import_dialog_state(),
+            )
+            result = dialog.exec()
+            try:
+                save_unified_import_dialog_state(dialog.export_ui_state())
+            except OSError as exc:
+                if result == QDialog.DialogCode.Accepted:
+                    QMessageBox.warning(
+                        self,
+                        "Unified import",
+                        f"Nastavení okna se nepodařilo uložit:\n{exc}",
+                    )
+            if result != QDialog.DialogCode.Accepted:
+                self.write_output("Unified import: zruseno.")
+                return
+            try:
+                save_unified_import_last_folder(dialog.current_folder)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    "Unified import",
+                    f"Poslední složku se nepodařilo uložit:\n{exc}",
+                )
+            self._route_unified_import_files(dialog.selected_files)
+
+        def _route_unified_import_files(self, paths: Sequence[Path]) -> None:
+            files = normalize_unified_import_files(paths)
+            if not files:
+                return
+            if len(files) == 1:
+                self.write_output(f"Unified import: 1 soubor -> single import.\n{files[0]}")
+                if not self.save_csv(show_message=False):
+                    return
+                self.start_epub_import(str(files[0]))
+                return
+            self.write_output(f"Unified import: {len(files)} soubory -> multiimport.")
+            self.run_multiimport_analysis(files)
 
         def run_covers(self) -> None:
             selected = self.selected_book_ids()

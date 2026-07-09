@@ -20,8 +20,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.4")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.4")
+        self.assertEqual(qt.APP_VERSION, "0.4.5")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.5")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -32,6 +32,116 @@ class QtHelperTests(unittest.TestCase):
             self.assertIn(pattern, filter_text)
         self.assertIn("EPUB (*.epub)", filter_text)
         self.assertIn("Vsechny soubory (*.*)", filter_text)
+
+    def test_unified_import_start_folder_uses_saved_existing_folder(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            result = qt.unified_import_start_folder(
+                {qt.UNIFIED_IMPORT_LAST_FOLDER_KEY: str(folder)},
+                fallback=Path.cwd(),
+            )
+
+            self.assertEqual(result, folder.absolute())
+
+    def test_unified_import_start_folder_falls_back_when_saved_folder_is_missing(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = Path(tmp)
+            result = qt.unified_import_start_folder(
+                {qt.UNIFIED_IMPORT_LAST_FOLDER_KEY: str(fallback / "missing")},
+                fallback=fallback,
+            )
+
+            self.assertEqual(result, fallback.absolute())
+
+    def test_save_unified_import_last_folder_preserves_other_settings(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings_path = root / "settings.json"
+            folder = root / "books"
+            folder.mkdir()
+            settings_path.write_text('{"theme": "dark"}', encoding="utf-8")
+
+            qt.save_unified_import_last_folder(folder, settings_path)
+
+            saved = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["theme"], "dark")
+            self.assertEqual(saved[qt.UNIFIED_IMPORT_LAST_FOLDER_KEY], str(folder.absolute()))
+
+    def test_save_unified_import_dialog_state_preserves_other_settings(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            settings_path.write_text('{"theme": "dark"}', encoding="utf-8")
+
+            qt.save_unified_import_dialog_state(
+                {
+                    "size": [1000, 700],
+                    "splitter_sizes": [250, 750],
+                    "file_column_widths": [300, 90, 120],
+                    "sort_column": 2,
+                    "sort_order": "desc",
+                },
+                settings_path,
+            )
+
+            saved = json.loads(settings_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["theme"], "dark")
+            self.assertEqual(
+                saved[qt.UNIFIED_IMPORT_DIALOG_STATE_KEY],
+                {
+                    "size": [1000, 700],
+                    "splitter_sizes": [250, 750],
+                    "file_column_widths": [300, 90, 120],
+                    "sort_column": 2,
+                    "sort_order": "desc",
+                },
+            )
+
+    def test_unified_import_dialog_state_ignores_invalid_values(self):
+        import calibre_meta_qt as qt
+
+        state = qt.unified_import_dialog_state(
+            {
+                qt.UNIFIED_IMPORT_DIALOG_STATE_KEY: {
+                    "size": [200, "bad"],
+                    "splitter_sizes": [100, 200],
+                    "file_column_widths": [250, 80, 110],
+                    "sort_column": 9,
+                    "sort_order": "sideways",
+                }
+            }
+        )
+
+        self.assertEqual(
+            state,
+            {
+                "splitter_sizes": [100, 200],
+                "file_column_widths": [250, 80, 110],
+            },
+        )
+
+    def test_normalize_unified_import_files_filters_dedupes_and_sorts_absolute_paths(self):
+        import calibre_meta_qt as qt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            epub = root / "z.epub"
+            mobi = root / "A.mobi"
+            text = root / "notes.txt"
+            epub.write_text("x", encoding="utf-8")
+            mobi.write_text("x", encoding="utf-8")
+            text.write_text("x", encoding="utf-8")
+
+            result = qt.normalize_unified_import_files([epub, text, mobi, epub])
+
+            self.assertEqual(result, [mobi.absolute(), epub.absolute()])
 
     def test_is_probably_online_uses_short_generic_socket_probe(self):
         import calibre_meta_qt as qt
@@ -384,7 +494,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.4")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.5")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -2938,115 +3048,307 @@ class RunImportAnalysisTests(unittest.TestCase):
         self.assertEqual(result.preview.title, "Kniha")
 
 
-class UnifiedImportPreflightTests(unittest.TestCase):
-    DK_URL = "https://www.databazeknih.cz/knihy/foo-123"
-    LEGIE_URL = "https://www.legie.info/kniha/2561-foo"
-    UNSUPPORTED_URL = "https://example.com/book/1"
-
-    def _row(self, chosen_url="", candidate_urls=""):
-        return cme.MatchRow(
-            1,
-            "Kniha",
-            "Autor",
-            "review",
-            chosen_url,
-            candidate_urls,
-            "",
-            "",
-        )
-
-    def test_plan_without_selected_context_is_safe(self):
+@unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
+class UnifiedImportDialogTests(unittest.TestCase):
+    def test_dialog_lists_only_supported_files_and_starts_with_recursion_off(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan([])
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "book.epub").write_text("x", encoding="utf-8")
+            (root / "notes.txt").write_text("x", encoding="utf-8")
 
-        self.assertFalse(plan.has_selection)
-        self.assertFalse(plan.has_source_urls)
-        self.assertFalse(plan.can_continue)
-        self.assertEqual(plan.source_urls, ())
-        self.assertTrue(plan.is_read_only)
-        preview = qt.unified_import_preflight_preview(plan)
-        self.assertIn("neni vybrana zadna kniha", preview)
-        self.assertIn("Nic nebylo zapsano ani zmeneno", preview)
+            dialog = qt.UnifiedImportDialog(root)
 
-    def test_plan_with_selected_row_without_urls_cannot_continue(self):
+            self.assertEqual(dialog.file_table.rowCount(), 1)
+            self.assertEqual(dialog.file_table.item(0, 0).text(), "book.epub")
+            self.assertFalse(dialog.include_subfolders_check.isChecked())
+            self.assertFalse(dialog.import_selected_button.isEnabled())
+            self.assertFalse(dialog.path_edit.isReadOnly())
+            self.assertTrue(dialog.folder_tree.header().isHidden())
+            self.assertFalse(dialog.file_table.verticalHeader().isVisible())
+            self.assertTrue(dialog.file_table.isSortingEnabled())
+            self.assertEqual(dialog.back_button.text(), "←")
+            self.assertEqual(dialog.up_button.text(), "↑")
+            self.assertEqual(
+                Path(dialog.directory_model.filePath(dialog.folder_tree.rootIndex())),
+                qt.unified_import_tree_root(root),
+            )
+        app.processEvents()
+
+    def test_dialog_can_navigate_by_manual_path_entry(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan([self._row()])
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child"
+            child.mkdir()
+            (child / "book.epub").write_text("x", encoding="utf-8")
+            dialog = qt.UnifiedImportDialog(root)
 
-        self.assertTrue(plan.has_selection)
-        self.assertFalse(plan.has_source_urls)
-        self.assertFalse(plan.can_continue)
-        self.assertEqual(plan.source_urls, ())
-        preview = qt.unified_import_preflight_preview(plan)
-        self.assertIn("Vybrane knihy: 1", preview)
-        self.assertIn("Zdrojove URL nejsou k dispozici", preview)
+            dialog.path_edit.setText(str(child))
+            dialog._apply_path_edit()
 
-    def test_plan_classifies_databaze_knih_url(self):
+            self.assertEqual(dialog.current_folder, child.absolute())
+            self.assertEqual(dialog.file_table.rowCount(), 1)
+            self.assertEqual(dialog.file_table.item(0, 0).text(), "book.epub")
+        app.processEvents()
+
+    def test_dialog_enter_in_path_field_applies_manual_path(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan([self._row(self.DK_URL)])
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child"
+            child.mkdir()
+            (child / "book.epub").write_text("x", encoding="utf-8")
+            dialog = qt.UnifiedImportDialog(root)
 
-        self.assertEqual(plan.dk_urls, (self.DK_URL,))
-        self.assertEqual(plan.legie_urls, ())
-        self.assertEqual(plan.unsupported_urls, ())
-        self.assertTrue(plan.can_continue)
-        preview = qt.unified_import_preflight_preview(plan)
-        self.assertIn("Zdrojove URL: 1", preview)
-        self.assertIn("Databaze knih (1)", preview)
-        self.assertIn(self.DK_URL, preview)
+            dialog.path_edit.setFocus()
+            dialog.path_edit.setText(str(child))
+            QTest.keyClick(dialog.path_edit, Qt.Key.Key_Return)
 
-    def test_plan_classifies_legie_url(self):
+            self.assertEqual(dialog.current_folder, child.absolute())
+            self.assertEqual(dialog.file_table.item(0, 0).text(), "book.epub")
+        app.processEvents()
+
+    def test_dialog_can_navigate_by_go_button(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan([self._row(self.LEGIE_URL)])
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child"
+            child.mkdir()
+            (child / "book.epub").write_text("x", encoding="utf-8")
+            dialog = qt.UnifiedImportDialog(root)
 
-        self.assertEqual(plan.dk_urls, ())
-        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
-        self.assertEqual(plan.unsupported_urls, ())
-        self.assertTrue(plan.can_continue)
-        preview = qt.unified_import_preflight_preview(plan)
-        self.assertIn("Legie (1)", preview)
-        self.assertIn(self.LEGIE_URL, preview)
+            dialog.path_edit.setText(str(child))
+            dialog.go_path_button.click()
 
-    def test_plan_classifies_and_dedupes_both_sources(self):
+            self.assertEqual(dialog.current_folder, child.absolute())
+            self.assertEqual(dialog.file_table.item(0, 0).text(), "book.epub")
+        app.processEvents()
+
+    def test_dialog_tree_is_rooted_at_drive_so_parent_folders_are_visible(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan(
-            [self._row(self.DK_URL, f"{self.DK_URL}|{self.LEGIE_URL}")]
-        )
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child"
+            child.mkdir()
 
-        self.assertEqual(plan.source_urls, (self.DK_URL, self.LEGIE_URL))
-        self.assertEqual(plan.dk_urls, (self.DK_URL,))
-        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
-        self.assertTrue(plan.can_continue)
-        preview = qt.unified_import_preflight_preview(plan)
-        self.assertIn("Zdrojove URL: 2", preview)
-        self.assertIn("Databaze knih (1)", preview)
-        self.assertIn("Legie (1)", preview)
+            dialog = qt.UnifiedImportDialog(child)
 
-    def test_plan_retains_unsupported_url_without_misclassification(self):
+            self.assertEqual(
+                Path(dialog.directory_model.filePath(dialog.folder_tree.rootIndex())),
+                qt.unified_import_tree_root(child),
+            )
+            self.assertNotEqual(dialog.folder_tree.rootIndex(), dialog.folder_tree.currentIndex())
+        app.processEvents()
+
+    def test_dialog_sorts_file_size_numerically(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan([self._row(self.UNSUPPORTED_URL)])
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            small = root / "small.epub"
+            large = root / "large.epub"
+            small.write_bytes(b"xx")
+            large.write_bytes(b"x" * 10)
+            dialog = qt.UnifiedImportDialog(root)
 
-        self.assertEqual(plan.source_urls, (self.UNSUPPORTED_URL,))
-        self.assertEqual(plan.dk_urls, ())
-        self.assertEqual(plan.legie_urls, ())
-        self.assertEqual(plan.unsupported_urls, (self.UNSUPPORTED_URL,))
-        self.assertFalse(plan.can_continue)
-        self.assertIn("Nepodporovane URL (1)", qt.unified_import_preflight_preview(plan))
+            dialog.file_table.sortItems(2, Qt.SortOrder.AscendingOrder)
 
-    def test_plan_dedupes_urls_deterministically(self):
+            self.assertEqual(dialog.file_table.item(0, 0).text(), "small.epub")
+            self.assertEqual(dialog.file_table.item(1, 0).text(), "large.epub")
+        app.processEvents()
+
+    def test_dialog_restores_saved_size_columns_splitter_and_sorting(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
         import calibre_meta_qt as qt
 
-        plan = qt.build_unified_import_plan(
-            [self._row(self.LEGIE_URL, f" {self.DK_URL} | {self.LEGIE_URL} | {self.DK_URL} ")]
-        )
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "b.epub").write_text("x", encoding="utf-8")
+            (root / "a.mobi").write_text("x", encoding="utf-8")
+            state = {
+                "size": [1000, 700],
+                "splitter_sizes": [260, 740],
+                "file_column_widths": [310, 95, 125],
+                "sort_column": 0,
+                "sort_order": "desc",
+            }
 
-        self.assertEqual(plan.source_urls, (self.LEGIE_URL, self.DK_URL))
-        self.assertEqual(plan.legie_urls, (self.LEGIE_URL,))
-        self.assertEqual(plan.dk_urls, (self.DK_URL,))
+            dialog = qt.UnifiedImportDialog(root, dialog_state=state)
+
+            self.assertEqual(dialog.size().width(), 1000)
+            self.assertEqual(dialog.size().height(), 700)
+            self.assertEqual(dialog.file_table.columnWidth(0), 310)
+            self.assertEqual(dialog.file_table.columnWidth(1), 95)
+            self.assertEqual(dialog.file_table.columnWidth(2), 125)
+            self.assertEqual(dialog.file_table.horizontalHeader().sortIndicatorSection(), 0)
+            self.assertEqual(
+                dialog.file_table.horizontalHeader().sortIndicatorOrder(),
+                Qt.SortOrder.DescendingOrder,
+            )
+        app.processEvents()
+
+    def test_dialog_exports_current_ui_state(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dialog = qt.UnifiedImportDialog(root)
+            dialog.resize(980, 640)
+            dialog.file_table.setColumnWidth(0, 305)
+            dialog.file_table.setColumnWidth(1, 85)
+            dialog.file_table.setColumnWidth(2, 115)
+            dialog.file_table.sortItems(1, Qt.SortOrder.DescendingOrder)
+
+            state = dialog.export_ui_state()
+
+            self.assertEqual(state["size"], [980, 640])
+            self.assertEqual(state["file_column_widths"], [305, 85, 115])
+            self.assertEqual(state["sort_column"], 1)
+            self.assertEqual(state["sort_order"], "desc")
+        app.processEvents()
+
+    def test_selecting_one_file_enables_selected_import_and_returns_it(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            dialog = qt.UnifiedImportDialog(root)
+
+            dialog.file_table.selectRow(0)
+            dialog._update_selected_button()
+            dialog._accept_selected_files()
+
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.selected_files, (book.absolute(),))
+        app.processEvents()
+
+    def test_folder_import_passes_recursive_checkbox_to_scanner(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            calls = []
+
+            def scan(folder, recursive):
+                calls.append((folder, recursive))
+                return cme.ImportFolderScanResult((book,), ())
+
+            dialog = qt.UnifiedImportDialog(root, scan_folder=scan)
+            dialog.include_subfolders_check.setChecked(True)
+            dialog._accept_current_folder()
+
+            self.assertEqual(calls[-1], (root.absolute(), True))
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.selected_files, (book.absolute(),))
+        app.processEvents()
+
+    def test_folder_import_with_skipped_directories_requires_confirmation(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            blocked = root / "blocked"
+            book.write_text("x", encoding="utf-8")
+
+            def scan(folder, recursive):
+                return cme.ImportFolderScanResult((book,), (blocked,))
+
+            dialog = qt.UnifiedImportDialog(root, scan_folder=scan)
+            with patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel):
+                dialog._accept_current_folder()
+
+            self.assertEqual(dialog.selected_files, ())
+        app.processEvents()
+
+    def test_unreadable_current_folder_shows_specific_warning(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def scan(folder, recursive):
+                return cme.ImportFolderScanResult((), (root,))
+
+            dialog = qt.UnifiedImportDialog(root, scan_folder=scan)
+            with patch.object(qt.QMessageBox, "warning") as warning:
+                dialog._accept_current_folder()
+
+            warning.assert_called_once()
+            self.assertIn("nelze přečíst", warning.call_args.args[2])
+            self.assertEqual(dialog.selected_files, ())
+        app.processEvents()
+
+    def test_selected_file_removed_before_confirmation_shows_warning(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            dialog = qt.UnifiedImportDialog(root)
+            dialog.file_table.selectRow(0)
+            book.unlink()
+
+            with patch.object(qt.QMessageBox, "warning") as warning:
+                dialog._accept_selected_files()
+
+            warning.assert_called_once()
+            self.assertEqual(dialog.selected_files, ())
+        app.processEvents()
 
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
@@ -3086,34 +3388,153 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(window.unified_import_button.toolTip(), "Unified import")
         app.processEvents()
 
-    def test_unified_import_handler_shows_safe_preflight(self):
+    def test_unified_import_handler_cancel_does_not_save_or_start_import(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with (
+            patch.object(qt, "UnifiedImportDialog") as dialog_class,
+            patch.object(qt, "save_unified_import_last_folder") as save_folder,
+            patch.object(qt, "save_unified_import_dialog_state") as save_dialog_state,
+            patch.object(window, "write_output") as write_output,
+            patch.object(window, "start_epub_import") as start_import,
+            patch.object(window, "run_multiimport_analysis") as run_multiimport,
+        ):
+            dialog = dialog_class.return_value
+            dialog.exec.return_value = QDialog.DialogCode.Rejected
+            dialog.export_ui_state.return_value = {"size": [900, 600]}
+            window.on_unified_import_clicked()
+
+        save_folder.assert_not_called()
+        save_dialog_state.assert_called_once_with({"size": [900, 600]})
+        write_output.assert_called_once_with("Unified import: zruseno.")
+        start_import.assert_not_called()
+        run_multiimport.assert_not_called()
+        app.processEvents()
+
+    def test_unified_import_handler_routes_one_file_to_existing_single_import(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            with (
+                patch.object(qt, "UnifiedImportDialog") as dialog_class,
+                patch.object(qt, "unified_import_start_folder", return_value=root),
+                patch.object(qt, "save_unified_import_last_folder") as save_folder,
+                patch.object(qt, "save_unified_import_dialog_state") as save_dialog_state,
+                patch.object(window, "write_output") as write_output,
+                patch.object(window, "save_csv", return_value=True) as save_csv,
+                patch.object(window, "start_epub_import") as start_import,
+                patch.object(window, "run_multiimport_analysis") as run_multiimport,
+            ):
+                dialog = dialog_class.return_value
+                dialog.exec.return_value = QDialog.DialogCode.Accepted
+                dialog.current_folder = root
+                dialog.selected_files = (book,)
+                dialog.export_ui_state.return_value = {"size": [900, 600]}
+                window.on_unified_import_clicked()
+
+            save_folder.assert_called_once_with(root)
+            save_dialog_state.assert_called_once_with({"size": [900, 600]})
+            write_output.assert_called_once_with(f"Unified import: 1 soubor -> single import.\n{book.absolute()}")
+            save_csv.assert_called_once_with(show_message=False)
+            start_import.assert_called_once_with(str(book.absolute()))
+            run_multiimport.assert_not_called()
+        app.processEvents()
+
+    def test_unified_import_handler_routes_multiple_files_to_existing_multiimport(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "a.epub"
+            second = root / "b.mobi"
+            first.write_text("x", encoding="utf-8")
+            second.write_text("x", encoding="utf-8")
+            with (
+                patch.object(qt, "UnifiedImportDialog") as dialog_class,
+                patch.object(qt, "unified_import_start_folder", return_value=root),
+                patch.object(qt, "save_unified_import_last_folder") as save_folder,
+                patch.object(qt, "save_unified_import_dialog_state") as save_dialog_state,
+                patch.object(window, "write_output") as write_output,
+                patch.object(window, "save_csv") as save_csv,
+                patch.object(window, "start_epub_import") as start_import,
+                patch.object(window, "run_multiimport_analysis") as run_multiimport,
+            ):
+                dialog = dialog_class.return_value
+                dialog.exec.return_value = QDialog.DialogCode.Accepted
+                dialog.current_folder = root
+                dialog.selected_files = (second, first)
+                dialog.export_ui_state.return_value = {"size": [900, 600]}
+                window.on_unified_import_clicked()
+
+            save_folder.assert_called_once_with(root)
+            save_dialog_state.assert_called_once_with({"size": [900, 600]})
+            write_output.assert_called_once_with("Unified import: 2 soubory -> multiimport.")
+            save_csv.assert_not_called()
+            start_import.assert_not_called()
+            run_multiimport.assert_called_once_with([first.absolute(), second.absolute()])
+        app.processEvents()
+
+    def test_unified_import_continues_when_last_folder_cannot_be_saved(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            book = root / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            with (
+                patch.object(qt, "UnifiedImportDialog") as dialog_class,
+                patch.object(qt, "unified_import_start_folder", return_value=root),
+                patch.object(qt, "save_unified_import_last_folder", side_effect=OSError("read only")),
+                patch.object(qt.QMessageBox, "warning") as warning,
+                patch.object(window, "save_csv", return_value=True),
+                patch.object(window, "start_epub_import") as start_import,
+            ):
+                dialog = dialog_class.return_value
+                dialog.exec.return_value = QDialog.DialogCode.Accepted
+                dialog.current_folder = root
+                dialog.selected_files = (book,)
+                window.on_unified_import_clicked()
+
+            warning.assert_called_once()
+            start_import.assert_called_once_with(str(book.absolute()))
+        app.processEvents()
+
+    def test_unified_single_route_aborts_when_working_data_save_fails(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
 
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
-        window.rows = []
-        window.refresh_table()
-        selected_before = window.selected_book_ids()
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp) / "book.epub"
+            book.write_text("x", encoding="utf-8")
+            with (
+                patch.object(window, "save_csv", return_value=False),
+                patch.object(window, "start_epub_import") as start_import,
+            ):
+                window._route_unified_import_files([book])
 
-        with (
-            patch.object(window, "start_epub_import") as start_import,
-            patch.object(window, "run_multiimport_analysis") as run_multiimport,
-            patch.object(window, "run_apply") as run_apply,
-            patch.object(window, "run_covers") as run_covers,
-            patch.object(window, "save_csv") as save_csv,
-        ):
-            window.unified_import_button.click()
-
-        start_import.assert_not_called()
-        run_multiimport.assert_not_called()
-        run_apply.assert_not_called()
-        run_covers.assert_not_called()
-        save_csv.assert_not_called()
-        self.assertEqual(window.selected_book_ids(), selected_before)
-        self.assertIn("neni vybrana zadna kniha", window.output.toPlainText())
-        self.assertIn("Unified import preflight", window.statusBar().currentMessage())
+            start_import.assert_not_called()
         app.processEvents()
 
     def test_multiimport_menu_has_file_and_folder_picker_actions(self):
