@@ -6092,7 +6092,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].selected_cover_url, "")
         self.assertEqual(updated[0].cover_reason, "")
 
-    def test_mark_finished_apply_rows_preserves_declined_cover_selection(self):
+    def test_mark_finished_apply_rows_clears_declined_cover_selection_but_marks_history(self):
         row = cme.MatchRow(
             1,
             "Kniha",
@@ -6116,7 +6116,7 @@ class CalibreDbAndApplyTests(unittest.TestCase):
 
         updated = cme.mark_finished_apply_rows_skipped([row], [result])
 
-        self.assertEqual(updated[0].selected_cover_url, row.selected_cover_url)
+        self.assertEqual(updated[0].selected_cover_url, "")
         self.assertEqual(updated[0].cover_urls, row.cover_urls)
         self.assertEqual(updated[0].cover_reason, "cover-overwrite-declined")
 

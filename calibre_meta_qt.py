@@ -2612,6 +2612,11 @@ if PYSIDE6_AVAILABLE:
             except Exception as exc:
                 self.set_cover_placeholder("Obalku nejde nacist", str(exc))
                 return
+            if row.status == "skip":
+                self.set_cover_placeholder(
+                    "Obalka uz je v Calibre" if local_cover is not None else "Bez obalky"
+                )
+                return
             cover_urls = shared.cover_urls_from_row(row)
             if not cover_urls:
                 self.set_cover_placeholder(
@@ -2621,7 +2626,7 @@ if PYSIDE6_AVAILABLE:
             selected_url = row.selected_cover_url.strip()
             preview_url = selected_url or cover_urls[0]
             if row.cover_reason == "cover-overwrite-declined":
-                status = "Vybrana kandidatni obalka - prepsani odmitnuto"
+                status = "Kandidatni obalky - prepsani odmitnuto"
             elif selected_url:
                 status = "Vybrana kandidatni obalka"
             elif row.status == "skip":

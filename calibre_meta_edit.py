@@ -5648,7 +5648,10 @@ def mark_finished_apply_rows_skipped(rows: Sequence[MatchRow], results: Sequence
             if getattr(result, "cover_status", "not-requested") == "written":
                 cover_updates = {"selected_cover_url": "", "cover_reason": ""}
             elif getattr(result, "cover_status", "not-requested") == "overwrite-declined":
-                cover_updates = {"cover_reason": "cover-overwrite-declined"}
+                cover_updates = {
+                    "selected_cover_url": "",
+                    "cover_reason": "cover-overwrite-declined",
+                }
             updated_rows.append(
                 replace(
                     row,

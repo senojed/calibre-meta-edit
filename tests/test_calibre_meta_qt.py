@@ -2716,7 +2716,7 @@ class QtImportTests(unittest.TestCase):
             1,
             "Kniha",
             "Autor",
-            "skip",
+            "review",
             "https://www.databazeknih.cz/knihy/a-1",
             "",
             "manual",
@@ -2737,7 +2737,7 @@ class QtImportTests(unittest.TestCase):
         load_cover.assert_called()
         app.processEvents()
 
-    def test_cover_preview_shows_written_candidates_as_history_without_pending_selection(self):
+    def test_cover_preview_hides_written_candidates_for_finished_rows(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -2758,15 +2758,17 @@ class QtImportTests(unittest.TestCase):
 
         with (
             patch.object(qt.cme, "get_local_cover_path", return_value=Path("cover.jpg")),
-            patch.object(window, "load_cover_url"),
+            patch.object(window, "load_cover_url") as load_cover,
         ):
             window.update_cover_preview([row])
 
-        self.assertIn("historie", window.cover_status.text().lower())
+        self.assertEqual(window.cover_status.text(), "Obalka uz je v Calibre")
         self.assertNotIn("Vybrana kandidatni obalka", window.cover_status.text())
+        self.assertEqual(window.cover_option_buttons, {})
+        load_cover.assert_not_called()
         app.processEvents()
 
-    def test_cover_preview_labels_declined_overwrite_explicitly(self):
+    def test_cover_preview_hides_declined_overwrite_candidates_for_finished_rows(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -2783,17 +2785,19 @@ class QtImportTests(unittest.TestCase):
             "manual",
             "manual",
             cover_urls="https://img.example/declined.jpg",
-            selected_cover_url="https://img.example/declined.jpg",
             cover_reason="cover-overwrite-declined",
         )
 
         with (
             patch.object(qt.cme, "get_local_cover_path", return_value=Path("cover.jpg")),
-            patch.object(window, "load_cover_url"),
+            patch.object(window, "load_cover_url") as load_cover,
         ):
             window.update_cover_preview([row])
 
-        self.assertIn("prepsani odmitnuto", window.cover_status.text().lower())
+        self.assertEqual(window.cover_status.text(), "Obalka uz je v Calibre")
+        self.assertNotIn("Vybrana kandidatni obalka", window.cover_status.text())
+        self.assertEqual(window.cover_option_buttons, {})
+        load_cover.assert_not_called()
         app.processEvents()
 
 
