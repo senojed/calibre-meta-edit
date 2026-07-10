@@ -1943,7 +1943,6 @@ if PYSIDE6_AVAILABLE:
                 schedule_qt_startup_preview(self.run_preview)
 
         def _build_ui(self) -> None:
-            self._build_multiimport_menu()
             root = QWidget()
             layout = QVBoxLayout(root)
             layout.setContentsMargins(10, 10, 10, 6)
@@ -1989,6 +1988,7 @@ if PYSIDE6_AVAILABLE:
             self.import_button = self._add_button(
                 toolbar, "Import knihy", lambda: self.start_epub_import(), "neutralButton", "import-epub", show_text=False
             )
+            self.import_button.hide()
             self.update_import_button_enabled(True)
             self._add_button(toolbar, "Obalky", self.run_covers, "neutralButton", "covers", show_text=False)
             self._add_button(toolbar, "Najit / overit odkaz", self.run_audit, "neutralButton", "link", show_text=False)

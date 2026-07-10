@@ -3368,7 +3368,7 @@ class QtImportWiringTests(unittest.TestCase):
             messages=[],
         )
 
-    def test_toolbar_has_import_epub_button(self):
+    def test_legacy_import_epub_button_is_hidden_but_handler_remains_available(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -3378,6 +3378,8 @@ class QtImportWiringTests(unittest.TestCase):
 
         self.assertTrue(hasattr(window, "import_button"))
         self.assertEqual(window.import_button.toolTip(), "Import knihy")
+        self.assertTrue(window.import_button.isHidden())
+        self.assertTrue(callable(window.start_epub_import))
         app.processEvents()
 
     def test_toolbar_has_unified_import_skeleton_button(self):
@@ -3541,7 +3543,7 @@ class QtImportWiringTests(unittest.TestCase):
             start_import.assert_not_called()
         app.processEvents()
 
-    def test_multiimport_menu_has_file_and_folder_picker_actions(self):
+    def test_legacy_multiimport_menu_is_hidden_but_handlers_remain_available(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -3549,8 +3551,14 @@ class QtImportWiringTests(unittest.TestCase):
         app = QApplication.instance() or QApplication(sys.argv)
         window = qt.CalibreMetaQtWindow()
 
-        self.assertEqual(window.multiimport_files_action.text(), "Vybrat vice knih...")
-        self.assertEqual(window.multiimport_folder_action.text(), "Vybrat slozku...")
+        self.assertNotIn(
+            "Multiimport",
+            [action.text() for action in window.menuBar().actions()],
+        )
+        self.assertFalse(hasattr(window, "multiimport_files_action"))
+        self.assertFalse(hasattr(window, "multiimport_folder_action"))
+        self.assertTrue(callable(window.choose_multiimport_files))
+        self.assertTrue(callable(window.choose_multiimport_folder))
         app.processEvents()
 
     def test_multiimport_files_picker_collects_files_and_starts_batch_analysis(self):
@@ -3802,7 +3810,7 @@ class QtImportWiringTests(unittest.TestCase):
         window = qt.CalibreMetaQtWindow()
 
         right_tooltips = {
-            "Import knihy",
+            "Unified import",
             "Obalky",
             "Najit / overit odkaz",
             "Nacist z Calibre",
@@ -3812,7 +3820,7 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(
             [button.toolTip() for button in window.buttons if button.toolTip() in right_tooltips],
             [
-                "Import knihy",
+                "Unified import",
                 "Obalky",
                 "Najit / overit odkaz",
                 "Nacist z Calibre",
@@ -3875,7 +3883,7 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertTrue(window.import_button.isEnabled())
         app.processEvents()
 
-    def test_clicking_visible_import_epub_button_invokes_start_epub_import(self):
+    def test_legacy_import_epub_button_invokes_start_epub_import(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -3889,7 +3897,7 @@ class QtImportWiringTests(unittest.TestCase):
         start_import.assert_called_once_with()
         app.processEvents()
 
-    def test_clicking_visible_import_epub_button_uses_file_picker(self):
+    def test_legacy_import_epub_button_uses_file_picker(self):
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
