@@ -215,6 +215,71 @@ class TextAndUrlTests(unittest.TestCase):
 
         apply_preview.assert_not_called()
 
+    def test_validate_multiimport_manually_confirmed_needs_review_passes(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+        item.manually_confirmed = True
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.valid_items, [item])
+
+    def test_validate_multiimport_manual_confirm_does_not_bypass_duplicate(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Kniha", "Autor")]
+        item.manually_confirmed = True
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
+
+    def test_validate_multiimport_manual_confirm_does_not_bypass_invalid_preview(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+        item.manually_confirmed = True
+        item.current_preview = cme.ImportPreview(title="", authors="Autor")
+
+        result = cme.validate_multiimport_checked_items([item])
+
+        self.assertEqual([issue.reason for issue in result.issues], ["invalid_preview"])
+
+    def test_select_multiimport_candidate_recomputes_preview_and_confirms(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+        chosen = cme.ImportCandidate(
+            "databazeknih", "Jiny nazev", "Jiny autor", "https://dk/9", score=40
+        )
+
+        cme.select_multiimport_candidate(item, chosen)
+
+        self.assertTrue(item.manually_confirmed)
+        self.assertIs(item.selected_candidate, chosen)
+        self.assertEqual(item.current_preview.url, "https://dk/9")
+        self.assertEqual(item.current_preview.title, "Jiny nazev")
+
+    def test_select_multiimport_candidate_ignores_analysis_error_item(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "analysis_error"
+        item.analysis = None
+        chosen = cme.ImportCandidate("databazeknih", "X", "Y", "https://dk/9", score=40)
+
+        cme.select_multiimport_candidate(item, chosen)
+
+        self.assertFalse(item.manually_confirmed)
+        self.assertIsNot(item.selected_candidate, chosen)
+
+    def test_build_manual_import_candidate_uses_url_and_preview_names(self):
+        item = self._valid_checked_multiimport_item()
+
+        candidate = cme.build_manual_import_candidate("  https://dk/manual  ", item)
+
+        self.assertEqual(candidate.url, "https://dk/manual")
+        self.assertEqual(candidate.source, "manual")
+        self.assertEqual(candidate.title, item.current_preview.title)
+        self.assertEqual(candidate.authors, item.current_preview.authors)
+
     def test_run_multiimport_batch_write_blocks_entire_batch_when_checked_item_is_invalid(self):
         from unittest.mock import Mock
 
