@@ -20,8 +20,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.5")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.5")
+        self.assertEqual(qt.APP_VERSION, "0.4.6")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.6")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -494,7 +494,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.5")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.6")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -811,8 +811,8 @@ class QtImportTests(unittest.TestCase):
             ),
         )
 
-        def schedule(_delay, callback):
-            events.append("scheduled")
+        def register(callback):
+            events.append("registered")
             scheduled.append(callback)
 
         with (
@@ -823,17 +823,18 @@ class QtImportTests(unittest.TestCase):
             ),
             patch.object(qt.QMessageBox, "information"),
             patch.object(qt, "MultiImportProgressDialog") as progress_class,
-            patch.object(qt.QTimer, "singleShot", side_effect=schedule) as single_shot,
             patch.object(qt.QApplication, "processEvents"),
         ):
             progress = progress_class.return_value
+            progress.run_after_first_paint.side_effect = register
             progress.show_prepared.side_effect = lambda: events.append("painted")
             progress.exec.side_effect = lambda: (events.append("event-loop"), scheduled.pop(0)())
             dialog.import_button.click()
 
-        self.assertEqual(events[:4], ["painted", "scheduled", "event-loop", "write"])
-        single_shot.assert_called_once()
-        self.assertEqual(single_shot.call_args.args[0], 0)
+        # Prace se registruje, pak se okno ukaze, a teprve po vstupu do event
+        # loopu (kde probehne prvni paint) se spusti zapis. Zadna bila plocha.
+        self.assertEqual(events[:4], ["registered", "painted", "event-loop", "write"])
+        progress.run_after_first_paint.assert_called_once()
         app.processEvents()
 
     def _valid_multiimport_item(
@@ -1158,7 +1159,6 @@ class QtImportTests(unittest.TestCase):
             ) as question,
             patch.object(qt.QMessageBox, "information") as information,
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
             patch.object(qt.QApplication, "processEvents"),
             patch.object(dialog, "accept") as accept,
             patch.object(
@@ -1168,6 +1168,10 @@ class QtImportTests(unittest.TestCase):
                 create=True,
             ),
         ):
+            # Simuluje odpaleni prace az po prvnim vykresleni (paint-hook).
+            progress_dialog.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
             dialog.import_button.click()
 
         self.assertEqual(events[0], "validate")
@@ -1229,11 +1233,13 @@ class QtImportTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.Yes,
             ),
             patch.object(qt.QMessageBox, "information") as information,
-            patch.object(qt, "MultiImportProgressDialog"),
-            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents"),
             patch.object(dialog, "accept") as accept,
         ):
+            progress_dialog.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
             dialog.import_button.click()
 
         self.assertEqual(len(refresh_summaries), 1)
@@ -1265,11 +1271,13 @@ class QtImportTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.Yes,
             ),
             patch.object(qt.QMessageBox, "information"),
-            patch.object(qt, "MultiImportProgressDialog"),
-            patch.object(qt.QTimer, "singleShot", side_effect=lambda _delay, callback: callback()),
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents"),
             patch.object(dialog, "accept") as accept,
         ):
+            progress_dialog.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
             dialog.import_button.click()
 
         self.assertEqual(refresh_summaries, [])
@@ -3617,20 +3625,23 @@ class QtImportWiringTests(unittest.TestCase):
 
         def analyze(path):
             progress = progress_dialog.return_value
-            self.assertTrue(progress.setWindowTitle.called)
-            self.assertTrue(progress.show.called)
-            self.assertTrue(process_events.called)
+            self.assertTrue(progress.show_prepared.called)
             calls.append(path)
             return analysis
 
+        scheduled = []
+
         with (
             patch.object(window, "_build_import_analyze_callable", return_value=analyze) as build_analyzer,
-            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents") as process_events,
             patch.object(qt, "MultiImportResultsDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
+            progress = progress_dialog.return_value
+            progress.run_after_first_paint.side_effect = scheduled.append
+            progress.exec.side_effect = lambda: scheduled.pop(0)()
             items = window.run_multiimport_analysis(
                 [Path("C:/books/book.epub")],
                 connectivity_check=lambda: True,
@@ -3641,23 +3652,17 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertEqual(items[0].status, "needs_review")
         self.assertFalse(items[0].checked_for_import)
         progress_dialog.assert_called_once_with(
-            "Připravuji analýzu…",
-            "",
-            0,
             1,
             window,
+            title="Průběh načítání",
+            initial_text="Připravuji analýzu…",
+            progress_prefix="Analyzuji",
         )
         progress = progress_dialog.return_value
-        progress.setWindowTitle.assert_called_once_with("Průběh načítání")
-        progress.setCancelButton.assert_called_once_with(None)
-        progress.setMinimumDuration.assert_called_once_with(0)
-        progress.setAutoClose.assert_called_once_with(False)
-        progress.setAutoReset.assert_called_once_with(False)
-        progress.setValue.assert_any_call(0)
-        progress.setValue.assert_any_call(1)
-        progress.setLabelText.assert_called_once_with("Analyzuji 1/1: book.epub")
-        progress.close.assert_called_once_with()
-        self.assertEqual(process_events.call_count, 2)
+        progress.run_after_first_paint.assert_called_once()
+        progress.show_prepared.assert_called_once_with()
+        progress.update_progress.assert_called_once_with(1, 1, "book.epub")
+        progress.accept.assert_called_once_with()
         results_dialog.assert_called_once_with(items, parent=window)
         results_dialog.return_value.exec.assert_called_once_with()
         apply_preview.assert_not_called()
@@ -3678,18 +3683,22 @@ class QtImportWiringTests(unittest.TestCase):
             calls.append(path)
             return analysis
 
+        scheduled = []
+
         with (
             patch.object(
                 qt.QMessageBox,
                 "question",
                 return_value=QMessageBox.StandardButton.Yes,
             ) as question,
-            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents"),
             patch.object(qt, "MultiImportResultsDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
+            progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
+            progress_dialog.return_value.exec.side_effect = lambda: scheduled.pop(0)()
             items = window.run_multiimport_analysis(
                 [Path("C:/books/book.epub")],
                 analyze=analyze,
@@ -3727,7 +3736,7 @@ class QtImportWiringTests(unittest.TestCase):
                 "question",
                 return_value=QMessageBox.StandardButton.No,
             ) as question,
-            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt, "MultiImportResultsDialog") as results_dialog,
         ):
             items = window.run_multiimport_analysis(
@@ -3760,7 +3769,7 @@ class QtImportWiringTests(unittest.TestCase):
                 "question",
                 return_value=QMessageBox.StandardButton.No,
             ) as question,
-            patch.object(qt, "QProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt, "MultiImportResultsDialog") as results_dialog,
         ):
             items = window.run_multiimport_analysis(
