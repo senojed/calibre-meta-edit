@@ -870,6 +870,118 @@ class QtImportTests(unittest.TestCase):
             selected_candidate=candidate,
         )
 
+    def _needs_review_multiimport_item(
+        self,
+        name: str = "review.epub",
+    ) -> cme.MultiImportBatchItem:
+        recommended = cme.ImportCandidate(
+            "databazeknih", "Kniha", "Autor", f"https://dk/{name}/rec", score=60
+        )
+        alternate = cme.ImportCandidate(
+            "databazeknih", "Kniha jina", "Autor", f"https://dk/{name}/alt", score=55
+        )
+        preview = cme.ImportPreview(title="Kniha", authors="Autor", url=recommended.url)
+        analysis = cme.ImportAnalysis(
+            epub_path=name,
+            signals=[],
+            candidates=[recommended, alternate],
+            recommended=recommended,
+            duplicates=[],
+            preview=preview,
+            messages=[],
+        )
+        return cme.MultiImportBatchItem(
+            Path(name),
+            name,
+            checked_for_import=False,
+            status="needs_review",
+            analysis=analysis,
+            current_preview=preview,
+            selected_candidate=recommended,
+        )
+
+    def test_multiimport_results_manual_candidate_unlocks_import(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+        )
+
+        self.assertEqual(dialog.candidates_list.count(), 2)
+        dialog.candidates_list.setCurrentRow(1)
+        dialog.use_selected_candidate()
+
+        self.assertTrue(item.manually_confirmed)
+        self.assertTrue(item.checked_for_import)
+        self.assertEqual(item.current_preview.url, item.analysis.candidates[1].url)
+        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
+        self.assertEqual(dialog.items_table.item(0, 1).text(), "✎")
+        app.processEvents()
+
+    def test_multiimport_results_manual_url_confirms_item(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+        )
+
+        dialog.manual_url_edit.setText("https://dk/custom")
+        dialog.use_manual_url()
+
+        self.assertTrue(item.manually_confirmed)
+        self.assertTrue(item.checked_for_import)
+        self.assertEqual(item.current_preview.url, "https://dk/custom")
+        self.assertEqual(item.current_preview.title, "Kniha")
+        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
+        app.processEvents()
+
+    def test_multiimport_results_open_candidate_link_uses_desktop_services(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        dialog = qt.MultiImportResultsDialog([item])
+        dialog.candidates_list.setCurrentRow(0)
+
+        with patch.object(qt.QDesktopServices, "openUrl") as open_url:
+            dialog.open_selected_candidate_link()
+
+        open_url.assert_called_once()
+        self.assertEqual(
+            open_url.call_args.args[0].toString(),
+            item.analysis.candidates[0].url,
+        )
+        app.processEvents()
+
+    def test_multiimport_results_candidate_controls_disabled_for_analysis_error(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item()
+        item.status = "analysis_error"
+        item.analysis = None
+        dialog = qt.MultiImportResultsDialog([item])
+
+        self.assertEqual(dialog.candidates_list.count(), 0)
+        self.assertFalse(dialog.candidates_list.isEnabled())
+        self.assertFalse(dialog.use_manual_url_button.isEnabled())
+        self.assertFalse(dialog.use_candidate_button.isEnabled())
+        app.processEvents()
+
     def test_qt_imports_when_pyside6_available(self):
         import calibre_meta_qt as qt
 
