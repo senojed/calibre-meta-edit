@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.5"
+APP_VERSION = "0.4.6"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -730,7 +730,6 @@ if PYSIDE6_AVAILABLE:
         QMainWindow,
         QMenu,
         QMessageBox,
-        QProgressDialog,
         QProgressBar,
         QListWidget,
         QListWidgetItem,
@@ -1095,11 +1094,30 @@ if PYSIDE6_AVAILABLE:
 
 
     class MultiImportProgressDialog(QDialog):
-        """Jednoduchý nenativní průběh synchronního multiimportu."""
+        """Jednoduchý nenativní průběh synchronního multiimportu.
 
-        def __init__(self, total: int, parent: QWidget | None = None) -> None:
+        Bílé bliknutí těla okna vzniká tím, že se hned po ``show()`` spustí
+        synchronní (blokující) práce a event loop nestihne okno vykreslit.
+        Proto se těžká práce nespouští přímo, ale přes ``run_after_first_paint``:
+        callback se odpálí až po prvním skutečném ``paintEvent`` (okno je tmavé,
+        vykreslené), takže uživatel nevidí bílou plochu.
+        """
+
+        def __init__(
+            self,
+            total: int,
+            parent: QWidget | None = None,
+            *,
+            title: str = "Průběh importu",
+            initial_text: str = "Připravuji import…",
+            progress_prefix: str = "Importuji",
+        ) -> None:
             super().__init__(parent)
-            self.setWindowTitle("Průběh importu")
+            self._initial_text = initial_text
+            self._progress_prefix = progress_prefix
+            self._first_paint_done = False
+            self._after_first_paint: Callable[[], None] | None = None
+            self.setWindowTitle(title)
             self.setModal(True)
             self.setMinimumWidth(420)
             self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
@@ -1114,7 +1132,7 @@ if PYSIDE6_AVAILABLE:
             self.prepare(total)
 
         def prepare(self, total: int) -> None:
-            self.progress_label.setText("Připravuji import…")
+            self.progress_label.setText(self._initial_text)
             self.progress_bar.setRange(0, total)
             self.progress_bar.setValue(0)
 
@@ -1127,13 +1145,31 @@ if PYSIDE6_AVAILABLE:
             self.show()
             self.raise_()
             self.activateWindow()
-            self.progress_label.repaint()
-            self.progress_bar.repaint()
-            self.repaint()
-            QApplication.processEvents()
+
+        def run_after_first_paint(self, callback: Callable[[], None]) -> None:
+            """Zaregistruje práci, která se spustí až po prvním vykreslení okna.
+
+            Musí se volat před ``show_prepared()``/``exec()``. Zabraňuje bílému
+            bliknutí: blokující práce nezačne dřív, než OS okno namaluje.
+            """
+            self._after_first_paint = callback
+
+        def paintEvent(self, event) -> None:
+            super().paintEvent(event)
+            if self._first_paint_done:
+                return
+            self._first_paint_done = True
+            callback = self._after_first_paint
+            self._after_first_paint = None
+            if callback is not None:
+                # Ještě jeden tick event loopu, aby se právě dokončený paint
+                # stihl prezentovat (Windows DWM) dřív, než práce zablokuje loop.
+                QTimer.singleShot(0, callback)
 
         def update_progress(self, current: int, total: int, display_name: str) -> None:
-            self.progress_label.setText(f"Importuji {current}/{total}: {display_name}")
+            self.progress_label.setText(
+                f"{self._progress_prefix} {current}/{total}: {display_name}"
+            )
             self.progress_bar.setValue(current)
 
 
@@ -1391,7 +1427,6 @@ if PYSIDE6_AVAILABLE:
 
             progress = MultiImportProgressDialog(len(validation.valid_items), self)
             progress.prepare(len(validation.valid_items))
-            progress.show_prepared()
 
             def update_progress(
                 current: int,
@@ -1419,7 +1454,8 @@ if PYSIDE6_AVAILABLE:
                 finally:
                     progress.accept()
 
-            QTimer.singleShot(0, run_write)
+            progress.run_after_first_paint(run_write)
+            progress.show_prepared()
             progress.exec()
             try:
                 if errors:
@@ -3162,40 +3198,46 @@ if PYSIDE6_AVAILABLE:
                         return items
 
             analyze_book = analyze or self._build_import_analyze_callable()
-            progress = QProgressDialog(
-                "Připravuji analýzu…",
-                "",
-                0,
+            progress = MultiImportProgressDialog(
                 len(items),
                 self,
+                title="Průběh načítání",
+                initial_text="Připravuji analýzu…",
+                progress_prefix="Analyzuji",
             )
-            progress.setWindowTitle("Průběh načítání")
-            progress.setCancelButton(None)
-            progress.setMinimumDuration(0)
-            progress.setAutoClose(False)
-            progress.setAutoReset(False)
-            progress.setValue(0)
-            progress.show()
-            QApplication.processEvents()
 
             def update_progress(
                 current: int,
                 total: int,
                 item: cme.MultiImportBatchItem,
             ) -> None:
-                progress.setLabelText(f"Analyzuji {current}/{total}: {item.display_name}")
-                progress.setValue(current)
+                progress.update_progress(current, total, item.display_name)
                 QApplication.processEvents()
 
-            try:
-                analyzed_items = cme.run_multiimport_batch_analysis(
-                    items,
-                    lambda path: analyze_book(str(path)),
-                    precheck_safe_matches=False,
-                    progress_callback=update_progress,
-                )
-            finally:
-                progress.close()
+            analyzed: list[list[cme.MultiImportBatchItem]] = []
+            errors: list[BaseException] = []
+
+            def run_analysis() -> None:
+                try:
+                    analyzed.append(
+                        cme.run_multiimport_batch_analysis(
+                            items,
+                            lambda path: analyze_book(str(path)),
+                            precheck_safe_matches=False,
+                            progress_callback=update_progress,
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    progress.accept()
+
+            progress.run_after_first_paint(run_analysis)
+            progress.show_prepared()
+            progress.exec()
+            if errors:
+                raise errors[0]
+            analyzed_items = analyzed[0] if analyzed else items
             MultiImportResultsDialog(analyzed_items, parent=self).exec()
             return analyzed_items
 
