@@ -17,3 +17,8 @@ __pycache__/
 *.db-wal
 *.db-shm
 *.db-journal
+
+# Exportovane review diffy, generovane reporty a nastroje - nikdy necommitovat.
+review-*.diff
+multiimport-report.csv
+.superpowers/
