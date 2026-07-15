@@ -14,6 +14,9 @@ import calibre_meta_edit as cme
 
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 os.environ["CALIBRE_META_EDIT_TEST"] = "1"
+# Bez realneho okna: rychlejsi a stabilnejsi. Musi byt drive nez se importuje Qt
+# (importuje se az uvnitr testovych metod, takze tady je to vcas).
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class QtHelperTests(unittest.TestCase):
