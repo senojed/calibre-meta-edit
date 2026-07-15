@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.6"
+APP_VERSION = "0.4.7"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -154,6 +154,41 @@ def multiimport_status_tooltip(status: str) -> str:
     return labels.get(status, multiimport_status_label(status))
 
 
+def multiimport_row_status_symbol(item: cme.MultiImportBatchItem) -> str:
+    """Symbol do sloupce Stav; rucne potvrzena polozka ma vlastni znacku."""
+    if item.manually_confirmed and item.status not in ("written", "write_error", "writing"):
+        return "W"
+    return multiimport_compact_status_label(item.status)
+
+
+def multiimport_row_status_tooltip(item: cme.MultiImportBatchItem) -> str:
+    if item.manually_confirmed and item.status not in ("written", "write_error", "writing"):
+        return "Ručně potvrzeno k importu"
+    return multiimport_status_tooltip(item.status)
+
+
+def multiimport_item_matches_filter(
+    item: cme.MultiImportBatchItem,
+    *,
+    name_query: str = "",
+    statuses: set[str] | None = None,
+    checked: bool | None = None,
+) -> bool:
+    """Rozhodne, zda polozka projde filtry v okne vysledku multiimportu.
+
+    `name_query` prazdny = bez omezeni. `statuses` None = vsechny stavy,
+    jinak projdou jen polozky se stavem v mnozine (zaskrtavatka). `checked`
+    filtruje podle zaskrtnuti pro import (None = obojii).
+    """
+    if name_query and cme.normalize_text(name_query) not in cme.normalize_text(item.display_name):
+        return False
+    if statuses is not None and item.status not in statuses:
+        return False
+    if checked is not None and bool(item.checked_for_import) != checked:
+        return False
+    return True
+
+
 def multiimport_validation_reason_label(reason: str) -> str:
     labels = {
         "no_checked_items": "Není vybraná žádná položka.",
@@ -215,6 +250,7 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
     lines = [
         f"Stav: {multiimport_status_label(item.status)}",
         f"Predvybrano: {'ano' if item.checked_for_import else 'ne'}",
+        f"Rucne potvrzeno: {'ano' if item.manually_confirmed else 'ne'}",
         "",
         f"Nazev: {preview.title}",
         f"Autori: {preview.authors}",
@@ -1214,6 +1250,32 @@ if PYSIDE6_AVAILABLE:
             selection_buttons.addStretch(1)
             root.addLayout(selection_buttons)
 
+            filter_bar = QHBoxLayout()
+            filter_bar.addWidget(QLabel("Filtr:"))
+            self.name_filter = QLineEdit()
+            self.name_filter.setPlaceholderText("Soubor")
+            self.name_filter.setClearButtonEnabled(True)
+            self.name_filter.textChanged.connect(self.apply_filters)
+            filter_bar.addWidget(self.name_filter, stretch=1)
+
+            filter_bar.addWidget(QLabel("Stav:"))
+            self.status_checks: dict[str, QCheckBox] = {}
+            for status in ("ready", "needs_review", "duplicate_warning",
+                           "analysis_error", "written", "write_error"):
+                check = QCheckBox(multiimport_status_label(status))
+                check.setChecked(True)
+                check.stateChanged.connect(lambda _state: self.apply_filters())
+                filter_bar.addWidget(check)
+                self.status_checks[status] = check
+
+            self.checked_filter = QComboBox()
+            self.checked_filter.addItem("Import: vše", None)
+            self.checked_filter.addItem("Zaškrtnuté", True)
+            self.checked_filter.addItem("Nezaškrtnuté", False)
+            self.checked_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
+            filter_bar.addWidget(self.checked_filter)
+            root.addLayout(filter_bar)
+
             body = QHBoxLayout()
             root.addLayout(body, stretch=1)
             self.items_table = QTableWidget(len(self.items), 3)
@@ -1240,8 +1302,8 @@ if PYSIDE6_AVAILABLE:
                 checkbox_item.setCheckState(
                     Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
                 )
-                status_item = QTableWidgetItem(multiimport_compact_status_label(item.status))
-                status_item.setToolTip(multiimport_status_tooltip(item.status))
+                status_item = QTableWidgetItem(multiimport_row_status_symbol(item))
+                status_item.setToolTip(multiimport_row_status_tooltip(item))
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 file_item = QTableWidgetItem(item.display_name)
                 file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1250,9 +1312,38 @@ if PYSIDE6_AVAILABLE:
                 self.items_table.setItem(row, 2, file_item)
             body.addWidget(self.items_table, stretch=1)
 
+            right_panel = QVBoxLayout()
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
-            body.addWidget(self.detail_text, stretch=2)
+            right_panel.addWidget(self.detail_text, stretch=2)
+
+            right_panel.addWidget(QLabel("Nalezení kandidáti (ruční výběr):"))
+            self.candidates_list = QListWidget()
+            self.candidates_list.currentRowChanged.connect(
+                lambda _row: self.update_candidate_buttons()
+            )
+            right_panel.addWidget(self.candidates_list, stretch=1)
+
+            candidate_buttons = QHBoxLayout()
+            self.use_candidate_button = QPushButton("Použít kandidáta")
+            self.use_candidate_button.clicked.connect(self.use_selected_candidate)
+            candidate_buttons.addWidget(self.use_candidate_button)
+            self.open_link_button = QPushButton("Otevřít odkaz")
+            self.open_link_button.clicked.connect(self.open_selected_candidate_link)
+            candidate_buttons.addWidget(self.open_link_button)
+            candidate_buttons.addStretch(1)
+            right_panel.addLayout(candidate_buttons)
+
+            manual_row = QHBoxLayout()
+            self.manual_url_edit = QLineEdit()
+            self.manual_url_edit.setPlaceholderText("Vlastní odkaz (URL), který znám jako správný")
+            manual_row.addWidget(self.manual_url_edit, stretch=1)
+            self.use_manual_url_button = QPushButton("Použít odkaz")
+            self.use_manual_url_button.clicked.connect(self.use_manual_url)
+            manual_row.addWidget(self.use_manual_url_button)
+            right_panel.addLayout(manual_row)
+
+            body.addLayout(right_panel, stretch=2)
 
             buttons = QHBoxLayout()
             buttons.addStretch(1)
@@ -1395,8 +1486,8 @@ if PYSIDE6_AVAILABLE:
                     else Qt.CheckState.Unchecked
                 )
                 status_item = self.items_table.item(row, 1)
-                status_item.setText(multiimport_compact_status_label(item.status))
-                status_item.setToolTip(multiimport_status_tooltip(item.status))
+                status_item.setText(multiimport_row_status_symbol(item))
+                status_item.setToolTip(multiimport_row_status_tooltip(item))
                 if self.items_table.currentRow() == row:
                     self.show_item_details(row)
             finally:
@@ -1483,11 +1574,99 @@ if PYSIDE6_AVAILABLE:
             if summary.ok and summary.attempted > 0:
                 self.accept()
 
+        def apply_filters(self) -> None:
+            """Skryje radky, ktere neodpovidaji filtrum (soubor/stav/import)."""
+            name_query = self.name_filter.text()
+            statuses = {
+                status for status, check in self.status_checks.items() if check.isChecked()
+            }
+            # Vse zaskrtnuto = bez omezeni (ukaz i pripadne jine stavy nez v liste).
+            if statuses == set(self.status_checks):
+                statuses = None
+            checked = self.checked_filter.currentData()
+            for row, item in enumerate(self.items):
+                visible = multiimport_item_matches_filter(
+                    item,
+                    name_query=name_query,
+                    statuses=statuses,
+                    checked=checked,
+                )
+                self.items_table.setRowHidden(row, not visible)
+
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):
                 self.detail_text.setPlainText(multiimport_item_detail_text(self.items[row]))
+                self.populate_candidates(self.items[row])
             else:
                 self.detail_text.clear()
+                self.populate_candidates(None)
+
+        def current_selected_item(self) -> "cme.MultiImportBatchItem | None":
+            row = self.items_table.currentRow()
+            if 0 <= row < len(self.items):
+                return self.items[row]
+            return None
+
+        def populate_candidates(self, item: "cme.MultiImportBatchItem | None") -> None:
+            """Naplni seznam kandidatu pro rucni vyber u vybrane knihy."""
+            self.candidates_list.clear()
+            can_edit = item is not None and item.status != "analysis_error"
+            if item is not None and item.analysis is not None:
+                for candidate in item.analysis.candidates:
+                    label = (
+                        f"{candidate.score}% | {candidate.source} | "
+                        f"{candidate.title} / {candidate.authors}\n{candidate.url}"
+                    )
+                    list_item = QListWidgetItem(label)
+                    list_item.setData(Qt.ItemDataRole.UserRole, candidate)
+                    self.candidates_list.addItem(list_item)
+            self.candidates_list.setEnabled(can_edit)
+            self.manual_url_edit.setEnabled(can_edit)
+            self.use_manual_url_button.setEnabled(can_edit)
+            self.update_candidate_buttons()
+
+        def selected_list_candidate(self) -> "cme.ImportCandidate | None":
+            list_item = self.candidates_list.currentItem()
+            if list_item is None:
+                return None
+            return list_item.data(Qt.ItemDataRole.UserRole)
+
+        def update_candidate_buttons(self) -> None:
+            has_candidate = self.selected_list_candidate() is not None
+            enabled = self.candidates_list.isEnabled() and has_candidate
+            self.use_candidate_button.setEnabled(enabled)
+            self.open_link_button.setEnabled(enabled)
+
+        def use_selected_candidate(self) -> None:
+            item = self.current_selected_item()
+            candidate = self.selected_list_candidate()
+            if item is None or candidate is None:
+                return
+            cme.select_multiimport_candidate(item, candidate)
+            if item.manually_confirmed:
+                item.checked_for_import = True
+            self.refresh_item_row(item)
+
+        def open_selected_candidate_link(self) -> None:
+            candidate = self.selected_list_candidate()
+            url = (candidate.url if candidate is not None else "").strip()
+            if not url:
+                return
+            QDesktopServices.openUrl(QUrl(url))
+
+        def use_manual_url(self) -> None:
+            item = self.current_selected_item()
+            if item is None:
+                return
+            url = self.manual_url_edit.text().strip()
+            if not url:
+                QMessageBox.information(self, "Vlastní odkaz", "Zadejte URL odkazu.")
+                return
+            candidate = cme.build_manual_import_candidate(url, item)
+            cme.select_multiimport_candidate(item, candidate)
+            if item.manually_confirmed:
+                item.checked_for_import = True
+            self.refresh_item_row(item)
 
 
     class ImportDialog(QDialog):

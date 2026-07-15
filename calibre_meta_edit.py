@@ -322,6 +322,9 @@ class MultiImportBatchItem:
     analysis: ImportAnalysis | None = None
     current_preview: ImportPreview | None = None
     selected_candidate: ImportCandidate | None = None
+    # True, kdyz uzivatel rucne vybral kandidata/odkaz a potvrdil import i bez
+    # 100% shody. Odemyka zapis u polozek, ktere by jinak zustaly "ke kontrole".
+    manually_confirmed: bool = False
     duplicates: list[DuplicateCandidate] = field(default_factory=list)
     write_result: ImportApplyResult | None = None
     calibre_id: int | None = None
@@ -381,9 +384,6 @@ def validate_multiimport_checked_items(
             reason = "duplicate_warning"
         elif item.status == "analysis_error" or item.error_message:
             reason = "analysis_error"
-        elif item.status != "ready":
-            precheck_issues = multiimport_precheck_issues(item.analysis) if item.analysis is not None else []
-            reason = precheck_issues[0] if precheck_issues else "status_not_ready"
         elif item.analysis is None:
             reason = "missing_analysis"
         elif item.current_preview is None:
@@ -392,6 +392,11 @@ def validate_multiimport_checked_items(
             reason = "missing_candidate"
         elif not is_valid_import_preview(item.current_preview):
             reason = "invalid_preview"
+        elif item.status != "ready" and not item.manually_confirmed:
+            # Rucne potvrzena polozka smi projit i pod 100 %; jinak zustava
+            # blokovana duvodem z prechecku (napr. nizke skore).
+            precheck_issues = multiimport_precheck_issues(item.analysis)
+            reason = precheck_issues[0] if precheck_issues else "status_not_ready"
 
         if reason:
             issues.append(MultiImportValidationIssue(item, reason))
@@ -581,6 +586,7 @@ def run_multiimport_batch_analysis(
         item.status = "analyzing"
         item.error_message = ""
         item.checked_for_import = False
+        item.manually_confirmed = False
         try:
             analysis = analyze_one(item.source_path)
         except Exception as exc:
@@ -1001,6 +1007,41 @@ def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: I
         source=candidate.source,
         work_type=candidate.work_type,
     )
+
+
+def build_manual_import_candidate(url: str, item: MultiImportBatchItem) -> ImportCandidate:
+    """Vytvori "rucniho" kandidata z URL, kterou uzivatel zna jako spravnou.
+
+    Nazev a autory prebira z aktualniho nahledu polozky (nic se nestahuje);
+    slouzi jen k tomu, aby se do nahledu propsal zvoleny odkaz.
+    """
+    preview = item.current_preview or ImportPreview()
+    return ImportCandidate(
+        source="manual",
+        title=preview.title,
+        authors=preview.authors,
+        url=url.strip(),
+        score=0,
+        reason="manual",
+    )
+
+
+def select_multiimport_candidate(
+    item: MultiImportBatchItem,
+    candidate: ImportCandidate,
+) -> None:
+    """Rucne vybere kandidata pro polozku a potvrdi ji pro import.
+
+    Prepocita jen nahled (`current_preview`) podle kandidata a nastavi
+    `manually_confirmed`, takze polozka smi projit zapisem i bez 100% shody.
+    Nic nezapisuje. U polozek s chybou analyzy nedela nic.
+    """
+    if item.status == "analysis_error" or item.analysis is None:
+        return
+    fallback = item.current_preview or item.analysis.preview
+    item.selected_candidate = candidate
+    item.current_preview = import_preview_from_candidate(candidate, fallback)
+    item.manually_confirmed = True
 
 
 class DisabledAIResolver:
