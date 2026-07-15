@@ -920,7 +920,7 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(item.checked_for_import)
         self.assertEqual(item.current_preview.url, item.analysis.candidates[1].url)
         self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
-        self.assertEqual(dialog.items_table.item(0, 1).text(), "✎")
+        self.assertEqual(dialog.items_table.item(0, 1).text(), "W")
         app.processEvents()
 
     def test_multiimport_results_manual_url_confirms_item(self):

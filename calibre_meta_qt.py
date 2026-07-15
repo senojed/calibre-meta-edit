@@ -157,7 +157,7 @@ def multiimport_status_tooltip(status: str) -> str:
 def multiimport_row_status_symbol(item: cme.MultiImportBatchItem) -> str:
     """Symbol do sloupce Stav; rucne potvrzena polozka ma vlastni znacku."""
     if item.manually_confirmed and item.status not in ("written", "write_error", "writing"):
-        return "✎"
+        return "W"
     return multiimport_compact_status_label(item.status)
 
 
