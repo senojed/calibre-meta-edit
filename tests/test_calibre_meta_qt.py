@@ -370,6 +370,35 @@ class QtHelperTests(unittest.TestCase):
             },
         )
 
+    def test_multiimport_row_status_symbol_marks_manual_confirm(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(Path("a.epub"), "a.epub", status="needs_review")
+        self.assertEqual(qt.multiimport_row_status_symbol(item), "👁")
+        item.manually_confirmed = True
+        self.assertEqual(qt.multiimport_row_status_symbol(item), "W")
+        self.assertEqual(qt.multiimport_row_status_tooltip(item), "Ručně potvrzeno k importu")
+        item.status = "written"
+        self.assertEqual(qt.multiimport_row_status_symbol(item), "✓")
+
+    def test_multiimport_item_matches_filter_by_name(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(Path("Verne.epub"), "Verne, Jules.epub", status="ready")
+        self.assertTrue(qt.multiimport_item_matches_filter(item, name_query="verne"))
+        self.assertFalse(qt.multiimport_item_matches_filter(item, name_query="hugo"))
+
+    def test_multiimport_item_matches_filter_by_status_and_checked(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(
+            Path("a.epub"), "a.epub", status="needs_review", checked_for_import=True
+        )
+        self.assertTrue(qt.multiimport_item_matches_filter(item, status="needs_review"))
+        self.assertFalse(qt.multiimport_item_matches_filter(item, status="ready"))
+        self.assertTrue(qt.multiimport_item_matches_filter(item, checked=True))
+        self.assertFalse(qt.multiimport_item_matches_filter(item, checked=False))
+
     def test_multiimport_status_tooltips_preserve_semantic_labels(self):
         import calibre_meta_qt as qt
 
@@ -963,6 +992,34 @@ class QtImportTests(unittest.TestCase):
             open_url.call_args.args[0].toString(),
             item.analysis.candidates[0].url,
         )
+        app.processEvents()
+
+    def test_multiimport_results_filters_hide_rows(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        ready = self._valid_multiimport_item("alfa.epub", checked=True)
+        review = self._needs_review_multiimport_item("beta.epub")
+        dialog = qt.MultiImportResultsDialog([ready, review])
+
+        dialog.name_filter.setText("beta")
+        self.assertTrue(dialog.items_table.isRowHidden(0))
+        self.assertFalse(dialog.items_table.isRowHidden(1))
+
+        dialog.name_filter.setText("")
+        self.assertFalse(dialog.items_table.isRowHidden(0))
+        self.assertFalse(dialog.items_table.isRowHidden(1))
+
+        dialog.status_filter.setCurrentIndex(dialog.status_filter.findData("ready"))
+        self.assertFalse(dialog.items_table.isRowHidden(0))
+        self.assertTrue(dialog.items_table.isRowHidden(1))
+
+        dialog.status_filter.setCurrentIndex(0)
+        dialog.checked_filter.setCurrentIndex(dialog.checked_filter.findData(True))
+        self.assertFalse(dialog.items_table.isRowHidden(0))
+        self.assertTrue(dialog.items_table.isRowHidden(1))
         app.processEvents()
 
     def test_multiimport_results_candidate_controls_disabled_for_analysis_error(self):

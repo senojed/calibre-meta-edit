@@ -167,6 +167,27 @@ def multiimport_row_status_tooltip(item: cme.MultiImportBatchItem) -> str:
     return multiimport_status_tooltip(item.status)
 
 
+def multiimport_item_matches_filter(
+    item: cme.MultiImportBatchItem,
+    *,
+    name_query: str = "",
+    status: str = "",
+    checked: bool | None = None,
+) -> bool:
+    """Rozhodne, zda polozka projde filtry v okne vysledku multiimportu.
+
+    Prazdny filtr = bez omezeni. `status` je vnitrni hodnota stavu, `checked`
+    filtruje podle zaskrtnuti pro import (None = obojii).
+    """
+    if name_query and cme.normalize_text(name_query) not in cme.normalize_text(item.display_name):
+        return False
+    if status and item.status != status:
+        return False
+    if checked is not None and bool(item.checked_for_import) != checked:
+        return False
+    return True
+
+
 def multiimport_validation_reason_label(reason: str) -> str:
     labels = {
         "no_checked_items": "Není vybraná žádná položka.",
@@ -1228,6 +1249,30 @@ if PYSIDE6_AVAILABLE:
             selection_buttons.addStretch(1)
             root.addLayout(selection_buttons)
 
+            filter_bar = QHBoxLayout()
+            filter_bar.addWidget(QLabel("Filtr:"))
+            self.name_filter = QLineEdit()
+            self.name_filter.setPlaceholderText("Soubor")
+            self.name_filter.setClearButtonEnabled(True)
+            self.name_filter.textChanged.connect(self.apply_filters)
+            filter_bar.addWidget(self.name_filter, stretch=1)
+
+            self.status_filter = QComboBox()
+            self.status_filter.addItem("Stav: vše", "")
+            for status in ("ready", "needs_review", "duplicate_warning",
+                           "analysis_error", "written", "write_error"):
+                self.status_filter.addItem(multiimport_status_label(status), status)
+            self.status_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
+            filter_bar.addWidget(self.status_filter)
+
+            self.checked_filter = QComboBox()
+            self.checked_filter.addItem("Import: vše", None)
+            self.checked_filter.addItem("Zaškrtnuté", True)
+            self.checked_filter.addItem("Nezaškrtnuté", False)
+            self.checked_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
+            filter_bar.addWidget(self.checked_filter)
+            root.addLayout(filter_bar)
+
             body = QHBoxLayout()
             root.addLayout(body, stretch=1)
             self.items_table = QTableWidget(len(self.items), 3)
@@ -1525,6 +1570,20 @@ if PYSIDE6_AVAILABLE:
             self.update_import_button_enabled()
             if summary.ok and summary.attempted > 0:
                 self.accept()
+
+        def apply_filters(self) -> None:
+            """Skryje radky, ktere neodpovidaji filtrum (soubor/stav/import)."""
+            name_query = self.name_filter.text()
+            status = self.status_filter.currentData() or ""
+            checked = self.checked_filter.currentData()
+            for row, item in enumerate(self.items):
+                visible = multiimport_item_matches_filter(
+                    item,
+                    name_query=name_query,
+                    status=status,
+                    checked=checked,
+                )
+                self.items_table.setRowHidden(row, not visible)
 
         def show_item_details(self, row: int) -> None:
             if 0 <= row < len(self.items):
