@@ -2148,7 +2148,11 @@ if PYSIDE6_AVAILABLE:
             self._build_ui()
             self.calibre_timer = QTimer(self)
             self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
-            self.calibre_timer.start(5000)
+            # V testech (CALIBRE_META_EDIT_TEST=1) casovac nespoustime: jinak by
+            # kazde nahromadene testovaci okno kazdych 5 s poustelo `tasklist`
+            # (subprocess) a sada by kvadraticky zpomalovala.
+            if os.environ.get("CALIBRE_META_EDIT_TEST") != "1":
+                self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
             if (
                 self.auto_settings["startup_preview"]
