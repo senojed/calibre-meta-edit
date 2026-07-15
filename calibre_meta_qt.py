@@ -171,17 +171,18 @@ def multiimport_item_matches_filter(
     item: cme.MultiImportBatchItem,
     *,
     name_query: str = "",
-    status: str = "",
+    statuses: set[str] | None = None,
     checked: bool | None = None,
 ) -> bool:
     """Rozhodne, zda polozka projde filtry v okne vysledku multiimportu.
 
-    Prazdny filtr = bez omezeni. `status` je vnitrni hodnota stavu, `checked`
+    `name_query` prazdny = bez omezeni. `statuses` None = vsechny stavy,
+    jinak projdou jen polozky se stavem v mnozine (zaskrtavatka). `checked`
     filtruje podle zaskrtnuti pro import (None = obojii).
     """
     if name_query and cme.normalize_text(name_query) not in cme.normalize_text(item.display_name):
         return False
-    if status and item.status != status:
+    if statuses is not None and item.status not in statuses:
         return False
     if checked is not None and bool(item.checked_for_import) != checked:
         return False
@@ -1257,13 +1258,15 @@ if PYSIDE6_AVAILABLE:
             self.name_filter.textChanged.connect(self.apply_filters)
             filter_bar.addWidget(self.name_filter, stretch=1)
 
-            self.status_filter = QComboBox()
-            self.status_filter.addItem("Stav: vše", "")
+            filter_bar.addWidget(QLabel("Stav:"))
+            self.status_checks: dict[str, QCheckBox] = {}
             for status in ("ready", "needs_review", "duplicate_warning",
                            "analysis_error", "written", "write_error"):
-                self.status_filter.addItem(multiimport_status_label(status), status)
-            self.status_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
-            filter_bar.addWidget(self.status_filter)
+                check = QCheckBox(multiimport_status_label(status))
+                check.setChecked(True)
+                check.stateChanged.connect(lambda _state: self.apply_filters())
+                filter_bar.addWidget(check)
+                self.status_checks[status] = check
 
             self.checked_filter = QComboBox()
             self.checked_filter.addItem("Import: vše", None)
@@ -1574,13 +1577,18 @@ if PYSIDE6_AVAILABLE:
         def apply_filters(self) -> None:
             """Skryje radky, ktere neodpovidaji filtrum (soubor/stav/import)."""
             name_query = self.name_filter.text()
-            status = self.status_filter.currentData() or ""
+            statuses = {
+                status for status, check in self.status_checks.items() if check.isChecked()
+            }
+            # Vse zaskrtnuto = bez omezeni (ukaz i pripadne jine stavy nez v liste).
+            if statuses == set(self.status_checks):
+                statuses = None
             checked = self.checked_filter.currentData()
             for row, item in enumerate(self.items):
                 visible = multiimport_item_matches_filter(
                     item,
                     name_query=name_query,
-                    status=status,
+                    statuses=statuses,
                     checked=checked,
                 )
                 self.items_table.setRowHidden(row, not visible)

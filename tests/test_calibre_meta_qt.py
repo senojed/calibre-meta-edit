@@ -394,8 +394,11 @@ class QtHelperTests(unittest.TestCase):
         item = cme.MultiImportBatchItem(
             Path("a.epub"), "a.epub", status="needs_review", checked_for_import=True
         )
-        self.assertTrue(qt.multiimport_item_matches_filter(item, status="needs_review"))
-        self.assertFalse(qt.multiimport_item_matches_filter(item, status="ready"))
+        self.assertTrue(qt.multiimport_item_matches_filter(item, statuses={"needs_review"}))
+        self.assertTrue(
+            qt.multiimport_item_matches_filter(item, statuses={"needs_review", "ready"})
+        )
+        self.assertFalse(qt.multiimport_item_matches_filter(item, statuses={"ready"}))
         self.assertTrue(qt.multiimport_item_matches_filter(item, checked=True))
         self.assertFalse(qt.multiimport_item_matches_filter(item, checked=False))
 
@@ -1012,11 +1015,20 @@ class QtImportTests(unittest.TestCase):
         self.assertFalse(dialog.items_table.isRowHidden(0))
         self.assertFalse(dialog.items_table.isRowHidden(1))
 
-        dialog.status_filter.setCurrentIndex(dialog.status_filter.findData("ready"))
+        # Stav jako zaskrtavatka: necham jen 'ready' -> review radek zmizi.
+        for status, check in dialog.status_checks.items():
+            check.setChecked(status == "ready")
         self.assertFalse(dialog.items_table.isRowHidden(0))
         self.assertTrue(dialog.items_table.isRowHidden(1))
 
-        dialog.status_filter.setCurrentIndex(0)
+        # Vic stavu naraz: ready + needs_review -> oba viditelne.
+        for status, check in dialog.status_checks.items():
+            check.setChecked(status in ("ready", "needs_review"))
+        self.assertFalse(dialog.items_table.isRowHidden(0))
+        self.assertFalse(dialog.items_table.isRowHidden(1))
+
+        for check in dialog.status_checks.values():
+            check.setChecked(True)
         dialog.checked_filter.setCurrentIndex(dialog.checked_filter.findData(True))
         self.assertFalse(dialog.items_table.isRowHidden(0))
         self.assertTrue(dialog.items_table.isRowHidden(1))
