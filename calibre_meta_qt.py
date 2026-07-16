@@ -1220,6 +1220,7 @@ if PYSIDE6_AVAILABLE:
             write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
             post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
             prepare_backup: Callable[[bool], Path | None] | None = None,
+            connectivity_check: Callable[[], bool] | None = None,
         ) -> None:
             super().__init__(parent)
             self.items = list(items)
@@ -1232,6 +1233,11 @@ if PYSIDE6_AVAILABLE:
             self.prepare_backup = prepare_backup or getattr(
                 parent,
                 "prepare_multiimport_backup",
+                None,
+            )
+            self.connectivity_check = connectivity_check or getattr(
+                parent,
+                "is_online_now",
                 None,
             )
             self.setWindowTitle("Vysledky multiimport analyzy")
@@ -1527,6 +1533,26 @@ if PYSIDE6_AVAILABLE:
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
+
+            # Import stahuje obalky a doplnuje udaje z webu; offline to muze
+            # selhat. Varujeme az tady, aby se sonda nepoustela zbytecne.
+            if self.connectivity_check is not None:
+                try:
+                    online = bool(self.connectivity_check())
+                except Exception:
+                    online = False
+                if not online:
+                    offline_answer = QMessageBox.question(
+                        self,
+                        "Bez připojení k internetu",
+                        "Zdá se, že počítač není online. Zápis do Calibre proběhne, "
+                        "ale stažení obálek a doplnění údajů z webu může selhat.\n\n"
+                        "Chcete přesto importovat?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if offline_answer != QMessageBox.StandardButton.Yes:
+                        return
 
             # Jedna zaloha metadata.db pred celou davkou. Kdyz ji uzivatel chce a
             # nepovede se, import radeji vubec nespoustime.
@@ -2153,6 +2179,10 @@ if PYSIDE6_AVAILABLE:
             self.worker_running = False
             self.csv_loaded = False
             self.calibre_running = False
+            # Posledni zname pripojeni. Neoveruje se na timeru: sonda ma 1s
+            # timeout a offline by tak UI kazdych par vterin zamrzavalo.
+            # Obnovuje se, kdyz na tom zalezi (start, analyza, import).
+            self.online = True
             # Zaloha pripravena pro aktualni davku multiimportu (viz
             # prepare_multiimport_backup); None = zalohovat nechce uzivatel.
             self._multiimport_backup_ready = False
@@ -2183,6 +2213,8 @@ if PYSIDE6_AVAILABLE:
             if os.environ.get("CALIBRE_META_EDIT_TEST") != "1":
                 self.calibre_timer.start(5000)
             self.load_csv(show_message=False)
+            if os.environ.get("CALIBRE_META_EDIT_TEST") != "1":
+                self.is_online_now()
             if (
                 self.auto_settings["startup_preview"]
                 and os.environ.get("QT_QPA_PLATFORM") != "offscreen"
@@ -2200,8 +2232,11 @@ if PYSIDE6_AVAILABLE:
             layout.addWidget(self._build_main_area(), stretch=1)
             self.setCentralWidget(root)
             self.setStatusBar(QStatusBar())
+            self.online_indicator = QLabel()
+            self.statusBar().addPermanentWidget(self.online_indicator)
             self.calibre_indicator = QLabel()
             self.statusBar().addPermanentWidget(self.calibre_indicator)
+            self.update_online_indicator()
             self.set_status("Ready")
             self.apply_theme()
 
@@ -3411,11 +3446,7 @@ if PYSIDE6_AVAILABLE:
         ) -> list[cme.MultiImportBatchItem]:
             items = cme.build_multiimport_batch_items(files)
             if items:
-                check_online = connectivity_check or is_probably_online
-                try:
-                    online = bool(check_online())
-                except Exception:
-                    online = False
+                online = self.is_online_now(connectivity_check)
                 if not online:
                     answer = QMessageBox.question(
                         self,
@@ -3868,6 +3899,31 @@ if PYSIDE6_AVAILABLE:
             color = "#2e7d32" if self.calibre_running else "#c62828"
             label = "Calibre zapnuto" if self.calibre_running else "Calibre vypnuto"
             self.calibre_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")
+
+        def update_online_indicator(self) -> None:
+            """Prekresli puntik pripojeni ve statusbaru podle posledniho zjisteni."""
+            color = "#2e7d32" if self.online else "#c62828"
+            label = "Online" if self.online else "Offline"
+            self.online_indicator.setText(
+                f"<span style='color:{color}; font-size:16px;'>●</span> {label}"
+            )
+
+        def is_online_now(
+            self,
+            connectivity_check: Callable[[], bool] | None = None,
+        ) -> bool:
+            """Zjisti pripojeni, ulozi vysledek a prekresli indikator.
+
+            Vola se jen v okamzicich, kdy na pripojeni zalezi (start, analyza,
+            import), aby sonda s 1s timeoutem nezasekavala UI na timeru.
+            """
+            check = connectivity_check or is_probably_online
+            try:
+                self.online = bool(check())
+            except Exception:
+                self.online = False
+            self.update_online_indicator()
+            return self.online
 
     def status_color(status: str) -> QColor:
         """Vrati jemnou barvu radku podle statusu."""
