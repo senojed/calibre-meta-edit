@@ -693,7 +693,7 @@ class QtHelperTests(unittest.TestCase):
             settings,
             {
                 "provider": "off",
-                "model": "llama3",
+                "model": "llama3.1:8b",
                 "text_limit": 5000,
                 "timeout": 120,
                 "workers": 5,

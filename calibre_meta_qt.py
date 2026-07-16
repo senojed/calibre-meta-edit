@@ -50,7 +50,7 @@ AUTO_SETTING_DEFAULTS = {
 }
 AI_SETTING_DEFAULTS = {
     "provider": "off",
-    "model": "llama3",
+    "model": "llama3.1:8b",
     "text_limit": 5000,
     "timeout": 120,
     # Kolik knih se pri multiimportu analyzuje soubezne. 5 je zmerene optimum
@@ -63,9 +63,11 @@ MULTIIMPORT_WORKERS_MAX = 8
 UNIFIED_IMPORT_LAST_FOLDER_KEY = "unified_import_last_folder"
 UNIFIED_IMPORT_DIALOG_STATE_KEY = "unified_import_dialog_state"
 # Default model pro kazdeho providera; pouzije se, kdyz uzivatel nechal pole prazdne.
+# Ollama: `llama3.1:8b` je overeny na extrakci nazvu/autora z textu knihy
+# (drivejsi `llama3` byl obecny tag, ktery uzivatel nemusi mit stazeny).
 AI_PROVIDER_DEFAULT_MODELS = {
-    "off": "llama3",
-    "ollama": "llama3",
+    "off": "llama3.1:8b",
+    "ollama": "llama3.1:8b",
     "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o",
 }
