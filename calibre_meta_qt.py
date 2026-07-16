@@ -1219,6 +1219,7 @@ if PYSIDE6_AVAILABLE:
             *,
             write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
             post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
+            prepare_backup: Callable[[bool], Path | None] | None = None,
         ) -> None:
             super().__init__(parent)
             self.items = list(items)
@@ -1226,6 +1227,11 @@ if PYSIDE6_AVAILABLE:
             self.post_write_refresh = post_write_refresh or getattr(
                 parent,
                 "_refresh_after_multiimport_write",
+                None,
+            )
+            self.prepare_backup = prepare_backup or getattr(
+                parent,
+                "prepare_multiimport_backup",
                 None,
             )
             self.setWindowTitle("Vysledky multiimport analyzy")
@@ -1346,6 +1352,12 @@ if PYSIDE6_AVAILABLE:
             body.addLayout(right_panel, stretch=2)
 
             buttons = QHBoxLayout()
+            self.backup_check = QCheckBox("Zálohovat databázi před importem")
+            self.backup_check.setChecked(True)
+            self.backup_check.setToolTip(
+                "Před začátkem importu vytvoří jednu kopii metadata.db do složky backups."
+            )
+            buttons.addWidget(self.backup_check)
             buttons.addStretch(1)
             self.validate_button = QPushButton("Ověřit výběr")
             self.validate_button.clicked.connect(self.validate_selection)
@@ -1515,6 +1527,19 @@ if PYSIDE6_AVAILABLE:
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
+
+            # Jedna zaloha metadata.db pred celou davkou. Kdyz ji uzivatel chce a
+            # nepovede se, import radeji vubec nespoustime.
+            if self.prepare_backup is not None:
+                try:
+                    self.prepare_backup(self.backup_check.isChecked())
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self,
+                        "Záloha databáze",
+                        f"Zálohu se nepodařilo vytvořit, import zrušen:\n{exc}",
+                    )
+                    return
 
             progress = MultiImportProgressDialog(len(validation.valid_items), self)
             progress.prepare(len(validation.valid_items))
@@ -2128,6 +2153,10 @@ if PYSIDE6_AVAILABLE:
             self.worker_running = False
             self.csv_loaded = False
             self.calibre_running = False
+            # Zaloha pripravena pro aktualni davku multiimportu (viz
+            # prepare_multiimport_backup); None = zalohovat nechce uzivatel.
+            self._multiimport_backup_ready = False
+            self._multiimport_backup_path: Path | None = None
             self.bridge = WorkerBridge()
             self.bridge.finished.connect(self.finish_background)
             self.bridge.cover_ready.connect(self.finish_cover_preview)
@@ -3322,6 +3351,19 @@ if PYSIDE6_AVAILABLE:
             files = cme.collect_import_files_from_folder(Path(folder))
             self.run_multiimport_analysis(files)
 
+        def prepare_multiimport_backup(self, enabled: bool) -> Path | None:
+            """Vytvori jednu zalohu metadata.db pred celou davkou multiimportu.
+
+            Volat pred zapisem davky. Nasledne `_write_multiimport_item` uz
+            zadnou dalsi zalohu nedela - jinak by se DB kopirovala u kazde knihy.
+            Kdyz je `enabled` False, nezalohuje se vubec.
+            """
+            self._multiimport_backup_ready = True
+            self._multiimport_backup_path = (
+                cme.create_backup(self.library_path, Path("backups")) if enabled else None
+            )
+            return self._multiimport_backup_path
+
         def _write_multiimport_item(
             self,
             preview: cme.ImportPreview,
@@ -3334,6 +3376,12 @@ if PYSIDE6_AVAILABLE:
                     status="failed",
                     error="Nepodařilo se najít calibredb.",
                 )
+            # Kdyz uz je zaloha davky pripravena, podstrcime ji misto dalsiho
+            # kopirovani. Bez pripravy zustava puvodni chovani (zaloha na knihu).
+            backup_func = None
+            if getattr(self, "_multiimport_backup_ready", False):
+                batch_backup = self._multiimport_backup_path
+                backup_func = lambda _library, _backups_dir: batch_backup or Path("")
             return cme.apply_import_preview(
                 preview,
                 source_path,
@@ -3342,6 +3390,7 @@ if PYSIDE6_AVAILABLE:
                 quit_func=lambda force: shared.quit_calibre(allow_force=force),
                 allow_force=True,
                 matches_path=self.matches_path,
+                backup_func=backup_func,
             )
 
         def _refresh_after_multiimport_write(
