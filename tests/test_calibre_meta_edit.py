@@ -6134,6 +6134,90 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].selected_cover_url, legie_cover)
         self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
 
+    def test_audit_cover_rows_flags_review_when_opposite_source_fails(self):
+        # Legie zdroj spadne, DK vrati jednu obalku. Drive se to tise ulozilo jako
+        # single-cover-candidate/skip a uzivatel nevedel, ze Legie chybi. Nove: review
+        # + cover-partial-error, aby to slo videt.
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+        row = cme.MatchRow(
+            1, "Kniha", "Autor", "skip",
+            databaze_url, databaze_url + "|" + legie_url,
+            "manual", "manual",
+        )
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                raise OSError("connection refused legie")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, "https://cdn.example/dk-cover.jpg")
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
+
+    def test_audit_cover_rows_flags_review_when_databaze_editions_fail(self):
+        # DK detail vrati obalku, stranka dalsich vydani spadne. Drive tise pass.
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        row = cme.MatchRow(
+            1, "Kniha", "Autor", "skip",
+            databaze_url, "",
+            "manual", "manual",
+        )
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                raise OSError("timeout na dalsi-vydani")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, "https://cdn.example/dk-cover.jpg")
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
+
+    def test_audit_cover_rows_flags_review_when_legie_editions_fail(self):
+        # Legie detail vrati obalku, stranka vydani spadne. Drive tise pass.
+        legie_url = "https://www.legie.info/kniha/2-book"
+        legie_cover = "https://www.legie.info/images/kniha-small/2/2-cover.jpg"
+        row = cme.MatchRow(
+            5, "Kniha", "Autor", "skip",
+            legie_url, "",
+            "manual", "manual", "legie", "kniha",
+        )
+
+        def fetcher(url):
+            if url == legie_url:
+                return f'<div id="pro_obal"><img src="{legie_cover}" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                raise OSError("connection reset legie vydani")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {5: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, legie_cover)
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
+
     def test_audit_cover_rows_preserves_selected_databaze_alias_after_normalization(self):
         databaze_url = "https://www.databazeknih.cz/knihy/book-12111"
         legie_url = "https://www.legie.info/kniha/2-book"

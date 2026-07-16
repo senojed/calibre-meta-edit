@@ -4814,7 +4814,23 @@ def cover_candidate_rows(
     ]
 
 
-def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None) -> list[CoverOption]:
+def _note_cover_error(errors: list[str] | None, url: str, exc: Exception) -> None:
+    """Zaznamena selhani jednoho zdroje obalek, kdyz volajici chce chyby sledovat.
+
+    Drive se tato selhani tise ignorovala (`except: pass`), takze pri vypadku site
+    obalky zmizely bez stopy. Kdyz volajici preda seznam `errors`, poznamename sem
+    duvod - audit z toho udela viditelny review misto tiche skip.
+    """
+    if errors is not None:
+        errors.append(f"{url}: {exc}")
+
+
+def cover_options_for_url(
+    url: str,
+    fetcher: Callable[[str], str] | None = None,
+    *,
+    errors: list[str] | None = None,
+) -> list[CoverOption]:
     """Stahne detail podporovaneho zdroje a vrati kandidatni obalky."""
     fetch = fetcher or fetch_text
     if is_valid_legie_book_url(url):
@@ -4828,8 +4844,8 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         if editions_url:
             try:
                 options.extend(parse_legie_edition_cover_options(fetch(editions_url)))
-            except Exception:
-                pass
+            except Exception as exc:
+                _note_cover_error(errors, editions_url, exc)
         return _renumber_legie_edition_labels(_dedupe_legie_cover_options(options))
     if is_valid_legie_story_url(url):
         return parse_legie_cover_options(fetch(legie_absolute_url(url)))
@@ -4854,8 +4870,8 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         ):
             try:
                 options.extend(parse_databaze_edition_cover_options(fetch(editions_url)))
-            except Exception:
-                pass
+            except Exception as exc:
+                _note_cover_error(errors, editions_url, exc)
         return _dedupe_databaze_cover_options(options)
     return []
 
@@ -4863,15 +4879,20 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
 def cover_options_for_urls(
     source_urls: Sequence[str],
     fetcher: Callable[[str], str] | None = None,
+    *,
+    errors: list[str] | None = None,
 ) -> list[CoverOption]:
     """Spoji hotove source-specific obalky v poradi zdroju a odstrani duplicity."""
     options: list[CoverOption] = []
     for index, source_url in enumerate(source_urls):
         try:
-            options.extend(cover_options_for_url(source_url, fetcher))
-        except Exception:
+            options.extend(cover_options_for_url(source_url, fetcher, errors=errors))
+        except Exception as exc:
+            # Primarni zdroj (index 0) necháme propadnout - audit z nej udela
+            # cover-fetch-error. Druhy+ zdroj drive zmizel tise; ted ho zaznamename.
             if index == 0:
                 raise
+            _note_cover_error(errors, source_url, exc)
     return _dedupe_cover_options(options)
 
 
@@ -4968,8 +4989,11 @@ def audit_cover_rows(
         ):
             updated.append(row)
             continue
+        errors: list[str] = []
         try:
-            options = cover_options_for_urls(_cover_source_urls_for_row(row), fetcher)
+            options = cover_options_for_urls(
+                _cover_source_urls_for_row(row), fetcher, errors=errors
+            )
         except Exception:
             updated.append(with_cover_fields(row, "", "", "cover-fetch-error"))
             continue
@@ -4978,6 +5002,19 @@ def audit_cover_rows(
             continue
         urls_text = _cover_urls_text(options)
         preserved_selection = _preserved_selected_cover_url(row.selected_cover_url, options)
+        if errors:
+            # Cast zdroju selhala, ale neco se naslo. Nedavej to tise do skip -
+            # oznac review, at uzivatel vidi, ze nabidka obalek muze byt neuplna.
+            updated.append(
+                with_cover_fields(
+                    row,
+                    urls_text,
+                    preserved_selection,
+                    "cover-partial-error",
+                    status="review",
+                )
+            )
+            continue
         if len(options) == 1:
             updated.append(
                 with_cover_fields(

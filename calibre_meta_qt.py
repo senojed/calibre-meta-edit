@@ -3024,6 +3024,8 @@ if PYSIDE6_AVAILABLE:
             preview_url = selected_url or cover_urls[0]
             if row.cover_reason == "cover-overwrite-declined":
                 status = "Kandidatni obalky - prepsani odmitnuto"
+            elif row.cover_reason == "cover-partial-error":
+                status = "Nektery zdroj obalek selhal - nabidka muze byt neuplna"
             elif selected_url:
                 status = "Vybrana kandidatni obalka"
             elif row.status == "skip":
