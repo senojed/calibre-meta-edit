@@ -1397,7 +1397,10 @@ if PYSIDE6_AVAILABLE:
             right_panel = QVBoxLayout()
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
-            right_panel.addWidget(self.detail_text, stretch=2)
+            # Detail ma par radku pevneho textu, kandidatu byvaji desitky a scrolluje se
+            # v nich. Stejny stretch je rozdeli napul misto drivejsiho pomeru 2:1, kde
+            # detail zabiral vetsinu vysky prazdnym mistem.
+            right_panel.addWidget(self.detail_text, stretch=1)
 
             right_panel.addWidget(QLabel("Nalezení kandidáti (ruční výběr):"))
             self.candidates_list = QListWidget()
