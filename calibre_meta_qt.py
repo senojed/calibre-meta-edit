@@ -22,6 +22,10 @@ import calibre_meta_edit as cme
 
 APP_DIR = Path(__file__).resolve().parent
 APP_VERSION = "0.4.7"
+# Kolik knih se pri multiimportu analyzuje soubezne. Analyza ceka skoro jen na
+# sit, takze soubeh vyrazne zkracuje celkovy cas. Drzime nizko: kandidati se
+# tahaji z databazeknih a nechceme jim delat zatez.
+MULTIIMPORT_ANALYSIS_WORKERS = 5
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -3457,6 +3461,7 @@ if PYSIDE6_AVAILABLE:
                             lambda path: analyze_book(str(path)),
                             precheck_safe_matches=False,
                             progress_callback=update_progress,
+                            max_workers=MULTIIMPORT_ANALYSIS_WORKERS,
                         )
                     )
                 except BaseException as exc:
