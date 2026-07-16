@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.7"
+APP_VERSION = "0.4.8"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -3467,7 +3467,36 @@ if PYSIDE6_AVAILABLE:
                 "ebook_meta_path": cme.find_ebook_tool("ebook-meta") or "ebook-meta",
                 "ebook_convert_path": cme.find_ebook_tool("ebook-convert") or "ebook-convert",
             }
+            # Resolver drzime, abychom po davce poznali, jestli AI selhavala.
+            # Sam o sobe ustupuje tise a uzivatel by se to jinak nedozvedel.
+            self._last_ai_resolver = resolver
             return lambda epub: run_import_analysis(epub, library, settings, ai_resolver=resolver)
+
+        def ai_failure_reason(self) -> str:
+            """Duvod, proc AI vrstva pri posledni analyze selhavala (jinak prazdny)."""
+            resolver = getattr(self, "_last_ai_resolver", None)
+            return str(getattr(resolver, "last_error", "") or "")
+
+        def warn_about_ai_failure(self) -> bool:
+            """Rekne uzivateli, ze AI vrstva neběžela a proč. Vraci True kdyz varovala.
+
+            Bez tohohle se na mrtvou AI (dosly kredit, vypnuta Ollama) prijde jen
+            tak, ze je detekce zahadne horsi.
+            """
+            reason = self.ai_failure_reason()
+            if not reason:
+                return False
+            QMessageBox.warning(
+                self,
+                "AI vrstva selhala",
+                "Analýza proběhla, ale AI se nepodařilo použít, takže detekce "
+                "názvu a autora je méně přesná.\n\n"
+                f"Důvod: {reason}\n\n"
+                "Zkontrolujte poskytovatele a klíč v Preferences (u cloudu bývá "
+                "na vině vyčerpaný kredit, u Ollamy vypnutý server nebo "
+                "nestažený model).",
+            )
+            return True
 
         def _choose_epub_file(self) -> str:
             path, _filter = QFileDialog.getOpenFileName(
@@ -3622,6 +3651,7 @@ if PYSIDE6_AVAILABLE:
             if errors:
                 raise errors[0]
             analyzed_items = analyzed[0] if analyzed else items
+            self.warn_about_ai_failure()
             MultiImportResultsDialog(analyzed_items, parent=self).exec()
             return analyzed_items
 

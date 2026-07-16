@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import calibre_meta_edit as cme
@@ -23,8 +24,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.7")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.7")
+        self.assertEqual(qt.APP_VERSION, "0.4.8")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.8")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -615,7 +616,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.7")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.8")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -4033,6 +4034,83 @@ class QtImportWiringTests(unittest.TestCase):
 
         self.assertFalse(window.online)
         self.assertTrue(window.online_indicator.text().endswith("Offline"))
+        app.processEvents()
+
+    def test_warn_about_ai_failure_shows_reason(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window._last_ai_resolver = SimpleNamespace(
+            last_error="HTTP 400: Your credit balance is too low"
+        )
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            warned = window.warn_about_ai_failure()
+
+        self.assertTrue(warned)
+        warning.assert_called_once()
+        self.assertIn("credit balance is too low", warning.call_args.args[2])
+        app.processEvents()
+
+    def test_warn_about_ai_failure_silent_when_ai_worked(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window._last_ai_resolver = SimpleNamespace(last_error="")
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            warned = window.warn_about_ai_failure()
+
+        self.assertFalse(warned)
+        warning.assert_not_called()
+        app.processEvents()
+
+    def test_warn_about_ai_failure_silent_without_resolver(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            self.assertFalse(window.warn_about_ai_failure())
+
+        warning.assert_not_called()
+        app.processEvents()
+
+    def test_multiimport_analysis_warns_when_ai_failed(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window._last_ai_resolver = SimpleNamespace(last_error="Ollama nebezi")
+
+        with (
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(cme, "run_multiimport_batch_analysis", return_value=[]),
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            scheduled = []
+            progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
+            progress_dialog.return_value.exec.side_effect = lambda: scheduled.pop(0)()
+            window.run_multiimport_analysis(
+                [Path("C:/books/a.epub")],
+                analyze=lambda _path: None,
+                connectivity_check=lambda: True,
+            )
+
+        warning.assert_called_once()
+        self.assertIn("Ollama nebezi", warning.call_args.args[2])
         app.processEvents()
 
     def test_multiimport_analysis_uses_worker_count_from_settings(self):

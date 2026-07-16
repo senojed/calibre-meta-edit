@@ -2801,6 +2801,88 @@ class ImportEpubParsingTests(unittest.TestCase):
 
         self.assertEqual(calls, ["resolve"])
 
+    def test_post_json_includes_http_error_body_in_exception(self):
+        # Bez tela odpovedi je hlaska jen "HTTP Error 400: Bad Request" a skutecny
+        # duvod (dosly kredit) se ztrati - presne tohle drzelo uzivatele v nevedomi.
+        import io as _io
+        import urllib.error
+        from unittest.mock import patch
+
+        body = b'{"error":{"message":"Your credit balance is too low"}}'
+        failure = urllib.error.HTTPError(
+            "https://api.example/v1", 400, "Bad Request", {}, _io.BytesIO(body)
+        )
+
+        with patch.object(cme.urllib.request, "urlopen", side_effect=failure):
+            with self.assertRaises(Exception) as caught:
+                cme.post_json_with_error_detail("https://api.example/v1", b"{}", {}, 10)
+
+        self.assertIn("400", str(caught.exception))
+        self.assertIn("credit balance is too low", str(caught.exception))
+
+    def test_post_json_reraises_when_error_body_is_empty(self):
+        import io as _io
+        import urllib.error
+        from unittest.mock import patch
+
+        failure = urllib.error.HTTPError(
+            "https://api.example/v1", 500, "Server Error", {}, _io.BytesIO(b"")
+        )
+
+        with patch.object(cme.urllib.request, "urlopen", side_effect=failure):
+            with self.assertRaises(urllib.error.HTTPError):
+                cme.post_json_with_error_detail("https://api.example/v1", b"{}", {}, 10)
+
+    def test_cloud_resolver_records_last_error_on_failure(self):
+        class BoomResolver(cme.AnthropicAIResolver):
+            pass
+
+        resolver = BoomResolver(
+            api_key="k",
+            requester=lambda _url, _payload, _headers: (_ for _ in ()).throw(
+                RuntimeError("HTTP 400: credit balance too low")
+            ),
+        )
+
+        identity = resolver.extract("nejaky text")
+
+        self.assertEqual(identity.title, "")
+        self.assertIn("credit balance too low", resolver.last_error)
+
+    def test_cloud_resolver_records_missing_key_as_last_error(self):
+        resolver = cme.AnthropicAIResolver(api_key="")
+
+        resolver.extract("nejaky text")
+
+        self.assertIn("API klíč", resolver.last_error)
+
+    def test_cloud_resolver_clears_last_error_after_success(self):
+        payload = json.dumps({"content": [{"type": "text", "text": '{"title":"T","author":"A","confidence":90}'}]})
+        resolver = cme.AnthropicAIResolver(
+            api_key="k", requester=lambda _url, _payload, _headers: payload
+        )
+        resolver.last_error = "stara chyba"
+
+        identity = resolver.extract("text")
+
+        self.assertEqual(identity.title, "T")
+        self.assertEqual(resolver.last_error, "")
+
+    def test_ollama_resolver_records_last_error_on_failure(self):
+        resolver = cme.OllamaAIResolver(
+            requester=lambda _url, _payload, _headers: (_ for _ in ()).throw(
+                OSError("server nebezi")
+            )
+        )
+
+        resolver.extract("text")
+
+        self.assertIn("server nebezi", resolver.last_error)
+
+    def test_disabled_resolver_has_no_error(self):
+        # Vypnuta AI neni chyba - UI nesmi varovat.
+        self.assertEqual(cme.DisabledAIResolver().last_error, "")
+
     def test_ollama_ai_resolver_returns_none_on_malformed_response(self):
         # Ollama vrati nevalidni JSON nebo vnitrni "response" neni platny JSON.
         # resolve() musi chybu spolknout a vratit None bez vyjimky.
