@@ -1105,7 +1105,12 @@ def select_multiimport_candidate(
 
 
 class DisabledAIResolver:
-    """Vypnuta AI vrstva: nikdy nevybira kandidata."""
+    """Vypnuta AI vrstva: nikdy nevybira kandidata.
+
+    `last_error` zustava prazdny: vypnuta AI neni chyba, jen volba uzivatele.
+    """
+
+    last_error = ""
 
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
         return None
@@ -1127,8 +1132,39 @@ def _extract_json_object(raw: str) -> str:
     return raw
 
 
+def post_json_with_error_detail(
+    url: str,
+    payload: bytes,
+    headers: dict[str, str],
+    timeout: int,
+) -> str:
+    """POST na AI endpoint; pri HTTP chybe prilepi telo odpovedi do vyjimky.
+
+    Bez tela je hlaska jen "HTTP Error 400: Bad Request" a skutecny duvod se
+    ztrati - napr. "Your credit balance is too low" u Anthropicu nebo
+    "insufficient_quota" u OpenAI. Prave tohle drzelo uzivatele v nevedomi, ze
+    mu AI vrstva vubec nebezi.
+    """
+    request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            detail = ""
+        if not detail:
+            raise
+        raise RuntimeError(f"HTTP {exc.code}: {detail[:400]}") from exc
+
+
 class OllamaAIResolver:
-    """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi."""
+    """Volitelna lokalni AI vrstva pres Ollama; pri chybe tise ustoupi.
+
+    `last_error` drzi duvod posledniho selhani, aby ho UI mohlo ukazat -
+    tichy ustup jinak schova i "server nebezi" nebo "model neexistuje".
+    """
 
     def __init__(
         self,
@@ -1141,11 +1177,10 @@ class OllamaAIResolver:
         # Vyssi default kvuli cold startu: prvni dotaz nacita model do pameti,
         # u vetsich modelu (14B) to klidne presahne 20 s.
         self.timeout = timeout
+        self.last_error = ""
 
     def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
-        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return response.read().decode("utf-8", errors="replace")
+        return post_json_with_error_detail(url, payload, headers, self.timeout)
 
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
         compact_candidates = [
@@ -1179,7 +1214,9 @@ class OllamaAIResolver:
                 confidence=int(answer.get("confidence", 0) or 0),
                 reason=str(answer.get("reason", "")),
             )
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("AI vyber kandidata selhal: %s", self.last_error)
             return None
 
     def extract(self, text: str) -> AIBookIdentity:
@@ -1206,9 +1243,11 @@ class OllamaAIResolver:
                 "AI extrakce vysledek: nazev=%r autor=%r confidence=%d",
                 identity.title, identity.author, identity.confidence,
             )
+            self.last_error = ""
             return identity
         except Exception as exc:
-            logger.warning("AI extrakce selhala: %s", exc)
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("AI extrakce selhala: %s", self.last_error)
             return AIBookIdentity()
 
 
@@ -1236,11 +1275,10 @@ class _CloudAIResolver:
         self.api_key = (api_key or "").strip()
         self.requester = requester or self._request
         self.timeout = timeout
+        self.last_error = ""
 
     def _request(self, url: str, payload: bytes, headers: dict[str, str]) -> str:
-        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return response.read().decode("utf-8", errors="replace")
+        return post_json_with_error_detail(url, payload, headers, self.timeout)
 
     def _complete(self, prompt: dict) -> str:
         """Podtrida: posle prompt na cloud a vrati cisty text odpovedi modelu."""
@@ -1249,7 +1287,8 @@ class _CloudAIResolver:
     def extract(self, text: str) -> AIBookIdentity:
         """Z textu zacatku knihy vytahne nazev a autora. Pri chybe/bez klice prazdny."""
         if not self.api_key:
-            logger.warning("AI extrakce preskocena: chybi API klic pro %s", type(self).__name__)
+            self.last_error = f"Chybí API klíč pro {type(self).__name__}."
+            logger.warning("AI extrakce preskocena: %s", self.last_error)
             return AIBookIdentity()
         prompt = {
             "task": "Extract the real book title and author from this book opening text. The real title and author usually appear near the top, before any filename-derived noise. Keep the title in the SAME LANGUAGE as the text - do NOT translate it and do NOT replace a translated work's title with its original-language title. Only fix garbling, OCR errors, and capitalization, using the author's bibliography to recognize the correct spelling of that same title. Return JSON only: {\"title\":\"...\",\"author\":\"...\",\"confidence\":0-100}.",
@@ -1267,9 +1306,11 @@ class _CloudAIResolver:
                 "AI extrakce vysledek: nazev=%r autor=%r confidence=%d",
                 identity.title, identity.author, identity.confidence,
             )
+            self.last_error = ""
             return identity
         except Exception as exc:
-            logger.warning("AI extrakce selhala: %s", exc)
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("AI extrakce selhala: %s", self.last_error)
             return AIBookIdentity()
 
     def resolve(self, signals: Sequence[ImportSourceSignal], candidates: Sequence[ImportCandidate]) -> AIImportChoice | None:
@@ -1300,7 +1341,9 @@ class _CloudAIResolver:
                 confidence=int(answer.get("confidence", 0) or 0),
                 reason=str(answer.get("reason", "")),
             )
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("AI vyber kandidata selhal: %s", self.last_error)
             return None
 
 
