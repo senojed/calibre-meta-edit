@@ -259,6 +259,72 @@ class TextAndUrlTests(unittest.TestCase):
         self.assertEqual(item.current_preview.url, "https://dk/9")
         self.assertEqual(item.current_preview.title, "Jiny nazev")
 
+    def test_select_multiimport_candidate_rechecks_duplicates_for_new_link(self):
+        # Puvodni duplicity patri driv vybranemu kandidatu. Po rucni zmene odkazu
+        # se musi prepocitat, jinak by se duplicita zjistila az pri zapisu.
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+        duplicate = cme.DuplicateCandidate(616, "Kniha", "Autor", score=100, strong=True)
+        chosen = cme.ImportCandidate(
+            "databazeknih", "Kniha", "Autor", "https://dk/spravny", score=49
+        )
+        seen = []
+
+        def duplicate_finder(preview):
+            seen.append(preview.url)
+            return [duplicate]
+
+        cme.select_multiimport_candidate(item, chosen, duplicate_finder)
+
+        self.assertEqual(seen, ["https://dk/spravny"])
+        self.assertEqual(item.duplicates, [duplicate])
+        self.assertEqual(item.status, "duplicate_warning")
+        # Duplicita blokuje zapis i kdyz uzivatel potvrdil rucne.
+        item.checked_for_import = True
+        result = cme.validate_multiimport_checked_items([item])
+        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
+
+    def test_select_multiimport_candidate_clears_stale_duplicates(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "duplicate_warning"
+        item.duplicates = [cme.DuplicateCandidate(1, "Stara", "Autor", strong=True)]
+        chosen = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/jiny", score=60)
+
+        cme.select_multiimport_candidate(item, chosen, lambda _preview: [])
+
+        self.assertEqual(item.duplicates, [])
+        self.assertEqual(item.status, "needs_review")
+        item.checked_for_import = True
+        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
+
+    def test_select_multiimport_candidate_survives_duplicate_finder_error(self):
+        item = self._valid_checked_multiimport_item()
+        item.status = "needs_review"
+        chosen = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/x", score=60)
+
+        def boom(_preview):
+            raise OSError("db locked")
+
+        cme.select_multiimport_candidate(item, chosen, boom)
+
+        self.assertEqual(item.duplicates, [])
+        self.assertTrue(item.manually_confirmed)
+
+    def test_run_multiimport_batch_write_keeps_failure_reason_in_write_result(self):
+        # Duvod NESMI jit do error_message: validace podle nej polozku blokuje
+        # jako chybu analyzy a opakovany pokus o import by neprosel.
+        item = self._valid_checked_multiimport_item()
+
+        summary = cme.run_multiimport_batch_write(
+            [item],
+            lambda _preview, _path: cme.ImportApplyResult(0, "failed", "strong-duplicate"),
+        )
+
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(item.status, "write_error")
+        self.assertEqual(item.write_result.error, "strong-duplicate")
+        self.assertEqual(item.error_message, "")
+
     def test_select_multiimport_candidate_ignores_analysis_error_item(self):
         item = self._valid_checked_multiimport_item()
         item.status = "analysis_error"
