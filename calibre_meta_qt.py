@@ -48,7 +48,18 @@ AUTO_SETTING_DEFAULTS = {
     "auto_link_audit": True,
     "auto_cover_audit": True,
 }
-AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120}
+AI_SETTING_DEFAULTS = {
+    "provider": "off",
+    "model": "llama3",
+    "text_limit": 5000,
+    "timeout": 120,
+    # Kolik knih se pri multiimportu analyzuje soubezne. 5 je zmerene optimum
+    # pro cloud (4.0x) i pro Ollamu (3.13x). Drzime strop nizko: kandidati se
+    # tahaji z databazeknih a nechceme jim delat zatez.
+    "workers": 5,
+}
+MULTIIMPORT_WORKERS_MIN = 1
+MULTIIMPORT_WORKERS_MAX = 8
 UNIFIED_IMPORT_LAST_FOLDER_KEY = "unified_import_last_folder"
 UNIFIED_IMPORT_DIALOG_STATE_KEY = "unified_import_dialog_state"
 # Default model pro kazdeho providera; pouzije se, kdyz uzivatel nechal pole prazdne.
@@ -189,6 +200,44 @@ def multiimport_item_matches_filter(
     return True
 
 
+def multiimport_write_error_label(error: str) -> str:
+    """Prelozi znamy kod chyby zapisu do lidske vety; neznamy vrati jak je."""
+    labels = {
+        "strong-duplicate": "Kniha už v Calibre je (silná duplicita).",
+        "strong-duplicate-after-close": (
+            "Kniha už v Calibre je (duplicita zjištěná po zavření Calibre)."
+        ),
+        "missing-title-or-author": "Chybí název nebo autor.",
+        "quit-calibre-failed": "Nepodařilo se zavřít Calibre.",
+        "new-book-id-not-unique": "Nepodařilo se určit ID nově přidané knihy.",
+        "write-failed": "Zápis selhal.",
+    }
+    return labels.get(error.strip(), error.strip())
+
+
+def multiimport_write_error_text(item: cme.MultiImportBatchItem) -> str:
+    """Lidsky duvod, proc u polozky selhal zapis (prazdny, kdyz zadny neni).
+
+    Duvod bereme z `write_result`, ne z `error_message`: to je vyhrazene chybam
+    analyzy a validace podle nej polozku blokuje.
+    """
+    if item.status != "write_error" or item.write_result is None:
+        return ""
+    return multiimport_write_error_label(item.write_result.error or item.write_result.status)
+
+
+def multiimport_write_failures_text(items: Sequence[cme.MultiImportBatchItem]) -> str:
+    """Vypis knih, u kterych zapis selhal, i s duvodem."""
+    failed = [item for item in items if item.status == "write_error"]
+    if not failed:
+        return ""
+    lines = ["", "Nepodařilo se naimportovat:"]
+    for item in failed:
+        reason = multiimport_write_error_text(item)
+        lines.append(f"- {item.display_name}: {reason}" if reason else f"- {item.display_name}")
+    return "\n".join(lines)
+
+
 def multiimport_validation_reason_label(reason: str) -> str:
     labels = {
         "no_checked_items": "Není vybraná žádná položka.",
@@ -198,7 +247,7 @@ def multiimport_validation_reason_label(reason: str) -> str:
         "missing_candidate": "Chybí vybraný kandidát.",
         "duplicate_warning": "Položka má varování na duplicitu.",
         "analysis_error": "Položka má chybu analýzy.",
-        "invalid_preview": "Náhled importu není validní.",
+        "invalid_preview": "Náhled importu není validní: chybí název nebo autor.",
         "candidate_score_below_100": "Doporučený kandidát nemá 100% shodu.",
         "missing_preview_url": "Náhled nemá zdrojový odkaz.",
         "missing_candidate_url": "Doporučený kandidát nemá odkaz.",
@@ -267,7 +316,9 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
                 f"{candidate.source}: {candidate.url}",
             )
         )
-    if item.status == "needs_review" and item.analysis is not None:
+    # Precheck popisuje puvodni automatickou analyzu. Po rucnim potvrzeni uz
+    # neplati (napr. "chybi kandidat", kdyz si ho uzivatel prave vybral).
+    if item.status == "needs_review" and item.analysis is not None and not item.manually_confirmed:
         issues = cme.multiimport_precheck_issues(item.analysis)
         if issues:
             lines.extend(("", "Důvod kontroly:"))
@@ -296,6 +347,9 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
         lines.append(f"ID {duplicate.book_id}: {duplicate.title} / {duplicate.authors} / {duplicate.score}%")
     if item.error_message:
         lines.extend(("", f"Chyba: {item.error_message}"))
+    write_error = multiimport_write_error_text(item)
+    if write_error:
+        lines.extend(("", f"Import selhal: {write_error}"))
     return "\n".join(lines)
 
 
@@ -547,11 +601,16 @@ def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
         timeout = int(ai_raw.get("timeout", AI_SETTING_DEFAULTS["timeout"]))
     except (TypeError, ValueError):
         timeout = int(AI_SETTING_DEFAULTS["timeout"])
+    try:
+        workers = int(ai_raw.get("workers", AI_SETTING_DEFAULTS["workers"]))
+    except (TypeError, ValueError):
+        workers = int(AI_SETTING_DEFAULTS["workers"])
     return {
         "provider": provider,
         "model": model,
         "text_limit": max(500, min(text_limit, 50000)),
         "timeout": max(10, min(timeout, 600)),
+        "workers": max(MULTIIMPORT_WORKERS_MIN, min(workers, MULTIIMPORT_WORKERS_MAX)),
     }
 
 
@@ -772,6 +831,7 @@ if PYSIDE6_AVAILABLE:
         QStyleFactory,
         QPushButton,
         QSizePolicy,
+        QSpinBox,
         QSplitter,
         QStatusBar,
         QStyle,
@@ -1221,6 +1281,8 @@ if PYSIDE6_AVAILABLE:
             post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
             prepare_backup: Callable[[bool], Path | None] | None = None,
             connectivity_check: Callable[[], bool] | None = None,
+            duplicate_finder: Callable[[cme.ImportPreview], list[cme.DuplicateCandidate]] | None = None,
+            link_data_func: Callable[[str], tuple[str, str, str, cme.BookDetailMetadata]] | None = None,
         ) -> None:
             super().__init__(parent)
             self.items = list(items)
@@ -1240,6 +1302,12 @@ if PYSIDE6_AVAILABLE:
                 "is_online_now",
                 None,
             )
+            self.duplicate_finder = duplicate_finder or getattr(
+                parent,
+                "_find_import_duplicates",
+                None,
+            )
+            self.link_data_func = link_data_func or (lambda url: cme.fetch_import_link_data(url))
             self.setWindowTitle("Vysledky multiimport analyzy")
             self.resize(900, 600)
 
@@ -1619,7 +1687,8 @@ if PYSIDE6_AVAILABLE:
                 f"{outcome}\n\n"
                 f"Pokusů: {summary.attempted}\n"
                 f"Úspěšně: {summary.succeeded}\n"
-                f"Selhalo: {summary.failed}",
+                f"Selhalo: {summary.failed}"
+                f"{multiimport_write_failures_text(self.items)}",
             )
             self.update_import_button_enabled()
             if summary.ok and summary.attempted > 0:
@@ -1693,7 +1762,7 @@ if PYSIDE6_AVAILABLE:
             candidate = self.selected_list_candidate()
             if item is None or candidate is None:
                 return
-            cme.select_multiimport_candidate(item, candidate)
+            cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
             if item.manually_confirmed:
                 item.checked_for_import = True
             self.refresh_item_row(item)
@@ -1713,8 +1782,34 @@ if PYSIDE6_AVAILABLE:
             if not url:
                 QMessageBox.information(self, "Vlastní odkaz", "Zadejte URL odkazu.")
                 return
-            candidate = cme.build_manual_import_candidate(url, item)
-            cme.select_multiimport_candidate(item, candidate)
+            # Z odkazu stahneme nazev a autora (jako "Pouzit odkaz" u single
+            # importu). Bez toho by u knihy, kde analyza autora nenasla, zustal
+            # nahled nevalidni a import by se zablokoval.
+            self.use_manual_url_button.setEnabled(False)
+            self.use_manual_url_button.setText("Načítám...")
+            QApplication.processEvents()
+            try:
+                title, authors, written_url, detail = self.link_data_func(url)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Použít odkaz",
+                    f"Odkaz se nepodařilo načíst:\n{exc}",
+                )
+                return
+            finally:
+                self.use_manual_url_button.setEnabled(True)
+                self.use_manual_url_button.setText("Použít odkaz")
+            target_url = (written_url or url).strip()
+            candidate = cme.build_manual_import_candidate(
+                target_url,
+                item,
+                title=title,
+                authors=authors,
+                source=cme.source_and_work_type_for_url(target_url)[0],
+                detail=detail,
+            )
+            cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
             if item.manually_confirmed:
                 item.checked_for_import = True
             self.refresh_item_row(item)
@@ -2075,10 +2170,23 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(QLabel("AI timeout (s)"), 8, 0)
             self.ai_timeout_edit = QLineEdit(str(ai_settings["timeout"]))
             form.addWidget(self.ai_timeout_edit, 8, 1, 1, 3)
+            form.addWidget(QLabel("Knih naráz (multiimport)"), 9, 0)
+            self.ai_workers_spin = QSpinBox()
+            self.ai_workers_spin.setRange(MULTIIMPORT_WORKERS_MIN, MULTIIMPORT_WORKERS_MAX)
+            self.ai_workers_spin.setValue(int(ai_settings["workers"]))
+            self.ai_workers_spin.setToolTip(
+                "Kolik knih se při hromadném importu analyzuje současně.\n"
+                "5 je změřené optimum pro cloud i pro Ollamu.\n"
+                "Snižte při slabším počítači nebo pomalém připojení."
+            )
+            form.addWidget(self.ai_workers_spin, 9, 1)
+            workers_hint = QLabel("doporučeno 5")
+            workers_hint.setEnabled(False)
+            form.addWidget(workers_hint, 9, 2, 1, 2)
             # Status klice pro cloud providery: rekne jestli appka nasla API klic.
             self.ai_key_status_label = QLabel()
-            form.addWidget(QLabel("API klic"), 9, 0)
-            form.addWidget(self.ai_key_status_label, 9, 1, 1, 3)
+            form.addWidget(QLabel("API klic"), 10, 0)
+            form.addWidget(self.ai_key_status_label, 10, 1, 1, 3)
             # Signal az po nastaveni hodnot, jinak by init prepsal ulozeny model defaultem.
             self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_changed)
             self._update_ai_key_status()
@@ -2145,6 +2253,7 @@ if PYSIDE6_AVAILABLE:
                 "model": self.ai_model_edit.text(),
                 "text_limit": self.ai_text_limit_edit.text(),
                 "timeout": self.ai_timeout_edit.text(),
+                "workers": self.ai_workers_spin.value(),
             }
             settings["ai"] = normalize_ai_settings({"ai": ai_raw})
             shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -3386,6 +3495,13 @@ if PYSIDE6_AVAILABLE:
             files = cme.collect_import_files_from_folder(Path(folder))
             self.run_multiimport_analysis(files)
 
+        def _find_import_duplicates(
+            self,
+            preview: cme.ImportPreview,
+        ) -> list[cme.DuplicateCandidate]:
+            """Duplicity k nahledu v aktualni knihovne (lokalni ctení z DB)."""
+            return cme.find_calibre_import_duplicates(self.library_path, preview)
+
         def prepare_multiimport_backup(self, enabled: bool) -> Path | None:
             """Vytvori jednu zalohu metadata.db pred celou davkou multiimportu.
 
@@ -3488,6 +3604,9 @@ if PYSIDE6_AVAILABLE:
                             lambda path: analyze_book(str(path)),
                             precheck_safe_matches=False,
                             progress_callback=update_progress,
+                            max_workers=int(
+                                normalize_ai_settings(read_app_settings())["workers"]
+                            ),
                         )
                     )
                 except BaseException as exc:

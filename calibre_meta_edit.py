@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import html
 import json
@@ -579,38 +580,74 @@ def run_multiimport_batch_analysis(
     *,
     precheck_safe_matches: bool = False,
     progress_callback: Callable[[int, int, MultiImportBatchItem], None] | None = None,
+    max_workers: int = 1,
 ) -> list[MultiImportBatchItem]:
+    """Zanalyzuje davku knih.
+
+    `max_workers` > 1 pusti analyzy soubezne v poolu. Analyza ceka skoro jen na
+    sit, takze se cekani prekryva. Vysledky se do polozek zapisuji az tady, ve
+    volajicim vlakne, takze polozky ani `progress_callback` nikdo nesaha
+    soubezne. Poradi `batch` zustava zachovane, meni se jen poradi hlaseni
+    postupu (podle toho, co driv dobehne).
+    """
     batch = list(items)
     total = len(batch)
-    for index, item in enumerate(batch, start=1):
+
+    def start(item: MultiImportBatchItem) -> None:
         item.status = "analyzing"
         item.error_message = ""
         item.checked_for_import = False
         item.manually_confirmed = False
-        try:
-            analysis = analyze_one(item.source_path)
-        except Exception as exc:
-            item.analysis = None
-            item.current_preview = None
-            item.selected_candidate = None
-            item.duplicates = []
-            item.error_message = str(exc) or type(exc).__name__
-            item.status = "analysis_error"
+
+    def store_failure(item: MultiImportBatchItem, exc: BaseException) -> None:
+        item.analysis = None
+        item.current_preview = None
+        item.selected_candidate = None
+        item.duplicates = []
+        item.error_message = str(exc) or type(exc).__name__
+        item.status = "analysis_error"
+
+    def store_analysis(item: MultiImportBatchItem, analysis: ImportAnalysis) -> None:
+        item.analysis = analysis
+        item.current_preview = analysis.preview
+        item.selected_candidate = analysis.recommended
+        item.duplicates = list(analysis.duplicates)
+        safe_match = is_safe_multiimport_precheck(analysis)
+        if item.duplicates:
+            item.status = "duplicate_warning"
+        elif safe_match:
+            item.status = "ready"
         else:
-            item.analysis = analysis
-            item.current_preview = analysis.preview
-            item.selected_candidate = analysis.recommended
-            item.duplicates = list(analysis.duplicates)
-            safe_match = is_safe_multiimport_precheck(analysis)
-            if item.duplicates:
-                item.status = "duplicate_warning"
-            elif safe_match:
-                item.status = "ready"
+            item.status = "needs_review"
+        item.checked_for_import = precheck_safe_matches and safe_match
+
+    if max_workers <= 1 or total <= 1:
+        for index, item in enumerate(batch, start=1):
+            start(item)
+            try:
+                analysis = analyze_one(item.source_path)
+            except Exception as exc:
+                store_failure(item, exc)
             else:
-                item.status = "needs_review"
-            item.checked_for_import = precheck_safe_matches and safe_match
-        if progress_callback is not None:
-            progress_callback(index, total, item)
+                store_analysis(item, analysis)
+            if progress_callback is not None:
+                progress_callback(index, total, item)
+        return batch
+
+    for item in batch:
+        start(item)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pending = {pool.submit(analyze_one, item.source_path): item for item in batch}
+        for done, future in enumerate(concurrent.futures.as_completed(pending), start=1):
+            item = pending[future]
+            try:
+                analysis = future.result()
+            except Exception as exc:
+                store_failure(item, exc)
+            else:
+                store_analysis(item, analysis)
+            if progress_callback is not None:
+                progress_callback(done, total, item)
     return batch
 
 
@@ -1009,32 +1046,48 @@ def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: I
     )
 
 
-def build_manual_import_candidate(url: str, item: MultiImportBatchItem) -> ImportCandidate:
+def build_manual_import_candidate(
+    url: str,
+    item: MultiImportBatchItem,
+    *,
+    title: str = "",
+    authors: str = "",
+    source: str = "",
+    detail: BookDetailMetadata | None = None,
+) -> ImportCandidate:
     """Vytvori "rucniho" kandidata z URL, kterou uzivatel zna jako spravnou.
 
-    Nazev a autory prebira z aktualniho nahledu polozky (nic se nestahuje);
-    slouzi jen k tomu, aby se do nahledu propsal zvoleny odkaz.
+    `title`/`authors` typicky prichazi stazene z toho odkazu; co odkaz nevrati,
+    dopadne zpet na aktualni nahled polozky. Bez nich by u knihy, kde analyza
+    autora nenasla, zustal nahled nevalidni a import by se zablokoval.
     """
     preview = item.current_preview or ImportPreview()
     return ImportCandidate(
-        source="manual",
-        title=preview.title,
-        authors=preview.authors,
+        source=source.strip() or "manual",
+        title=title.strip() or preview.title,
+        authors=authors.strip() or preview.authors,
         url=url.strip(),
         score=0,
         reason="manual",
+        detail=detail,
     )
 
 
 def select_multiimport_candidate(
     item: MultiImportBatchItem,
     candidate: ImportCandidate,
+    duplicate_finder: Callable[[ImportPreview], list[DuplicateCandidate]] | None = None,
 ) -> None:
     """Rucne vybere kandidata pro polozku a potvrdi ji pro import.
 
-    Prepocita jen nahled (`current_preview`) podle kandidata a nastavi
+    Prepocita nahled (`current_preview`) podle kandidata a nastavi
     `manually_confirmed`, takze polozka smi projit zapisem i bez 100% shody.
     Nic nezapisuje. U polozek s chybou analyzy nedela nic.
+
+    Kdyz dostane `duplicate_finder`, prepocita i duplicity: puvodni seznam patri
+    drive vybranemu kandidatu a novy odkaz muze mit duplicitu jinou (typicky:
+    spravna kniha uz v Calibre je). Bez prepoctu by se na to prislo az pri
+    zapisu, ktery by tise selhal.
     """
     if item.status == "analysis_error" or item.analysis is None:
         return
@@ -1042,6 +1095,13 @@ def select_multiimport_candidate(
     item.selected_candidate = candidate
     item.current_preview = import_preview_from_candidate(candidate, fallback)
     item.manually_confirmed = True
+    if duplicate_finder is None:
+        return
+    try:
+        item.duplicates = list(duplicate_finder(item.current_preview))
+    except Exception:
+        item.duplicates = []
+    item.status = "duplicate_warning" if item.duplicates else "needs_review"
 
 
 class DisabledAIResolver:
@@ -1388,6 +1448,16 @@ def resolve_import_candidate_with_ai(
     if not candidates:
         return None
     best_score = max(candidate.score for candidate in candidates)
+    # Jedina jasna 100% shoda: AI se neptame vubec. Je to nejdrazsi cast analyzy
+    # (~47 % casu) a rozhodovat neni o cem. Kdyz je 100% shod vic (ruzne URL),
+    # nebo nejlepsi shoda neni 100%, AI dal rozhoduje jako driv.
+    hundred_urls = {
+        candidate.url.strip()
+        for candidate in candidates
+        if candidate.score >= 100 and candidate.url.strip()
+    }
+    if candidates[0].score >= 100 and len(hundred_urls) == 1:
+        return candidates[0]
     ai_resolver = resolver or DisabledAIResolver()
     try:
         choice = ai_resolver.resolve(signals, candidates) if hasattr(ai_resolver, "resolve") else None
