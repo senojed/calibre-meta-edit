@@ -48,7 +48,18 @@ AUTO_SETTING_DEFAULTS = {
     "auto_link_audit": True,
     "auto_cover_audit": True,
 }
-AI_SETTING_DEFAULTS = {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120}
+AI_SETTING_DEFAULTS = {
+    "provider": "off",
+    "model": "llama3",
+    "text_limit": 5000,
+    "timeout": 120,
+    # Kolik knih se pri multiimportu analyzuje soubezne. 5 je zmerene optimum
+    # pro cloud (4.0x) i pro Ollamu (3.13x). Drzime strop nizko: kandidati se
+    # tahaji z databazeknih a nechceme jim delat zatez.
+    "workers": 5,
+}
+MULTIIMPORT_WORKERS_MIN = 1
+MULTIIMPORT_WORKERS_MAX = 8
 UNIFIED_IMPORT_LAST_FOLDER_KEY = "unified_import_last_folder"
 UNIFIED_IMPORT_DIALOG_STATE_KEY = "unified_import_dialog_state"
 # Default model pro kazdeho providera; pouzije se, kdyz uzivatel nechal pole prazdne.
@@ -590,11 +601,16 @@ def normalize_ai_settings(raw: Any) -> dict[str, str | int]:
         timeout = int(ai_raw.get("timeout", AI_SETTING_DEFAULTS["timeout"]))
     except (TypeError, ValueError):
         timeout = int(AI_SETTING_DEFAULTS["timeout"])
+    try:
+        workers = int(ai_raw.get("workers", AI_SETTING_DEFAULTS["workers"]))
+    except (TypeError, ValueError):
+        workers = int(AI_SETTING_DEFAULTS["workers"])
     return {
         "provider": provider,
         "model": model,
         "text_limit": max(500, min(text_limit, 50000)),
         "timeout": max(10, min(timeout, 600)),
+        "workers": max(MULTIIMPORT_WORKERS_MIN, min(workers, MULTIIMPORT_WORKERS_MAX)),
     }
 
 
@@ -815,6 +831,7 @@ if PYSIDE6_AVAILABLE:
         QStyleFactory,
         QPushButton,
         QSizePolicy,
+        QSpinBox,
         QSplitter,
         QStatusBar,
         QStyle,
@@ -2127,10 +2144,23 @@ if PYSIDE6_AVAILABLE:
             form.addWidget(QLabel("AI timeout (s)"), 8, 0)
             self.ai_timeout_edit = QLineEdit(str(ai_settings["timeout"]))
             form.addWidget(self.ai_timeout_edit, 8, 1, 1, 3)
+            form.addWidget(QLabel("Knih naráz (multiimport)"), 9, 0)
+            self.ai_workers_spin = QSpinBox()
+            self.ai_workers_spin.setRange(MULTIIMPORT_WORKERS_MIN, MULTIIMPORT_WORKERS_MAX)
+            self.ai_workers_spin.setValue(int(ai_settings["workers"]))
+            self.ai_workers_spin.setToolTip(
+                "Kolik knih se při hromadném importu analyzuje současně.\n"
+                "5 je změřené optimum pro cloud i pro Ollamu.\n"
+                "Snižte při slabším počítači nebo pomalém připojení."
+            )
+            form.addWidget(self.ai_workers_spin, 9, 1)
+            workers_hint = QLabel("doporučeno 5")
+            workers_hint.setEnabled(False)
+            form.addWidget(workers_hint, 9, 2, 1, 2)
             # Status klice pro cloud providery: rekne jestli appka nasla API klic.
             self.ai_key_status_label = QLabel()
-            form.addWidget(QLabel("API klic"), 9, 0)
-            form.addWidget(self.ai_key_status_label, 9, 1, 1, 3)
+            form.addWidget(QLabel("API klic"), 10, 0)
+            form.addWidget(self.ai_key_status_label, 10, 1, 1, 3)
             # Signal az po nastaveni hodnot, jinak by init prepsal ulozeny model defaultem.
             self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_changed)
             self._update_ai_key_status()
@@ -2197,6 +2227,7 @@ if PYSIDE6_AVAILABLE:
                 "model": self.ai_model_edit.text(),
                 "text_limit": self.ai_text_limit_edit.text(),
                 "timeout": self.ai_timeout_edit.text(),
+                "workers": self.ai_workers_spin.value(),
             }
             settings["ai"] = normalize_ai_settings({"ai": ai_raw})
             shared.SETTINGS_PATH.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -3542,6 +3573,9 @@ if PYSIDE6_AVAILABLE:
                             lambda path: analyze_book(str(path)),
                             precheck_safe_matches=False,
                             progress_callback=update_progress,
+                            max_workers=int(
+                                normalize_ai_settings(read_app_settings())["workers"]
+                            ),
                         )
                     )
                 except BaseException as exc:

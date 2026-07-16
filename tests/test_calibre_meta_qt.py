@@ -670,12 +670,35 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(settings["auto_link_audit"], True)
         self.assertEqual(settings["auto_cover_audit"], False)
 
+    def test_normalize_ai_settings_defaults_workers_to_five(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(qt.normalize_ai_settings({})["workers"], 5)
+
+    def test_normalize_ai_settings_clamps_workers_to_range(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(qt.normalize_ai_settings({"ai": {"workers": 3}})["workers"], 3)
+        # Mimo rozsah srovnat: chranime databazeknih i slaby stroj.
+        self.assertEqual(qt.normalize_ai_settings({"ai": {"workers": 99}})["workers"], 8)
+        self.assertEqual(qt.normalize_ai_settings({"ai": {"workers": 0}})["workers"], 1)
+        self.assertEqual(qt.normalize_ai_settings({"ai": {"workers": "blbost"}})["workers"], 5)
+
     def test_normalize_ai_settings_defaults_to_off(self):
         import calibre_meta_qt as qt
 
         settings = qt.normalize_ai_settings({})
 
-        self.assertEqual(settings, {"provider": "off", "model": "llama3", "text_limit": 5000, "timeout": 120})
+        self.assertEqual(
+            settings,
+            {
+                "provider": "off",
+                "model": "llama3",
+                "text_limit": 5000,
+                "timeout": 120,
+                "workers": 5,
+            },
+        )
 
     def test_normalize_ai_settings_reads_saved_values(self):
         import calibre_meta_qt as qt
@@ -3419,6 +3442,28 @@ class PreferencesDialogAITests(unittest.TestCase):
                 self.assertEqual(saved["ai"]["text_limit"], 12345)
         app.processEvents()
 
+    def test_save_library_persists_worker_count(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog(qt, window)
+                dialog.library_edit.setText("B:\\lib")
+                # Vychozi hodnota je zmerene optimum.
+                self.assertEqual(dialog.ai_workers_spin.value(), 5)
+                dialog.ai_workers_spin.setValue(2)
+
+                dialog.save_library()
+
+                saved = json.loads(tmp_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["ai"]["workers"], 2)
+        app.processEvents()
+
     def test_save_library_persists_disabled_provider(self):
         from PySide6.QtWidgets import QApplication
         import sys
@@ -3838,6 +3883,33 @@ class UnifiedImportDialogTests(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class QtImportWiringTests(unittest.TestCase):
+    def test_multiimport_analysis_uses_worker_count_from_settings(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(qt, "read_app_settings", return_value={"ai": {"workers": 3}}),
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
+            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(cme, "run_multiimport_batch_analysis", return_value=[]) as batch_analysis,
+        ):
+            scheduled = []
+            progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
+            progress_dialog.return_value.exec.side_effect = lambda: scheduled.pop(0)()
+            window.run_multiimport_analysis(
+                [Path("C:/books/a.epub"), Path("C:/books/b.epub")],
+                analyze=lambda _path: None,
+                connectivity_check=lambda: True,
+            )
+
+        # Pocet workeru bere z nastaveni, ne z pevne konstanty.
+        self.assertEqual(batch_analysis.call_args.kwargs["max_workers"], 3)
+        app.processEvents()
+
     def test_prepare_multiimport_backup_creates_one_backup_when_enabled(self):
         from PySide6.QtWidgets import QApplication
         import sys

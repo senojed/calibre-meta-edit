@@ -670,6 +670,77 @@ class TextAndUrlTests(unittest.TestCase):
             self.assertIs(item.selected_candidate, analysis.recommended)
             self.assertEqual(item.duplicates, analysis.duplicates)
 
+    def test_run_multiimport_batch_analysis_runs_in_parallel_and_keeps_item_order(self):
+        # Analyzy musi bezet soubezne (jinak by tento test na bariere uvizl)
+        # a poradi vracenych polozek musi zustat podle vstupu.
+        import threading
+
+        paths = [Path(f"book{index}.epub") for index in range(4)]
+        items = cme.build_multiimport_batch_items(paths)
+        analyses = {
+            path: self._multiimport_analysis(
+                recommended=cme.ImportCandidate(
+                    "databazeknih", path.stem, "Autor", f"https://dk/{index}", score=100
+                ),
+                preview=cme.ImportPreview(
+                    title=path.stem, authors="Autor", url=f"https://dk/{index}"
+                ),
+            )
+            for index, path in enumerate(paths)
+        }
+        barrier = threading.Barrier(len(paths), timeout=10)
+
+        def analyze(path):
+            # Projde jen kdyz vsechny 4 bezi naraz.
+            barrier.wait()
+            return analyses[path]
+
+        result = cme.run_multiimport_batch_analysis(items, analyze, max_workers=4)
+
+        self.assertEqual([item.source_path for item in result], paths)
+        for item, path in zip(result, paths):
+            self.assertIs(item.analysis, analyses[path])
+            self.assertEqual(item.status, "ready")
+
+    def test_run_multiimport_batch_analysis_parallel_reports_progress_for_every_item(self):
+        paths = [Path(f"book{index}.epub") for index in range(4)]
+        items = cme.build_multiimport_batch_items(paths)
+        analysis = self._multiimport_analysis()
+        progress = []
+
+        result = cme.run_multiimport_batch_analysis(
+            items,
+            lambda _path: analysis,
+            progress_callback=lambda current, total, item: progress.append(
+                (current, total, item.display_name)
+            ),
+            max_workers=4,
+        )
+
+        # Kazda polozka se ohlasi prave jednou, citac jde 1..N.
+        self.assertEqual([current for current, _total, _name in progress], [1, 2, 3, 4])
+        self.assertEqual({total for _current, total, _name in progress}, {4})
+        self.assertEqual(
+            sorted(name for _current, _total, name in progress),
+            sorted(item.display_name for item in result),
+        )
+
+    def test_run_multiimport_batch_analysis_parallel_records_error_per_item(self):
+        paths = [Path("good.epub"), Path("bad.epub")]
+        items = cme.build_multiimport_batch_items(paths)
+        analysis = self._multiimport_analysis()
+
+        def analyze(path):
+            if path.name == "bad.epub":
+                raise RuntimeError("analysis failed")
+            return analysis
+
+        result = cme.run_multiimport_batch_analysis(items, analyze, max_workers=2)
+
+        self.assertEqual(result[0].status, "ready")
+        self.assertEqual(result[1].status, "analysis_error")
+        self.assertEqual(result[1].error_message, "analysis failed")
+
     def test_run_multiimport_batch_analysis_safe_match_is_ready_but_not_checked_by_default(self):
         items = cme.build_multiimport_batch_items([Path("book.epub")])
 
@@ -2675,6 +2746,60 @@ class ImportEpubParsingTests(unittest.TestCase):
         selected = cme.resolve_import_candidate_with_ai([], candidates, cme.DisabledAIResolver())
 
         self.assertIsNone(selected)
+
+    def test_single_clear_100_match_skips_ai_resolver(self):
+        # Jedina 100% shoda: AI se neptame vubec (setri nejdrazsi cast analyzy).
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return cme.AIImportChoice("https://dk/2", 95, "match")
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100),
+            cme.ImportCandidate("databazeknih", "Jina", "Autor", "https://dk/2", score=80),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(selected.url, "https://dk/1")
+        self.assertEqual(calls, [])
+
+    def test_multiple_100_matches_still_ask_ai(self):
+        # Vic ruznych 100% URL: rozhodnout je o cem, AI se ptame dal.
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return None
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100),
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(calls, ["resolve"])
+        self.assertEqual(selected.url, "https://dk/1")
+
+    def test_best_match_below_100_still_asks_ai(self):
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return None
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=95),
+        ]
+
+        cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(calls, ["resolve"])
 
     def test_ollama_ai_resolver_returns_none_on_malformed_response(self):
         # Ollama vrati nevalidni JSON nebo vnitrni "response" neni platny JSON.
