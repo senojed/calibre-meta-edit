@@ -3950,6 +3950,13 @@ if PYSIDE6_AVAILABLE:
             base = """
                 * { font-family: "Segoe UI"; }
                 QPushButton, QToolButton { min-height: 30px; padding: 4px 8px; border-radius: 3px; }
+                /* Border-radius vyse prepne tlacitka na stylesheet vykreslovani, cimz zmizi
+                   nativni ramecek. Bez vlastniho pozadi a ramu by tlacitko zdedilo pozadi
+                   okna a splynulo s pozadim jako obycejny text. Barvy pro dark/light se
+                   dopisuji nize; tady je varianta pro systemovy vzhled. */
+                QPushButton { background: palette(button); border: 1px solid palette(mid); }
+                QPushButton:hover { background: palette(light); }
+                QPushButton:pressed { background: palette(dark); }
                 QToolButton { font-size: 8pt; }
                 QToolButton[iconOnly="true"] {
                     min-width: 42px;
@@ -3984,6 +3991,9 @@ if PYSIDE6_AVAILABLE:
                 }
                 QTextEdit { font-family: Consolas; font-size: 10pt; }
             """
+            # Pravidla tlacitek musi v obou tematech prijit AZ za pravidlem pro QWidget.
+            # Oba selektory maji stejnou vahu, takze rozhoduje poradi - kdyby QWidget
+            # prislo pozdeji, prebilo by pozadi tlacitka pozadim okna.
             if self.theme == "dark":
                 self.setStyleSheet(
                     base
@@ -3991,6 +4001,10 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #202124; color: #f2f2f2; }
                     QLineEdit, QComboBox, QTextEdit { background: #2d2f33; color: #f2f2f2; border: 1px solid #4b4d52; }
                     QHeaderView::section { background: #3a3a3a; color: #ffffff; padding: 4px; }
+                    QPushButton { background: #3a3d42; color: #f2f2f2; border: 1px solid #5a5d63; }
+                    QPushButton:hover { background: #45484e; }
+                    QPushButton:pressed { background: #2d2f33; }
+                    QPushButton:disabled { background: #2a2c30; color: #6b6e73; border: 1px solid #3a3d42; }
                     """
                 )
             elif self.theme == "light":
@@ -4000,6 +4014,9 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #f5f5f5; color: #111111; }
                     QLineEdit, QComboBox, QTextEdit { background: #ffffff; color: #111111; border: 1px solid #c7c7c7; }
                     QHeaderView::section { background: #e8e8e8; color: #111111; padding: 4px; }
+                    QPushButton { background: #e9e9e9; color: #111111; border: 1px solid #b8b8b8; }
+                    QPushButton:hover { background: #dcdcdc; }
+                    QPushButton:pressed { background: #cfcfcf; }
                     """
                 )
             else:
