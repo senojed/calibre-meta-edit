@@ -1037,6 +1037,97 @@ class QtImportTests(unittest.TestCase):
         self.assertTrue(dialog.items_table.isRowHidden(1))
         app.processEvents()
 
+    def _run_import_click(self, dialog, qt):
+        from PySide6.QtWidgets import QMessageBox
+
+        with (
+            patch.object(
+                qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+            ),
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt.QMessageBox, "warning") as warning,
+            patch.object(qt, "MultiImportProgressDialog") as progress_class,
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress_class.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
+            dialog.import_button.click()
+        return warning
+
+    def test_multiimport_backup_prepared_once_before_write(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        events = []
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: (
+                events.append("write") or cme.ImportApplyResult(1, "updated")
+            ),
+            prepare_backup=lambda enabled: events.append(f"backup:{enabled}"),
+        )
+
+        self.assertTrue(dialog.backup_check.isChecked())
+        self._run_import_click(dialog, qt)
+
+        # Zaloha se pripravi prave jednou a jeste pred prvnim zapisem.
+        self.assertEqual(events[:2], ["backup:True", "write"])
+        self.assertEqual(events.count("backup:True"), 1)
+        app.processEvents()
+
+    def test_multiimport_backup_unchecked_passes_false(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        events = []
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: (
+                events.append("write") or cme.ImportApplyResult(1, "updated")
+            ),
+            prepare_backup=lambda enabled: events.append(f"backup:{enabled}"),
+        )
+        dialog.backup_check.setChecked(False)
+
+        self._run_import_click(dialog, qt)
+
+        self.assertEqual(events[:2], ["backup:False", "write"])
+        app.processEvents()
+
+    def test_multiimport_backup_failure_aborts_import(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._valid_multiimport_item(checked=True)
+        events = []
+
+        def failing_backup(_enabled):
+            raise OSError("disk plny")
+
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: (
+                events.append("write") or cme.ImportApplyResult(1, "updated")
+            ),
+            prepare_backup=failing_backup,
+        )
+
+        warning = self._run_import_click(dialog, qt)
+
+        self.assertEqual(events, [])
+        warning.assert_called_once()
+        self.assertIn("import zrušen", warning.call_args.args[2])
+        app.processEvents()
+
     def test_multiimport_results_candidate_controls_disabled_for_analysis_error(self):
         from PySide6.QtWidgets import QApplication
         import sys
@@ -3549,6 +3640,93 @@ class UnifiedImportDialogTests(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class QtImportWiringTests(unittest.TestCase):
+    def test_prepare_multiimport_backup_creates_one_backup_when_enabled(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with patch.object(
+            cme, "create_backup", return_value=Path("backups/metadata-x.db")
+        ) as create_backup:
+            path = window.prepare_multiimport_backup(True)
+
+        create_backup.assert_called_once()
+        self.assertEqual(path, Path("backups/metadata-x.db"))
+        self.assertTrue(window._multiimport_backup_ready)
+        app.processEvents()
+
+    def test_prepare_multiimport_backup_skips_backup_when_disabled(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with patch.object(cme, "create_backup") as create_backup:
+            path = window.prepare_multiimport_backup(False)
+
+        create_backup.assert_not_called()
+        self.assertIsNone(path)
+        self.assertTrue(window._multiimport_backup_ready)
+        app.processEvents()
+
+    def test_write_multiimport_item_reuses_batch_backup_instead_of_copying(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window._multiimport_backup_ready = True
+        window._multiimport_backup_path = Path("backups/metadata-x.db")
+
+        with (
+            patch.object(cme, "find_calibredb", return_value="calibredb"),
+            patch.object(
+                cme,
+                "apply_import_preview",
+                return_value=cme.ImportApplyResult(1, "updated"),
+            ) as apply_preview,
+            patch.object(cme, "create_backup") as create_backup,
+        ):
+            window._write_multiimport_item(
+                cme.ImportPreview(title="Kniha", authors="Autor"), Path("b.epub")
+            )
+
+        backup_func = apply_preview.call_args.kwargs["backup_func"]
+        # Vraci uz hotovou zalohu davky, misto aby delal dalsi kopii.
+        self.assertEqual(backup_func("lib", Path("backups")), Path("backups/metadata-x.db"))
+        create_backup.assert_not_called()
+        app.processEvents()
+
+    def test_write_multiimport_item_keeps_default_backup_without_preparation(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(cme, "find_calibredb", return_value="calibredb"),
+            patch.object(
+                cme,
+                "apply_import_preview",
+                return_value=cme.ImportApplyResult(1, "updated"),
+            ) as apply_preview,
+        ):
+            window._write_multiimport_item(
+                cme.ImportPreview(title="Kniha", authors="Autor"), Path("b.epub")
+            )
+
+        # Bez pripravy davky zustava puvodni chovani (backend si zalohuje sam).
+        self.assertIsNone(apply_preview.call_args.kwargs["backup_func"])
+        app.processEvents()
+
     def _make_analysis(self):
         return cme.ImportAnalysis(
             epub_path="b.epub",
