@@ -2610,6 +2610,60 @@ class ImportEpubParsingTests(unittest.TestCase):
 
         self.assertIsNone(selected)
 
+    def test_single_clear_100_match_skips_ai_resolver(self):
+        # Jedina 100% shoda: AI se neptame vubec (setri nejdrazsi cast analyzy).
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return cme.AIImportChoice("https://dk/2", 95, "match")
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100),
+            cme.ImportCandidate("databazeknih", "Jina", "Autor", "https://dk/2", score=80),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(selected.url, "https://dk/1")
+        self.assertEqual(calls, [])
+
+    def test_multiple_100_matches_still_ask_ai(self):
+        # Vic ruznych 100% URL: rozhodnout je o cem, AI se ptame dal.
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return None
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100),
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/2", score=100),
+        ]
+
+        selected = cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(calls, ["resolve"])
+        self.assertEqual(selected.url, "https://dk/1")
+
+    def test_best_match_below_100_still_asks_ai(self):
+        calls = []
+
+        class SpyResolver:
+            def resolve(self, _signals, _candidates):
+                calls.append("resolve")
+                return None
+
+        candidates = [
+            cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=95),
+        ]
+
+        cme.resolve_import_candidate_with_ai([], candidates, SpyResolver())
+
+        self.assertEqual(calls, ["resolve"])
+
     def test_ollama_ai_resolver_returns_none_on_malformed_response(self):
         # Ollama vrati nevalidni JSON nebo vnitrni "response" neni platny JSON.
         # resolve() musi chybu spolknout a vratit None bez vyjimky.

@@ -1388,6 +1388,16 @@ def resolve_import_candidate_with_ai(
     if not candidates:
         return None
     best_score = max(candidate.score for candidate in candidates)
+    # Jedina jasna 100% shoda: AI se neptame vubec. Je to nejdrazsi cast analyzy
+    # (~47 % casu) a rozhodovat neni o cem. Kdyz je 100% shod vic (ruzne URL),
+    # nebo nejlepsi shoda neni 100%, AI dal rozhoduje jako driv.
+    hundred_urls = {
+        candidate.url.strip()
+        for candidate in candidates
+        if candidate.score >= 100 and candidate.url.strip()
+    }
+    if candidates[0].score >= 100 and len(hundred_urls) == 1:
+        return candidates[0]
     ai_resolver = resolver or DisabledAIResolver()
     try:
         choice = ai_resolver.resolve(signals, candidates) if hasattr(ai_resolver, "resolve") else None
