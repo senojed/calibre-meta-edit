@@ -1029,12 +1029,18 @@ def build_manual_import_candidate(url: str, item: MultiImportBatchItem) -> Impor
 def select_multiimport_candidate(
     item: MultiImportBatchItem,
     candidate: ImportCandidate,
+    duplicate_finder: Callable[[ImportPreview], list[DuplicateCandidate]] | None = None,
 ) -> None:
     """Rucne vybere kandidata pro polozku a potvrdi ji pro import.
 
-    Prepocita jen nahled (`current_preview`) podle kandidata a nastavi
+    Prepocita nahled (`current_preview`) podle kandidata a nastavi
     `manually_confirmed`, takze polozka smi projit zapisem i bez 100% shody.
     Nic nezapisuje. U polozek s chybou analyzy nedela nic.
+
+    Kdyz dostane `duplicate_finder`, prepocita i duplicity: puvodni seznam patri
+    drive vybranemu kandidatu a novy odkaz muze mit duplicitu jinou (typicky:
+    spravna kniha uz v Calibre je). Bez prepoctu by se na to prislo az pri
+    zapisu, ktery by tise selhal.
     """
     if item.status == "analysis_error" or item.analysis is None:
         return
@@ -1042,6 +1048,13 @@ def select_multiimport_candidate(
     item.selected_candidate = candidate
     item.current_preview = import_preview_from_candidate(candidate, fallback)
     item.manually_confirmed = True
+    if duplicate_finder is None:
+        return
+    try:
+        item.duplicates = list(duplicate_finder(item.current_preview))
+    except Exception:
+        item.duplicates = []
+    item.status = "duplicate_warning" if item.duplicates else "needs_review"
 
 
 class DisabledAIResolver:

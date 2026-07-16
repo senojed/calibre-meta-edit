@@ -405,6 +405,63 @@ class QtHelperTests(unittest.TestCase):
         self.assertTrue(qt.multiimport_item_matches_filter(item, checked=True))
         self.assertFalse(qt.multiimport_item_matches_filter(item, checked=False))
 
+    def test_multiimport_write_error_label_translates_known_codes(self):
+        import calibre_meta_qt as qt
+
+        self.assertIn("už v Calibre je", qt.multiimport_write_error_label("strong-duplicate"))
+        # Neznamy kod projde beze zmeny, at se neztrati informace.
+        self.assertEqual(qt.multiimport_write_error_label("calibredb crashed"), "calibredb crashed")
+
+    def test_multiimport_write_failures_text_lists_failed_books_with_reason(self):
+        import calibre_meta_qt as qt
+
+        failed = cme.MultiImportBatchItem(
+            Path("bad.epub"),
+            "bad.epub",
+            status="write_error",
+            write_result=cme.ImportApplyResult(0, "failed", "strong-duplicate"),
+        )
+        written = cme.MultiImportBatchItem(
+            Path("good.epub"),
+            "good.epub",
+            status="written",
+            write_result=cme.ImportApplyResult(7, "updated"),
+        )
+
+        text = qt.multiimport_write_failures_text([written, failed])
+
+        self.assertIn("bad.epub", text)
+        self.assertIn("už v Calibre je", text)
+        self.assertNotIn("good.epub", text)
+
+    def test_multiimport_write_failures_text_empty_when_all_written(self):
+        import calibre_meta_qt as qt
+
+        written = cme.MultiImportBatchItem(
+            Path("good.epub"),
+            "good.epub",
+            status="written",
+            write_result=cme.ImportApplyResult(7, "updated"),
+        )
+
+        self.assertEqual(qt.multiimport_write_failures_text([written]), "")
+
+    def test_multiimport_item_detail_text_shows_write_failure_reason(self):
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(
+            Path("bad.epub"),
+            "bad.epub",
+            status="write_error",
+            current_preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+            write_result=cme.ImportApplyResult(0, "failed", "strong-duplicate"),
+        )
+
+        text = qt.multiimport_item_detail_text(item)
+
+        self.assertIn("Import selhal:", text)
+        self.assertIn("už v Calibre je", text)
+
     def test_multiimport_status_tooltips_preserve_semantic_labels(self):
         import calibre_meta_qt as qt
 
@@ -956,6 +1013,55 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(item.current_preview.url, item.analysis.candidates[1].url)
         self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
         self.assertEqual(dialog.items_table.item(0, 1).text(), "W")
+        app.processEvents()
+
+    def test_manual_candidate_pick_rechecks_duplicates_and_blocks_import(self):
+        # Presne scenar ze smoke testu: rucne vybrany spravny odkaz ma duplicitu,
+        # ktera u puvodniho (spatneho) kandidata nebyla.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        duplicate = cme.DuplicateCandidate(616, "Kniha", "Autor", score=100, strong=True)
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+            duplicate_finder=lambda _preview: [duplicate],
+        )
+
+        dialog.candidates_list.setCurrentRow(1)
+        dialog.use_selected_candidate()
+
+        self.assertEqual(item.duplicates, [duplicate])
+        self.assertEqual(item.status, "duplicate_warning")
+        # Uzivatel to ted vidi hned, a overeni/import to zablokuje.
+        result = cme.validate_multiimport_checked_items([item])
+        self.assertFalse(result.ok)
+        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
+        self.assertIn("Duplicity: 1", dialog.detail_text.toPlainText())
+        app.processEvents()
+
+    def test_manual_candidate_pick_without_duplicates_stays_importable(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+            duplicate_finder=lambda _preview: [],
+        )
+
+        dialog.candidates_list.setCurrentRow(1)
+        dialog.use_selected_candidate()
+
+        self.assertEqual(item.duplicates, [])
+        self.assertTrue(item.manually_confirmed)
+        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
         app.processEvents()
 
     def test_multiimport_results_manual_url_confirms_item(self):
