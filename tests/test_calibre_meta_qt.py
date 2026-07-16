@@ -693,7 +693,7 @@ class QtHelperTests(unittest.TestCase):
             settings,
             {
                 "provider": "off",
-                "model": "llama3",
+                "model": "llama3.1:8b",
                 "text_limit": 5000,
                 "timeout": 120,
                 "workers": 5,
@@ -1347,6 +1347,102 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(events, [])
         warning.assert_called_once()
         self.assertIn("import zrušen", warning.call_args.args[2])
+        app.processEvents()
+
+    def _offline_dialog(self, qt, events, *, online: bool):
+        item = self._valid_multiimport_item(checked=True)
+        return qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: (
+                events.append("write") or cme.ImportApplyResult(1, "updated")
+            ),
+            connectivity_check=lambda: online,
+        )
+
+    def test_multiimport_offline_warning_cancel_blocks_write(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        events = []
+        dialog = self._offline_dialog(qt, events, online=False)
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                side_effect=[
+                    QMessageBox.StandardButton.Yes,  # potvrzeni importu
+                    QMessageBox.StandardButton.No,  # offline varovani -> zrusit
+                ],
+            ) as question,
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog"),
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            dialog.import_button.click()
+
+        self.assertEqual(events, [])
+        self.assertEqual(question.call_count, 2)
+        self.assertIn("není online", question.call_args.args[2])
+        app.processEvents()
+
+    def test_multiimport_offline_warning_confirm_proceeds_with_write(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        events = []
+        dialog = self._offline_dialog(qt, events, online=False)
+
+        with (
+            patch.object(
+                qt.QMessageBox,
+                "question",
+                side_effect=[
+                    QMessageBox.StandardButton.Yes,
+                    QMessageBox.StandardButton.Yes,
+                ],
+            ),
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog") as progress_class,
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress_class.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
+            dialog.import_button.click()
+
+        self.assertIn("write", events)
+        app.processEvents()
+
+    def test_multiimport_online_skips_offline_warning(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        events = []
+        dialog = self._offline_dialog(qt, events, online=True)
+
+        with (
+            patch.object(
+                qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+            ) as question,
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog") as progress_class,
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress_class.return_value.run_after_first_paint.side_effect = (
+                lambda callback: callback()
+            )
+            dialog.import_button.click()
+
+        # Jen potvrzeni importu, zadne offline varovani navic.
+        self.assertEqual(question.call_count, 1)
+        self.assertIn("write", events)
         app.processEvents()
 
     def test_multiimport_results_candidate_controls_disabled_for_analysis_error(self):
@@ -3883,6 +3979,62 @@ class UnifiedImportDialogTests(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE6_AVAILABLE, "PySide6 neni nainstalovane")
 class QtImportWiringTests(unittest.TestCase):
+    def test_is_online_now_updates_state_and_indicator(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        self.assertTrue(window.is_online_now(lambda: True))
+        self.assertTrue(window.online)
+        self.assertTrue(window.online_indicator.text().endswith("Online"))
+
+        self.assertFalse(window.is_online_now(lambda: False))
+        self.assertFalse(window.online)
+        self.assertTrue(window.online_indicator.text().endswith("Offline"))
+        app.processEvents()
+
+    def test_is_online_now_treats_probe_error_as_offline(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        def failing_probe():
+            raise OSError("sit nedostupna")
+
+        self.assertFalse(window.is_online_now(failing_probe))
+        self.assertTrue(window.online_indicator.text().endswith("Offline"))
+        app.processEvents()
+
+    def test_multiimport_analysis_offline_updates_indicator(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        with (
+            patch.object(
+                qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+            ),
+            patch.object(qt, "MultiImportResultsDialog"),
+        ):
+            window.run_multiimport_analysis(
+                [Path("C:/books/book.epub")],
+                analyze=lambda _path: None,
+                connectivity_check=lambda: False,
+            )
+
+        self.assertFalse(window.online)
+        self.assertTrue(window.online_indicator.text().endswith("Offline"))
+        app.processEvents()
+
     def test_multiimport_analysis_uses_worker_count_from_settings(self):
         from PySide6.QtWidgets import QApplication
         import sys
