@@ -236,7 +236,7 @@ def multiimport_validation_reason_label(reason: str) -> str:
         "missing_candidate": "Chybí vybraný kandidát.",
         "duplicate_warning": "Položka má varování na duplicitu.",
         "analysis_error": "Položka má chybu analýzy.",
-        "invalid_preview": "Náhled importu není validní.",
+        "invalid_preview": "Náhled importu není validní: chybí název nebo autor.",
         "candidate_score_below_100": "Doporučený kandidát nemá 100% shodu.",
         "missing_preview_url": "Náhled nemá zdrojový odkaz.",
         "missing_candidate_url": "Doporučený kandidát nemá odkaz.",
@@ -305,7 +305,9 @@ def multiimport_item_detail_text(item: cme.MultiImportBatchItem) -> str:
                 f"{candidate.source}: {candidate.url}",
             )
         )
-    if item.status == "needs_review" and item.analysis is not None:
+    # Precheck popisuje puvodni automatickou analyzu. Po rucnim potvrzeni uz
+    # neplati (napr. "chybi kandidat", kdyz si ho uzivatel prave vybral).
+    if item.status == "needs_review" and item.analysis is not None and not item.manually_confirmed:
         issues = cme.multiimport_precheck_issues(item.analysis)
         if issues:
             lines.extend(("", "Důvod kontroly:"))
@@ -1262,6 +1264,7 @@ if PYSIDE6_AVAILABLE:
             post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
             prepare_backup: Callable[[bool], Path | None] | None = None,
             duplicate_finder: Callable[[cme.ImportPreview], list[cme.DuplicateCandidate]] | None = None,
+            link_data_func: Callable[[str], tuple[str, str, str, cme.BookDetailMetadata]] | None = None,
         ) -> None:
             super().__init__(parent)
             self.items = list(items)
@@ -1281,6 +1284,7 @@ if PYSIDE6_AVAILABLE:
                 "_find_import_duplicates",
                 None,
             )
+            self.link_data_func = link_data_func or (lambda url: cme.fetch_import_link_data(url))
             self.setWindowTitle("Vysledky multiimport analyzy")
             self.resize(900, 600)
 
@@ -1735,7 +1739,33 @@ if PYSIDE6_AVAILABLE:
             if not url:
                 QMessageBox.information(self, "Vlastní odkaz", "Zadejte URL odkazu.")
                 return
-            candidate = cme.build_manual_import_candidate(url, item)
+            # Z odkazu stahneme nazev a autora (jako "Pouzit odkaz" u single
+            # importu). Bez toho by u knihy, kde analyza autora nenasla, zustal
+            # nahled nevalidni a import by se zablokoval.
+            self.use_manual_url_button.setEnabled(False)
+            self.use_manual_url_button.setText("Načítám...")
+            QApplication.processEvents()
+            try:
+                title, authors, written_url, detail = self.link_data_func(url)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Použít odkaz",
+                    f"Odkaz se nepodařilo načíst:\n{exc}",
+                )
+                return
+            finally:
+                self.use_manual_url_button.setEnabled(True)
+                self.use_manual_url_button.setText("Použít odkaz")
+            target_url = (written_url or url).strip()
+            candidate = cme.build_manual_import_candidate(
+                target_url,
+                item,
+                title=title,
+                authors=authors,
+                source=cme.source_and_work_type_for_url(target_url)[0],
+                detail=detail,
+            )
             cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
             if item.manually_confirmed:
                 item.checked_for_import = True

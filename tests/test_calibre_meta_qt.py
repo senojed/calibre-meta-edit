@@ -213,7 +213,7 @@ class QtHelperTests(unittest.TestCase):
             "missing_candidate": "Chybí vybraný kandidát.",
             "duplicate_warning": "Položka má varování na duplicitu.",
             "analysis_error": "Položka má chybu analýzy.",
-            "invalid_preview": "Náhled importu není validní.",
+            "invalid_preview": "Náhled importu není validní: chybí název nebo autor.",
         }
 
         self.assertEqual({reason: qt.multiimport_validation_reason_label(reason) for reason in expected}, expected)
@@ -404,6 +404,35 @@ class QtHelperTests(unittest.TestCase):
         self.assertFalse(qt.multiimport_item_matches_filter(item, statuses={"ready"}))
         self.assertTrue(qt.multiimport_item_matches_filter(item, checked=True))
         self.assertFalse(qt.multiimport_item_matches_filter(item, checked=False))
+
+    def test_detail_text_hides_stale_precheck_after_manual_confirm(self):
+        import calibre_meta_qt as qt
+
+        analysis = cme.ImportAnalysis(
+            epub_path="book.pdb",
+            signals=[],
+            candidates=[],
+            recommended=None,  # automat kandidata nenasel
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha", authors=""),
+            messages=[],
+        )
+        item = cme.MultiImportBatchItem(
+            Path("book.pdb"),
+            "book.pdb",
+            status="needs_review",
+            analysis=analysis,
+            current_preview=cme.ImportPreview(title="Kniha", authors="Autor"),
+        )
+
+        self.assertIn("Chybí vybraný kandidát", qt.multiimport_item_detail_text(item))
+
+        # Uzivatel si kandidata vybral rucne -> puvodni duvod uz neplati.
+        item.manually_confirmed = True
+
+        text = qt.multiimport_item_detail_text(item)
+        self.assertNotIn("Chybí vybraný kandidát", text)
+        self.assertNotIn("Důvod kontroly", text)
 
     def test_multiimport_write_error_label_translates_known_codes(self):
         import calibre_meta_qt as qt
@@ -1074,6 +1103,8 @@ class QtImportTests(unittest.TestCase):
         dialog = qt.MultiImportResultsDialog(
             [item],
             write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+            link_data_func=lambda url: ("Kniha", "Autor", url, cme.BookDetailMetadata()),
+            duplicate_finder=lambda _preview: [],
         )
 
         dialog.manual_url_edit.setText("https://dk/custom")
@@ -1084,6 +1115,67 @@ class QtImportTests(unittest.TestCase):
         self.assertEqual(item.current_preview.url, "https://dk/custom")
         self.assertEqual(item.current_preview.title, "Kniha")
         self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
+        app.processEvents()
+
+    def test_manual_url_fills_missing_author_from_link(self):
+        # Presne scenar ze smoke testu: analyza nenasla autora, uzivatel da
+        # spravny odkaz -> autor se stahne z odkazu a import uz neni blokovany.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        item.current_preview = cme.ImportPreview(title="UZ-26-Zlodej casu", authors="")
+        item.selected_candidate = None
+        self.assertFalse(cme.is_valid_import_preview(item.current_preview))
+
+        dialog = qt.MultiImportResultsDialog(
+            [item],
+            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
+            link_data_func=lambda url: (
+                "Zloděj času",
+                "Terry Pratchett",
+                url,
+                cme.BookDetailMetadata(),
+            ),
+            duplicate_finder=lambda _preview: [],
+        )
+
+        dialog.manual_url_edit.setText("https://www.databazeknih.cz/knihy/zlodej-casu-477")
+        dialog.use_manual_url()
+
+        self.assertEqual(item.current_preview.authors, "Terry Pratchett")
+        self.assertEqual(item.current_preview.title, "Zloděj času")
+        self.assertTrue(cme.is_valid_import_preview(item.current_preview))
+        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
+        app.processEvents()
+
+    def test_manual_url_failure_shows_warning_and_keeps_item(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        item = self._needs_review_multiimport_item()
+        original_url = item.current_preview.url
+
+        def failing_fetch(_url):
+            raise OSError("404")
+
+        dialog = qt.MultiImportResultsDialog([item], link_data_func=failing_fetch)
+        dialog.manual_url_edit.setText("https://dk/rozbity")
+
+        with patch.object(qt.QMessageBox, "warning") as warning:
+            dialog.use_manual_url()
+
+        warning.assert_called_once()
+        self.assertIn("nepodařilo načíst", warning.call_args.args[2])
+        self.assertEqual(item.current_preview.url, original_url)
+        self.assertFalse(item.manually_confirmed)
+        # Tlacitko se musi vratit do puvodniho stavu i po chybe.
+        self.assertTrue(dialog.use_manual_url_button.isEnabled())
+        self.assertEqual(dialog.use_manual_url_button.text(), "Použít odkaz")
         app.processEvents()
 
     def test_multiimport_results_open_candidate_link_uses_desktop_services(self):

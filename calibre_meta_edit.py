@@ -1009,20 +1009,30 @@ def import_preview_from_candidate(candidate: ImportCandidate | None, fallback: I
     )
 
 
-def build_manual_import_candidate(url: str, item: MultiImportBatchItem) -> ImportCandidate:
+def build_manual_import_candidate(
+    url: str,
+    item: MultiImportBatchItem,
+    *,
+    title: str = "",
+    authors: str = "",
+    source: str = "",
+    detail: BookDetailMetadata | None = None,
+) -> ImportCandidate:
     """Vytvori "rucniho" kandidata z URL, kterou uzivatel zna jako spravnou.
 
-    Nazev a autory prebira z aktualniho nahledu polozky (nic se nestahuje);
-    slouzi jen k tomu, aby se do nahledu propsal zvoleny odkaz.
+    `title`/`authors` typicky prichazi stazene z toho odkazu; co odkaz nevrati,
+    dopadne zpet na aktualni nahled polozky. Bez nich by u knihy, kde analyza
+    autora nenasla, zustal nahled nevalidni a import by se zablokoval.
     """
     preview = item.current_preview or ImportPreview()
     return ImportCandidate(
-        source="manual",
-        title=preview.title,
-        authors=preview.authors,
+        source=source.strip() or "manual",
+        title=title.strip() or preview.title,
+        authors=authors.strip() or preview.authors,
         url=url.strip(),
         score=0,
         reason="manual",
+        detail=detail,
     )
 
 
