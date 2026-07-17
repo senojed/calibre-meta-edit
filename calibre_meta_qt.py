@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.8"
+APP_VERSION = "0.4.9"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -1397,7 +1397,10 @@ if PYSIDE6_AVAILABLE:
             right_panel = QVBoxLayout()
             self.detail_text = QTextEdit()
             self.detail_text.setReadOnly(True)
-            right_panel.addWidget(self.detail_text, stretch=2)
+            # Detail ma par radku pevneho textu, kandidatu byvaji desitky a scrolluje se
+            # v nich. Stejny stretch je rozdeli napul misto drivejsiho pomeru 2:1, kde
+            # detail zabiral vetsinu vysky prazdnym mistem.
+            right_panel.addWidget(self.detail_text, stretch=1)
 
             right_panel.addWidget(QLabel("Nalezení kandidáti (ruční výběr):"))
             self.candidates_list = QListWidget()
@@ -2662,10 +2665,19 @@ if PYSIDE6_AVAILABLE:
             self.cover_options_layout.setContentsMargins(0, 0, 0, 0)
             self.cover_options_layout.setHorizontalSpacing(6)
             self.cover_options_layout.setVerticalSpacing(6)
+            # Vyber obalky jinak nejde vzit zpet - klik na miniaturu se hned uklada.
+            # Tohle tlacitko zahodi nabidku i vyber a vrati stav pred auditem.
+            self.clear_cover_button = QPushButton("Zrusit vyber obalky")
+            self.clear_cover_button.setToolTip(
+                "Zahodi nabidnute obalky a vrati knihu do stavu pred auditem obalek."
+            )
+            self.clear_cover_button.clicked.connect(self.clear_selected_cover)
+            self.clear_cover_button.setVisible(False)
             review_layout.addWidget(self.cover_status)
             review_layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
             review_layout.addWidget(self.cover_source)
             review_layout.addWidget(self.cover_options_widget)
+            review_layout.addWidget(self.clear_cover_button)
             review_layout.addWidget(QLabel("Metadata k zapisu"))
             self.review_data_grid = QGridLayout()
             self.review_data_labels: dict[str, QLabel] = {}
@@ -2924,6 +2936,9 @@ if PYSIDE6_AVAILABLE:
 
         def clear_cover_options(self) -> None:
             """Smaze mala tlacitka kandidatnich obalek."""
+            # Bez nabidky neni co rusit, tak tlacitko schovame; show_cover_options
+            # ho zase ukaze, az nejake obalky vykresli.
+            self.clear_cover_button.setVisible(False)
             self.cover_option_buttons = {}
             while self.cover_options_layout.count():
                 item = self.cover_options_layout.takeAt(0)
@@ -2958,6 +2973,16 @@ if PYSIDE6_AVAILABLE:
             self.refresh_table()
             self.update_cover_preview(self.selected_rows())
 
+        def clear_selected_cover(self) -> None:
+            """Zahodi nabidku obalek u vybrane knihy a vrati jeji stav pred auditem."""
+            rows = self.selected_rows()
+            if len(rows) != 1:
+                return
+            self.rows = shared.clear_rows_cover_selection(self.rows, rows[0].book_id)
+            self.save_csv(show_message=False)
+            self.refresh_table()
+            self.update_cover_preview(self.selected_rows())
+
         def show_cover_options(self, row: cme.MatchRow, cover_urls: Sequence[str]) -> None:
             """Zobrazi grid kandidatnich obalek z pracovnich dat."""
             self.clear_cover_options()
@@ -2976,6 +3001,7 @@ if PYSIDE6_AVAILABLE:
                     self.set_cover_button_image(button, cached[1])
                 else:
                     self.load_cover_url(cover_url)
+            self.clear_cover_button.setVisible(bool(cover_urls))
 
         def load_cover_url(self, cover_url: str) -> None:
             """Stahne obrazek kandidata na pozadi."""
@@ -3021,6 +3047,8 @@ if PYSIDE6_AVAILABLE:
             preview_url = selected_url or cover_urls[0]
             if row.cover_reason == "cover-overwrite-declined":
                 status = "Kandidatni obalky - prepsani odmitnuto"
+            elif row.cover_reason == "cover-partial-error":
+                status = "Nektery zdroj obalek selhal - nabidka muze byt neuplna"
             elif selected_url:
                 status = "Vybrana kandidatni obalka"
             elif row.status == "skip":
@@ -3950,6 +3978,13 @@ if PYSIDE6_AVAILABLE:
             base = """
                 * { font-family: "Segoe UI"; }
                 QPushButton, QToolButton { min-height: 30px; padding: 4px 8px; border-radius: 3px; }
+                /* Border-radius vyse prepne tlacitka na stylesheet vykreslovani, cimz zmizi
+                   nativni ramecek. Bez vlastniho pozadi a ramu by tlacitko zdedilo pozadi
+                   okna a splynulo s pozadim jako obycejny text. Barvy pro dark/light se
+                   dopisuji nize; tady je varianta pro systemovy vzhled. */
+                QPushButton { background: palette(button); border: 1px solid palette(mid); }
+                QPushButton:hover { background: palette(light); }
+                QPushButton:pressed { background: palette(dark); }
                 QToolButton { font-size: 8pt; }
                 QToolButton[iconOnly="true"] {
                     min-width: 42px;
@@ -3984,6 +4019,9 @@ if PYSIDE6_AVAILABLE:
                 }
                 QTextEdit { font-family: Consolas; font-size: 10pt; }
             """
+            # Pravidla tlacitek musi v obou tematech prijit AZ za pravidlem pro QWidget.
+            # Oba selektory maji stejnou vahu, takze rozhoduje poradi - kdyby QWidget
+            # prislo pozdeji, prebilo by pozadi tlacitka pozadim okna.
             if self.theme == "dark":
                 self.setStyleSheet(
                     base
@@ -3991,6 +4029,10 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #202124; color: #f2f2f2; }
                     QLineEdit, QComboBox, QTextEdit { background: #2d2f33; color: #f2f2f2; border: 1px solid #4b4d52; }
                     QHeaderView::section { background: #3a3a3a; color: #ffffff; padding: 4px; }
+                    QPushButton { background: #3a3d42; color: #f2f2f2; border: 1px solid #5a5d63; }
+                    QPushButton:hover { background: #45484e; }
+                    QPushButton:pressed { background: #2d2f33; }
+                    QPushButton:disabled { background: #2a2c30; color: #6b6e73; border: 1px solid #3a3d42; }
                     """
                 )
             elif self.theme == "light":
@@ -4000,6 +4042,9 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #f5f5f5; color: #111111; }
                     QLineEdit, QComboBox, QTextEdit { background: #ffffff; color: #111111; border: 1px solid #c7c7c7; }
                     QHeaderView::section { background: #e8e8e8; color: #111111; padding: 4px; }
+                    QPushButton { background: #e9e9e9; color: #111111; border: 1px solid #b8b8b8; }
+                    QPushButton:hover { background: #dcdcdc; }
+                    QPushButton:pressed { background: #cfcfcf; }
                     """
                 )
             else:

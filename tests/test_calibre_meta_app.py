@@ -15,8 +15,8 @@ import calibre_meta_edit as cme
 
 class AppModelTests(unittest.TestCase):
     def test_app_title_includes_version(self):
-        self.assertEqual(app.APP_VERSION, "0.4.8")
-        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.4.8")
+        self.assertEqual(app.APP_VERSION, "0.4.9")
+        self.assertEqual(app.app_title(), "Calibre Meta Edit 0.4.9")
 
     def test_schedule_startup_preview_runs_preview_without_question(self):
         calls = []
@@ -496,6 +496,46 @@ class AppModelTests(unittest.TestCase):
         updated = app.update_rows_selected_cover(rows, 1, "https://img/2.jpg")
 
         self.assertEqual(updated[0].selected_cover_url, "https://img/2.jpg")
+
+    def test_clear_rows_cover_selection_touches_only_chosen_book(self):
+        rows = [
+            cme.MatchRow(
+                1,
+                "Prvni",
+                "Autor",
+                "review",
+                "https://www.databazeknih.cz/knihy/a-1",
+                "",
+                "manual",
+                "manual",
+                cover_urls="https://img/1.jpg|https://img/2.jpg",
+                selected_cover_url="https://img/1.jpg",
+                cover_reason="multiple-cover-candidates",
+                cover_pre_audit_status="skip",
+            ),
+            cme.MatchRow(
+                2,
+                "Druha",
+                "Autor",
+                "review",
+                "https://www.databazeknih.cz/knihy/b-2",
+                "",
+                "manual",
+                "manual",
+                cover_urls="https://img/3.jpg|https://img/4.jpg",
+                selected_cover_url="https://img/3.jpg",
+                cover_reason="multiple-cover-candidates",
+                cover_pre_audit_status="skip",
+            ),
+        ]
+
+        updated = app.clear_rows_cover_selection(rows, 2)
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].selected_cover_url, "https://img/1.jpg")
+        self.assertEqual(updated[1].status, "skip")
+        self.assertEqual(updated[1].cover_urls, "")
+        self.assertEqual(updated[1].selected_cover_url, "")
 
     def test_update_row_review_override_sets_single_field(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "review", "https://x", "", "manual", "manual")

@@ -79,6 +79,7 @@ MATCHES_FIELDS = [
     "cover_urls",
     "selected_cover_url",
     "cover_reason",
+    "cover_pre_audit_status",
     "review_published_year",
     "review_publisher",
     "review_tags",
@@ -120,6 +121,10 @@ class MatchRow:
     cover_urls: str = ""
     selected_cover_url: str = ""
     cover_reason: str = ""
+    # Stav radku tesne pred tim, nez ho audit obalek prepnul na review. Diky tomu
+    # umi "Zrusit vyber obalky" vratit knihu presne tam, kde byla, misto hadani.
+    # Prazdne = audit stav nemenil, takze neni co obnovovat.
+    cover_pre_audit_status: str = ""
     review_published_year: str = ""
     review_publisher: str = ""
     review_tags: str = ""
@@ -4329,6 +4334,7 @@ def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
         raw.get("cover_urls") or "",
         raw.get("selected_cover_url") or "",
         raw.get("cover_reason") or "",
+        raw.get("cover_pre_audit_status") or "",
         raw.get("review_published_year") or "",
         raw.get("review_publisher") or "",
         raw.get("review_tags") or "",
@@ -4814,7 +4820,23 @@ def cover_candidate_rows(
     ]
 
 
-def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None) -> list[CoverOption]:
+def _note_cover_error(errors: list[str] | None, url: str, exc: Exception) -> None:
+    """Zaznamena selhani jednoho zdroje obalek, kdyz volajici chce chyby sledovat.
+
+    Drive se tato selhani tise ignorovala (`except: pass`), takze pri vypadku site
+    obalky zmizely bez stopy. Kdyz volajici preda seznam `errors`, poznamename sem
+    duvod - audit z toho udela viditelny review misto tiche skip.
+    """
+    if errors is not None:
+        errors.append(f"{url}: {exc}")
+
+
+def cover_options_for_url(
+    url: str,
+    fetcher: Callable[[str], str] | None = None,
+    *,
+    errors: list[str] | None = None,
+) -> list[CoverOption]:
     """Stahne detail podporovaneho zdroje a vrati kandidatni obalky."""
     fetch = fetcher or fetch_text
     if is_valid_legie_book_url(url):
@@ -4828,8 +4850,8 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         if editions_url:
             try:
                 options.extend(parse_legie_edition_cover_options(fetch(editions_url)))
-            except Exception:
-                pass
+            except Exception as exc:
+                _note_cover_error(errors, editions_url, exc)
         return _renumber_legie_edition_labels(_dedupe_legie_cover_options(options))
     if is_valid_legie_story_url(url):
         return parse_legie_cover_options(fetch(legie_absolute_url(url)))
@@ -4854,8 +4876,8 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
         ):
             try:
                 options.extend(parse_databaze_edition_cover_options(fetch(editions_url)))
-            except Exception:
-                pass
+            except Exception as exc:
+                _note_cover_error(errors, editions_url, exc)
         return _dedupe_databaze_cover_options(options)
     return []
 
@@ -4863,15 +4885,20 @@ def cover_options_for_url(url: str, fetcher: Callable[[str], str] | None = None)
 def cover_options_for_urls(
     source_urls: Sequence[str],
     fetcher: Callable[[str], str] | None = None,
+    *,
+    errors: list[str] | None = None,
 ) -> list[CoverOption]:
     """Spoji hotove source-specific obalky v poradi zdroju a odstrani duplicity."""
     options: list[CoverOption] = []
     for index, source_url in enumerate(source_urls):
         try:
-            options.extend(cover_options_for_url(source_url, fetcher))
-        except Exception:
+            options.extend(cover_options_for_url(source_url, fetcher, errors=errors))
+        except Exception as exc:
+            # Primarni zdroj (index 0) necháme propadnout - audit z nej udela
+            # cover-fetch-error. Druhy+ zdroj drive zmizel tise; ted ho zaznamename.
             if index == 0:
                 raise
+            _note_cover_error(errors, source_url, exc)
     return _dedupe_cover_options(options)
 
 
@@ -4935,13 +4962,38 @@ def with_cover_fields(
     cover_reason: str,
     status: str | None = None,
 ) -> MatchRow:
-    """Vrati radek se zmenenym stavem obalek."""
+    """Vrati radek se zmenenym stavem obalek.
+
+    Kdyz audit stav prepisuje (posila `status`), schova si ten puvodni do
+    `cover_pre_audit_status`, aby ho slo pozdeji vratit. Bez prepisu stavu neni
+    co pamatovat a pole zustava prazdne.
+    """
+    changes_status = bool(status) and status != row.status
     return replace(
         row,
         status=status or row.status,
         cover_urls=cover_urls,
         selected_cover_url=selected_cover_url,
         cover_reason=cover_reason,
+        cover_pre_audit_status=row.status if changes_status else row.cover_pre_audit_status,
+    )
+
+
+def clear_cover_selection(row: MatchRow) -> MatchRow:
+    """Zahodi nabidku i vyber obalky a vrati stav, ktery mel radek pred auditem.
+
+    Slouzi tlacitku "Zrusit vyber obalky": uzivatel zadnou z nabidnutych obalek
+    nechce a chce knihu zpatky tak, jak byla. Kdyz si audit zadny stav neschoval
+    (nabidka stav nemenila), stav necháme byt - rucni volbu uzivatele nesmime
+    prepsat.
+    """
+    return replace(
+        row,
+        status=row.cover_pre_audit_status or row.status,
+        cover_urls="",
+        selected_cover_url="",
+        cover_reason="",
+        cover_pre_audit_status="",
     )
 
 
@@ -4968,8 +5020,11 @@ def audit_cover_rows(
         ):
             updated.append(row)
             continue
+        errors: list[str] = []
         try:
-            options = cover_options_for_urls(_cover_source_urls_for_row(row), fetcher)
+            options = cover_options_for_urls(
+                _cover_source_urls_for_row(row), fetcher, errors=errors
+            )
         except Exception:
             updated.append(with_cover_fields(row, "", "", "cover-fetch-error"))
             continue
@@ -4978,6 +5033,19 @@ def audit_cover_rows(
             continue
         urls_text = _cover_urls_text(options)
         preserved_selection = _preserved_selected_cover_url(row.selected_cover_url, options)
+        if errors:
+            # Cast zdroju selhala, ale neco se naslo. Nedavej to tise do skip -
+            # oznac review, at uzivatel vidi, ze nabidka obalek muze byt neuplna.
+            updated.append(
+                with_cover_fields(
+                    row,
+                    urls_text,
+                    preserved_selection,
+                    "cover-partial-error",
+                    status="review",
+                )
+            )
+            continue
         if len(options) == 1:
             updated.append(
                 with_cover_fields(

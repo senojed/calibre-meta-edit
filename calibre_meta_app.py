@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.8"
+APP_VERSION = "0.4.9"
 SETTINGS_PATH = APP_DIR / "settings.json"
 BACKUPS_DIR = APP_DIR / "backups"
 VALID_STATUSES = ("approve", "review", "skip")
@@ -330,6 +330,11 @@ def update_rows_selected_cover(rows: Sequence[cme.MatchRow], book_id: int, selec
             raise ValueError("Vybrana obalka neni mezi kandidaty.")
         updated.append(replace(row, selected_cover_url=selected_cover_url))
     return updated
+
+
+def clear_rows_cover_selection(rows: Sequence[cme.MatchRow], book_id: int) -> list[cme.MatchRow]:
+    """Zrusi nabidku i vyber obalky u jedne knihy a vrati ji stav pred auditem."""
+    return [cme.clear_cover_selection(row) if row.book_id == book_id else row for row in rows]
 
 
 REVIEW_OVERRIDE_FIELDS = {

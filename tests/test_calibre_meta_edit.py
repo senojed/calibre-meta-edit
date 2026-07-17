@@ -4412,6 +4412,60 @@ class CsvAndFilesystemTests(unittest.TestCase):
         self.assertEqual(loaded[0].review_publisher, "Laser")
         self.assertEqual(loaded[0].review_original_publisher, "Gollancz")
 
+    def test_matches_storage_roundtrip_keeps_cover_pre_audit_status(self):
+        """Bez ulozeni by se po restartu appky ztratilo, kam ma cancel vratit stav."""
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://x",
+            "",
+            "manual",
+            "manual",
+            cover_pre_audit_status="skip",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.db"
+            cme.write_matches_csv(path, [row], overwrite=False)
+            loaded = cme.read_matches_csv(path)
+
+        self.assertEqual(loaded[0].cover_pre_audit_status, "skip")
+
+    def test_read_matches_db_migrates_database_without_cover_pre_audit_status(self):
+        """Existujici knihovny maji tabulku bez noveho sloupce - nesmi to spadnout."""
+        import sqlite3
+
+        old_fields = [field for field in cme.MATCHES_FIELDS if field != "cover_pre_audit_status"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "matches.db"
+            connection = sqlite3.connect(path)
+            try:
+                columns = ", ".join(
+                    f"{field} text not null default ''" for field in old_fields if field != "book_id"
+                )
+                connection.execute(
+                    "create table match_rows ("
+                    "book_id integer primary key, sort_order integer not null default 0, "
+                    f"{columns})"
+                )
+                placeholders = ", ".join("?" for _field in ["sort_order", *old_fields])
+                connection.execute(
+                    f"insert into match_rows (sort_order, {', '.join(old_fields)}) values ({placeholders})",
+                    (0, 1, "Kniha", "Autor", "review", "https://www.databazeknih.cz/knihy/a-1",
+                     "", "manual", "manual", "databazeknih", "kniha", "https://img/1.jpg",
+                     "https://img/1.jpg", "multiple-cover-candidates", "", "", "", "", "", "", ""),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            loaded = cme.read_matches_csv(path)
+
+        self.assertEqual(loaded[0].book_id, 1)
+        self.assertEqual(loaded[0].status, "review")
+        self.assertEqual(loaded[0].cover_pre_audit_status, "")
+
     def test_write_matches_db_refuses_existing_rows_without_overwrite(self):
         row = cme.MatchRow(1, "Kniha", "Autor", "review", "", "", "none", "x")
         with tempfile.TemporaryDirectory() as tmp:
@@ -6007,6 +6061,93 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         self.assertEqual(updated[0].selected_cover_url, "")
         self.assertIn("https://www.legie.info/images/kniha-small/1/a.jpg", updated[0].cover_urls)
 
+    def test_audit_cover_rows_remembers_status_before_forcing_review(self):
+        """Bez zapamatovaneho stavu by 'Zrusit vyber obalky' nevedelo, kam se vratit."""
+        rows = [
+            cme.MatchRow(1, "Povidka", "Autor", "skip", "https://www.legie.info/povidka/40", "", "manual", "manual", "legie", "povidka"),
+        ]
+
+        updated = cme.audit_cover_rows(
+            rows,
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=lambda url: """
+                <div id="pro_obal">
+                  <img src="images/kniha-small/1/a.jpg" class="obal_kniha" />
+                  <img src="images/kniha-small/1/b.jpg" class="obal_kniha" />
+                </div>
+            """,
+        )
+
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_pre_audit_status, "skip")
+
+    def test_audit_cover_rows_keeps_pre_audit_status_empty_without_review(self):
+        """Jedina obalka stav nemeni, takze neni co pamatovat."""
+        rows = [
+            cme.MatchRow(1, "Povidka", "Autor", "skip", "https://www.legie.info/povidka/40", "", "manual", "manual", "legie", "povidka"),
+        ]
+
+        updated = cme.audit_cover_rows(
+            rows,
+            "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=lambda url: """
+                <div id="pro_obal">
+                  <img src="images/kniha-small/1/a.jpg" class="obal_kniha" />
+                </div>
+            """,
+        )
+
+        self.assertEqual(updated[0].cover_reason, "single-cover-candidate")
+        self.assertEqual(updated[0].cover_pre_audit_status, "")
+
+    def test_clear_cover_selection_restores_pre_audit_status_and_drops_covers(self):
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg|https://img/2.jpg",
+            selected_cover_url="https://img/1.jpg",
+            cover_reason="multiple-cover-candidates",
+            cover_pre_audit_status="skip",
+        )
+
+        cleared = cme.clear_cover_selection(row)
+
+        self.assertEqual(cleared.status, "skip")
+        self.assertEqual(cleared.cover_urls, "")
+        self.assertEqual(cleared.selected_cover_url, "")
+        self.assertEqual(cleared.cover_reason, "")
+        self.assertEqual(cleared.cover_pre_audit_status, "")
+
+    def test_clear_cover_selection_keeps_status_when_nothing_remembered(self):
+        """Rucne prepnuty stav se nesmi prepsat - pamet je prazdna, tak na nej nesahame."""
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "approve",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img/1.jpg",
+            selected_cover_url="https://img/1.jpg",
+            cover_reason="single-cover-candidate",
+        )
+
+        cleared = cme.clear_cover_selection(row)
+
+        self.assertEqual(cleared.status, "approve")
+        self.assertEqual(cleared.cover_urls, "")
+        self.assertEqual(cleared.selected_cover_url, "")
+
     def test_audit_cover_rows_supports_legie_book_url_without_cross_source_fetch(self):
         detail_url = "https://www.legie.info/kniha/2561-roger-zelazny-devet-princu-amberu"
         editions_url = detail_url + "/vydani"
@@ -6133,6 +6274,90 @@ class CalibreDbAndApplyTests(unittest.TestCase):
         )
         self.assertEqual(updated[0].selected_cover_url, legie_cover)
         self.assertEqual(updated[0].cover_reason, "multiple-cover-candidates")
+
+    def test_audit_cover_rows_flags_review_when_opposite_source_fails(self):
+        # Legie zdroj spadne, DK vrati jednu obalku. Drive se to tise ulozilo jako
+        # single-cover-candidate/skip a uzivatel nevedel, ze Legie chybi. Nove: review
+        # + cover-partial-error, aby to slo videt.
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        legie_url = "https://www.legie.info/kniha/2-book"
+        row = cme.MatchRow(
+            1, "Kniha", "Autor", "skip",
+            databaze_url, databaze_url + "|" + legie_url,
+            "manual", "manual",
+        )
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                return '<div id="left"></div>'
+            if url == legie_url:
+                raise OSError("connection refused legie")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, "https://cdn.example/dk-cover.jpg")
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
+
+    def test_audit_cover_rows_flags_review_when_databaze_editions_fail(self):
+        # DK detail vrati obalku, stranka dalsich vydani spadne. Drive tise pass.
+        databaze_url = "https://www.databazeknih.cz/knihy/book-1"
+        row = cme.MatchRow(
+            1, "Kniha", "Autor", "skip",
+            databaze_url, "",
+            "manual", "manual",
+        )
+
+        def fetcher(url):
+            if url == "https://www.databazeknih.cz/prehled-knihy/book-1":
+                return '<script type="application/ld+json">{"@type":"Book","image":"https://cdn.example/dk-cover.jpg"}</script>'
+            if url == "https://www.databazeknih.cz/dalsi-vydani/book-1":
+                raise OSError("timeout na dalsi-vydani")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {1: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, "https://cdn.example/dk-cover.jpg")
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
+
+    def test_audit_cover_rows_flags_review_when_legie_editions_fail(self):
+        # Legie detail vrati obalku, stranka vydani spadne. Drive tise pass.
+        legie_url = "https://www.legie.info/kniha/2-book"
+        legie_cover = "https://www.legie.info/images/kniha-small/2/2-cover.jpg"
+        row = cme.MatchRow(
+            5, "Kniha", "Autor", "skip",
+            legie_url, "",
+            "manual", "manual", "legie", "kniha",
+        )
+
+        def fetcher(url):
+            if url == legie_url:
+                return f'<div id="pro_obal"><img src="{legie_cover}" class="obal_kniha"></div>'
+            if url == legie_url + "/vydani":
+                raise OSError("connection reset legie vydani")
+            raise AssertionError(url)
+
+        updated = cme.audit_cover_rows(
+            [row], "library",
+            cover_flags_reader=lambda library, ids: {5: False},
+            fetcher=fetcher,
+        )
+
+        self.assertEqual(updated[0].cover_urls, legie_cover)
+        self.assertEqual(updated[0].status, "review")
+        self.assertEqual(updated[0].cover_reason, "cover-partial-error")
 
     def test_audit_cover_rows_preserves_selected_databaze_alias_after_normalization(self):
         databaze_url = "https://www.databazeknih.cz/knihy/book-12111"

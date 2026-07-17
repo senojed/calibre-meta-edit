@@ -24,8 +24,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.8")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.8")
+        self.assertEqual(qt.APP_VERSION, "0.4.9")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.9")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -616,7 +616,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.8")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.9")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -3336,6 +3336,79 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("Obalka uz je v Calibre", window.cover_status.text())
         self.assertIn("https://img.example/new.jpg", window.cover_option_buttons)
         load_cover.assert_called()
+        app.processEvents()
+
+    def test_clear_cover_button_appears_only_with_candidate_offer(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        offered = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.example/a.jpg|https://img.example/b.jpg",
+            cover_reason="multiple-cover-candidates",
+            cover_pre_audit_status="skip",
+        )
+
+        with (
+            patch.object(qt.cme, "get_local_cover_path", return_value=None),
+            patch.object(window, "load_cover_url"),
+        ):
+            # isHidden(), ne isVisibleTo(): Review je zalozka v tabu, takze kdyz
+            # neni aktivni, cela stranka je skryta a viditelnost by lhala.
+            window.update_cover_preview([offered])
+            self.assertFalse(window.clear_cover_button.isHidden())
+
+            window.update_cover_preview([])
+            self.assertTrue(window.clear_cover_button.isHidden())
+
+        app.processEvents()
+
+    def test_clear_selected_cover_restores_pre_audit_status_and_saves(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        row = cme.MatchRow(
+            1,
+            "Kniha",
+            "Autor",
+            "review",
+            "https://www.databazeknih.cz/knihy/a-1",
+            "",
+            "manual",
+            "manual",
+            cover_urls="https://img.example/a.jpg|https://img.example/b.jpg",
+            selected_cover_url="https://img.example/a.jpg",
+            cover_reason="multiple-cover-candidates",
+            cover_pre_audit_status="skip",
+        )
+        window.rows = [row]
+
+        with (
+            patch.object(window, "selected_rows", return_value=[row]),
+            patch.object(window, "save_csv") as save_csv,
+            patch.object(window, "refresh_table"),
+            patch.object(window, "update_cover_preview"),
+        ):
+            window.clear_selected_cover()
+
+        self.assertEqual(window.rows[0].status, "skip")
+        self.assertEqual(window.rows[0].cover_urls, "")
+        self.assertEqual(window.rows[0].selected_cover_url, "")
+        self.assertEqual(window.rows[0].cover_pre_audit_status, "")
+        save_csv.assert_called_once()
         app.processEvents()
 
     def test_cover_preview_hides_written_candidates_for_finished_rows(self):
