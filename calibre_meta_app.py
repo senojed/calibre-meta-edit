@@ -332,6 +332,11 @@ def update_rows_selected_cover(rows: Sequence[cme.MatchRow], book_id: int, selec
     return updated
 
 
+def clear_rows_cover_selection(rows: Sequence[cme.MatchRow], book_id: int) -> list[cme.MatchRow]:
+    """Zrusi nabidku i vyber obalky u jedne knihy a vrati ji stav pred auditem."""
+    return [cme.clear_cover_selection(row) if row.book_id == book_id else row for row in rows]
+
+
 REVIEW_OVERRIDE_FIELDS = {
     "Rok vydani": "review_published_year",
     "Vydavatel": "review_publisher",

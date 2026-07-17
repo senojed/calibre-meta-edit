@@ -2665,10 +2665,19 @@ if PYSIDE6_AVAILABLE:
             self.cover_options_layout.setContentsMargins(0, 0, 0, 0)
             self.cover_options_layout.setHorizontalSpacing(6)
             self.cover_options_layout.setVerticalSpacing(6)
+            # Vyber obalky jinak nejde vzit zpet - klik na miniaturu se hned uklada.
+            # Tohle tlacitko zahodi nabidku i vyber a vrati stav pred auditem.
+            self.clear_cover_button = QPushButton("Zrusit vyber obalky")
+            self.clear_cover_button.setToolTip(
+                "Zahodi nabidnute obalky a vrati knihu do stavu pred auditem obalek."
+            )
+            self.clear_cover_button.clicked.connect(self.clear_selected_cover)
+            self.clear_cover_button.setVisible(False)
             review_layout.addWidget(self.cover_status)
             review_layout.addWidget(self.cover_image, alignment=Qt.AlignmentFlag.AlignHCenter)
             review_layout.addWidget(self.cover_source)
             review_layout.addWidget(self.cover_options_widget)
+            review_layout.addWidget(self.clear_cover_button)
             review_layout.addWidget(QLabel("Metadata k zapisu"))
             self.review_data_grid = QGridLayout()
             self.review_data_labels: dict[str, QLabel] = {}
@@ -2927,6 +2936,9 @@ if PYSIDE6_AVAILABLE:
 
         def clear_cover_options(self) -> None:
             """Smaze mala tlacitka kandidatnich obalek."""
+            # Bez nabidky neni co rusit, tak tlacitko schovame; show_cover_options
+            # ho zase ukaze, az nejake obalky vykresli.
+            self.clear_cover_button.setVisible(False)
             self.cover_option_buttons = {}
             while self.cover_options_layout.count():
                 item = self.cover_options_layout.takeAt(0)
@@ -2961,6 +2973,16 @@ if PYSIDE6_AVAILABLE:
             self.refresh_table()
             self.update_cover_preview(self.selected_rows())
 
+        def clear_selected_cover(self) -> None:
+            """Zahodi nabidku obalek u vybrane knihy a vrati jeji stav pred auditem."""
+            rows = self.selected_rows()
+            if len(rows) != 1:
+                return
+            self.rows = shared.clear_rows_cover_selection(self.rows, rows[0].book_id)
+            self.save_csv(show_message=False)
+            self.refresh_table()
+            self.update_cover_preview(self.selected_rows())
+
         def show_cover_options(self, row: cme.MatchRow, cover_urls: Sequence[str]) -> None:
             """Zobrazi grid kandidatnich obalek z pracovnich dat."""
             self.clear_cover_options()
@@ -2979,6 +3001,7 @@ if PYSIDE6_AVAILABLE:
                     self.set_cover_button_image(button, cached[1])
                 else:
                     self.load_cover_url(cover_url)
+            self.clear_cover_button.setVisible(bool(cover_urls))
 
         def load_cover_url(self, cover_url: str) -> None:
             """Stahne obrazek kandidata na pozadi."""

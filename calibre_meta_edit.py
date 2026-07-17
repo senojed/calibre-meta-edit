@@ -79,6 +79,7 @@ MATCHES_FIELDS = [
     "cover_urls",
     "selected_cover_url",
     "cover_reason",
+    "cover_pre_audit_status",
     "review_published_year",
     "review_publisher",
     "review_tags",
@@ -120,6 +121,10 @@ class MatchRow:
     cover_urls: str = ""
     selected_cover_url: str = ""
     cover_reason: str = ""
+    # Stav radku tesne pred tim, nez ho audit obalek prepnul na review. Diky tomu
+    # umi "Zrusit vyber obalky" vratit knihu presne tam, kde byla, misto hadani.
+    # Prazdne = audit stav nemenil, takze neni co obnovovat.
+    cover_pre_audit_status: str = ""
     review_published_year: str = ""
     review_publisher: str = ""
     review_tags: str = ""
@@ -4329,6 +4334,7 @@ def _match_row_from_dict(raw: dict[str, str]) -> MatchRow:
         raw.get("cover_urls") or "",
         raw.get("selected_cover_url") or "",
         raw.get("cover_reason") or "",
+        raw.get("cover_pre_audit_status") or "",
         raw.get("review_published_year") or "",
         raw.get("review_publisher") or "",
         raw.get("review_tags") or "",
@@ -4956,13 +4962,38 @@ def with_cover_fields(
     cover_reason: str,
     status: str | None = None,
 ) -> MatchRow:
-    """Vrati radek se zmenenym stavem obalek."""
+    """Vrati radek se zmenenym stavem obalek.
+
+    Kdyz audit stav prepisuje (posila `status`), schova si ten puvodni do
+    `cover_pre_audit_status`, aby ho slo pozdeji vratit. Bez prepisu stavu neni
+    co pamatovat a pole zustava prazdne.
+    """
+    changes_status = bool(status) and status != row.status
     return replace(
         row,
         status=status or row.status,
         cover_urls=cover_urls,
         selected_cover_url=selected_cover_url,
         cover_reason=cover_reason,
+        cover_pre_audit_status=row.status if changes_status else row.cover_pre_audit_status,
+    )
+
+
+def clear_cover_selection(row: MatchRow) -> MatchRow:
+    """Zahodi nabidku i vyber obalky a vrati stav, ktery mel radek pred auditem.
+
+    Slouzi tlacitku "Zrusit vyber obalky": uzivatel zadnou z nabidnutych obalek
+    nechce a chce knihu zpatky tak, jak byla. Kdyz si audit zadny stav neschoval
+    (nabidka stav nemenila), stav necháme byt - rucni volbu uzivatele nesmime
+    prepsat.
+    """
+    return replace(
+        row,
+        status=row.cover_pre_audit_status or row.status,
+        cover_urls="",
+        selected_cover_url="",
+        cover_reason="",
+        cover_pre_audit_status="",
     )
 
 
