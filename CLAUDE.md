@@ -18,20 +18,29 @@ https://github.com/senojed/calibre-meta-edit
 
 ## Current baseline
 
-Current stable baseline is `main`.
+Current stable baseline is `main`. It is the only branch; there is no develop or
+release branch.
 
-Latest known stable state:
+Last recorded state (2026-07-17):
 
 ```text
-main HEAD / origin/main before this documentation update: 23fb06c ui: remove original publisher review field
-000d117: historical version 0.4.3 baseline only; not the current HEAD
-Visible app version: 0.4.4
-Tests: 461 OK (edit 293 + app 65 + qt 103)
+main HEAD: bf7faa0 Merge fix/cover-source-errors-visible
+Visible app version: 0.4.9
+Tests: 733 OK
 py_compile: OK
-Working tree: clean when this state was recorded
 ```
 
-Do not assume this section is current forever. Always check actual git state before starting work.
+This section rots. It sat at `0.4.4` while the app shipped `0.4.9`, so treat it as
+a hint, not a fact, and check git before starting work:
+
+```powershell
+git log --oneline -3
+git status --short
+```
+
+Two files are expected to show up dirty and are not yours to fix: `AGENTS.md`
+belongs to Codex, and the markdown under `docs/superpowers/` is untracked on
+purpose.
 
 ## Development rules
 
@@ -146,7 +155,7 @@ Do not commit `review.diff`.
 
 ## Versioning
 
-Visible app version is currently `0.4.4`.
+Visible app version is currently `0.4.9`.
 
 If bumping version:
 
@@ -164,54 +173,48 @@ tests/test_calibre_meta_qt.py
 tests/test_calibre_meta_app.py
 ```
 
-## Current completed work
+## What is already built
 
-Recent completed tasks on `main`:
+Do not maintain a feature changelog here. The list that used to live in this spot
+went five versions stale, which is what a hand-written changelog next to a git log
+always does. Read the history instead:
 
-* Anthropic + OpenAI cloud AI providers for import (alongside Ollama)
-* API key read from env var / `.env` (never settings.json); `.env` gitignored
-* AI text extraction, source-priority import selection, folder-author hints, junk
-  filename demotion, and all-caps title/author normalization
-* Multi-format import for EPUB, MOBI, AZW3, and PDB
-* Manual-link enrichment, candidate re-search, duplicate controls, and Calibre deletion
-* databazeknih search queries author before title (order-sensitive fulltext)
-* auto-fetch cover after a successful import
-* version bump to `0.4.4`
-* right-side Qt toolbar button order: import, covers, link, load from Calibre,
-  delete, write
-* original publisher removed from Review UI, `REVIEW_EDITABLE_FIELDS`, Review
-  display, and generated Calibre comments; legacy parsing/loading remains tolerated
-
-Known good commits:
-
-```text
-000d117 Bump version to 0.4.3
-7a8c746 Auto-fetch cover after a successful import
-9792bae Merge databaze-search-author-order (author before title)
-74cea1b Wire cloud providers into Preferences and import
-f1167c9 Normalize all-caps title and author from AI extraction
-8ee9e49 Reorder right toolbar buttons
-23fb06c Remove original publisher review field
-0660d77 Ignore .env to keep API keys out of git
+```powershell
+git log --oneline -30
 ```
 
-Old unchecked boxes in `docs/superpowers/plans/` are historical implementation
-plans. Determine task status from current code, tests, and git history instead.
+Commit messages in this repo carry the reasoning, not just the what, so the log is
+the honest record of why something looks the way it does.
+
+Two traps when judging what exists:
+
+* Unchecked boxes in `docs/superpowers/plans/` are historical plans, not a todo
+  list. Some are shipped, some abandoned. Decide from code, tests, and git.
+* `docs/superpowers/specs/2026-07-08-unified-import-selector-design.md` is about
+  choosing input files. It explicitly excludes redesigning the import dialogs, so
+  it is not the import dialog revamp.
 
 ## Next task
 
-Awaiting next task assignment.
+Awaiting next task assignment. Do not start speculative work.
 
-Do not start speculative work.
+On the table, in rough order of how concrete they are:
 
-Likely future tasks:
-
-* move API key storage to OS keychain (`keyring`) + GUI field for distribution
-  (or own proxy server if the dev pays for all users); `read_api_key` in
-  calibre_meta_edit.py is the single swap point
-* more cosmetic UI polish
-* more book import formats
-* bulk book import brainstorming/task
+* **Import dialog revamp** - merge the single `ImportDialog` and
+  `MultiImportResultsDialog` into one master-detail dialog, treating a single
+  import as a batch of one. Three deferred items ride along and should not be done
+  before it: clickable column sorting (rows are index-mapped today, so sorting
+  breaks them), the missing AI-failure warning in single import, and the disabled
+  button fill in the `system` theme (base stylesheet still hardcodes light
+  `#bdbdbd`, so disabled reads louder than enabled on a dark Windows palette).
+* **Stop button** in progress dialogs. Not small: work runs synchronously on the UI
+  thread and cannot be interrupted. The real fix is moving analysis/write to a
+  worker thread (`WorkerBridge` already exists for single import). Only worth doing
+  alongside that move.
+* **API key storage into the OS keychain** (`keyring`) + a GUI field, for
+  distributing the app to other people. `read_api_key` in `calibre_meta_edit.py` is
+  the single swap point.
+* **More import formats.**
 
 ## Reporting format
 
