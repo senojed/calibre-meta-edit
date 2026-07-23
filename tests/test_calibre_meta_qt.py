@@ -1608,6 +1608,25 @@ class QtImportTests(unittest.TestCase):
             )
         app.processEvents()
 
+    def test_colored_buttons_have_hover_and_pressed_states(self):
+        """Barevna ID tlacitka drive nemela :hover/:pressed, takze na rozdil od
+        ostatnich tlacitek nereagovala na mys. ID selektor prebiji obecny hover."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "system"
+        window.apply_theme()
+
+        style = window.styleSheet()
+        for object_name in ("neutralButton", "dangerButton", "approveButton",
+                            "reviewButton", "storyButton"):
+            self.assertIn(f"#{object_name}:hover", style)
+            self.assertIn(f"#{object_name}:pressed", style)
+        app.processEvents()
+
     def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication

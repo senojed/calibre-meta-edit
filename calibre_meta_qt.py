@@ -3998,6 +3998,20 @@ if PYSIDE6_AVAILABLE:
                 QPushButton#skipButton, QPushButton#neutralButton, QToolButton#skipButton, QToolButton#neutralButton { background: #757575; color: white; }
                 QPushButton#storyButton, QPushButton#updateButton, QToolButton#storyButton, QToolButton#updateButton { background: #1565c0; color: white; }
                 QPushButton#applyButton, QPushButton#dangerButton, QToolButton#applyButton, QToolButton#dangerButton { background: #c62828; color: white; }
+                /* Barevna tlacitka maji ID selektor, ktery prebiji obecne
+                   QPushButton:hover/:pressed, takze bez techto radku by na najeti
+                   mysi nereagovala (na rozdil od ostatnich tlacitek). Hover = svetlejsi
+                   odstin, pressed = tmavsi (stejne jako activebackground v app.py). */
+                QPushButton#approveButton:hover, QToolButton#approveButton:hover { background: #388e3c; }
+                QPushButton#approveButton:pressed, QToolButton#approveButton:pressed { background: #1b5e20; }
+                QPushButton#reviewButton:hover, QToolButton#reviewButton:hover { background: #f57c00; }
+                QPushButton#reviewButton:pressed, QToolButton#reviewButton:pressed { background: #bf5b00; }
+                QPushButton#skipButton:hover, QPushButton#neutralButton:hover, QToolButton#skipButton:hover, QToolButton#neutralButton:hover { background: #8d8d8d; }
+                QPushButton#skipButton:pressed, QPushButton#neutralButton:pressed, QToolButton#skipButton:pressed, QToolButton#neutralButton:pressed { background: #616161; }
+                QPushButton#storyButton:hover, QPushButton#updateButton:hover, QToolButton#storyButton:hover, QToolButton#updateButton:hover { background: #1976d2; }
+                QPushButton#storyButton:pressed, QPushButton#updateButton:pressed, QToolButton#storyButton:pressed, QToolButton#updateButton:pressed { background: #0d47a1; }
+                QPushButton#applyButton:hover, QPushButton#dangerButton:hover, QToolButton#applyButton:hover, QToolButton#dangerButton:hover { background: #d32f2f; }
+                QPushButton#applyButton:pressed, QPushButton#dangerButton:pressed, QToolButton#applyButton:pressed, QToolButton#dangerButton:pressed { background: #8e0000; }
                 QPushButton:disabled, QToolButton:disabled { background: #bdbdbd; color: #eeeeee; }
                 QLineEdit, QComboBox { min-height: 28px; }
                 QLineEdit::clear-button { width: 22px; height: 22px; subcontrol-position: center right; }
