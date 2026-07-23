@@ -1608,6 +1608,32 @@ class QtImportTests(unittest.TestCase):
             )
         app.processEvents()
 
+    def test_preferences_neutral_buttons_follow_theme_not_grey(self):
+        """Zmenit/Ulozit/Zavrit/Pouzit z Calibre drive mely natvrdo sedou
+        neutralButton, ktera v light teme vypadala jako tmave tlacitko z jineho
+        tematu. Maji brat obecny styl (svetla v light). Cervena danger zustava."""
+        from PySide6.QtWidgets import QApplication, QPushButton
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "light"
+        window.apply_theme()
+        dialog = qt.PreferencesDialog(window)
+
+        by_text = {b.text(): b for b in dialog.findChildren(QPushButton)}
+        for label in ("Zmenit", "Pouzit z Calibre", "Ulozit", "Zavrit"):
+            button = by_text[label]
+            self.assertEqual(button.objectName(), "")
+            pixel = button.grab().toImage().pixelColor(button.width() // 2, 4)
+            # svetle #e9e9e9 = (233, 233, 233), ne seda #757575 = (117, 117, 117)
+            self.assertEqual((pixel.red(), pixel.green(), pixel.blue()), (233, 233, 233), label)
+        # Cervena destruktivni tlacitka zustavaji vyrazna.
+        self.assertEqual(by_text["Rebuild data"].objectName(), "dangerButton")
+        self.assertEqual(by_text["Rollback"].objectName(), "dangerButton")
+        app.processEvents()
+
     def test_light_theme_uses_soft_gridline(self):
         """Base gridline palette(mid) je v light teme #b8b8b8 a na bilych bunkach
         vystupuje. Light ma mit jemnejsi #e0e0e0."""
