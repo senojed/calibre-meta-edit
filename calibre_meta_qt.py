@@ -21,7 +21,7 @@ import calibre_meta_edit as cme
 
 
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.9"
+APP_VERSION = "0.4.10"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
 ICON_DIR = APP_DIR / "icons"
@@ -2137,11 +2137,9 @@ if PYSIDE6_AVAILABLE:
             self.library_edit = QLineEdit(self.parent_window.library_path)
             form.addWidget(self.library_edit, 0, 1)
             browse = QPushButton("Zmenit")
-            browse.setObjectName("neutralButton")
             browse.clicked.connect(self.choose_library)
             form.addWidget(browse, 0, 2)
             use_calibre = QPushButton("Pouzit z Calibre")
-            use_calibre.setObjectName("neutralButton")
             use_calibre.clicked.connect(self.use_calibre_library)
             form.addWidget(use_calibre, 0, 3)
             form.addWidget(QLabel("Vzhled"), 1, 0)
@@ -2205,10 +2203,8 @@ if PYSIDE6_AVAILABLE:
             rollback.setObjectName("dangerButton")
             rollback.clicked.connect(self.run_rollback)
             save = QPushButton("Ulozit")
-            save.setObjectName("neutralButton")
             save.clicked.connect(self.save_library)
             close = QPushButton("Zavrit")
-            close.setObjectName("neutralButton")
             close.clicked.connect(self.accept)
             buttons.addWidget(rebuild)
             buttons.addWidget(rollback)
@@ -3998,6 +3994,20 @@ if PYSIDE6_AVAILABLE:
                 QPushButton#skipButton, QPushButton#neutralButton, QToolButton#skipButton, QToolButton#neutralButton { background: #757575; color: white; }
                 QPushButton#storyButton, QPushButton#updateButton, QToolButton#storyButton, QToolButton#updateButton { background: #1565c0; color: white; }
                 QPushButton#applyButton, QPushButton#dangerButton, QToolButton#applyButton, QToolButton#dangerButton { background: #c62828; color: white; }
+                /* Barevna tlacitka maji ID selektor, ktery prebiji obecne
+                   QPushButton:hover/:pressed, takze bez techto radku by na najeti
+                   mysi nereagovala (na rozdil od ostatnich tlacitek). Hover = svetlejsi
+                   odstin, pressed = tmavsi (stejne jako activebackground v app.py). */
+                QPushButton#approveButton:hover, QToolButton#approveButton:hover { background: #388e3c; }
+                QPushButton#approveButton:pressed, QToolButton#approveButton:pressed { background: #1b5e20; }
+                QPushButton#reviewButton:hover, QToolButton#reviewButton:hover { background: #f57c00; }
+                QPushButton#reviewButton:pressed, QToolButton#reviewButton:pressed { background: #bf5b00; }
+                QPushButton#skipButton:hover, QPushButton#neutralButton:hover, QToolButton#skipButton:hover, QToolButton#neutralButton:hover { background: #8d8d8d; }
+                QPushButton#skipButton:pressed, QPushButton#neutralButton:pressed, QToolButton#skipButton:pressed, QToolButton#neutralButton:pressed { background: #616161; }
+                QPushButton#storyButton:hover, QPushButton#updateButton:hover, QToolButton#storyButton:hover, QToolButton#updateButton:hover { background: #1976d2; }
+                QPushButton#storyButton:pressed, QPushButton#updateButton:pressed, QToolButton#storyButton:pressed, QToolButton#updateButton:pressed { background: #0d47a1; }
+                QPushButton#applyButton:hover, QPushButton#dangerButton:hover, QToolButton#applyButton:hover, QToolButton#dangerButton:hover { background: #d32f2f; }
+                QPushButton#applyButton:pressed, QPushButton#dangerButton:pressed, QToolButton#applyButton:pressed, QToolButton#dangerButton:pressed { background: #8e0000; }
                 QPushButton:disabled, QToolButton:disabled { background: #bdbdbd; color: #eeeeee; }
                 QLineEdit, QComboBox { min-height: 28px; }
                 QLineEdit::clear-button { width: 22px; height: 22px; subcontrol-position: center right; }
@@ -4042,13 +4052,25 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #f5f5f5; color: #111111; }
                     QLineEdit, QComboBox, QTextEdit { background: #ffffff; color: #111111; border: 1px solid #c7c7c7; }
                     QHeaderView::section { background: #e8e8e8; color: #111111; padding: 4px; }
+                    QTableWidget { gridline-color: #e0e0e0; }
                     QPushButton { background: #e9e9e9; color: #111111; border: 1px solid #b8b8b8; }
                     QPushButton:hover { background: #dcdcdc; }
                     QPushButton:pressed { background: #cfcfcf; }
+                    QPushButton:disabled { background: #f0f0f0; color: #909090; border: 1px solid #d5d5d5; }
                     """
                 )
             else:
-                self.setStyleSheet(base)
+                # System tema jinak spadne na svetle base disabled #bdbdbd/#eeeeee,
+                # kde skoro bily text splyva se svetlym pozadim (kontrast 1.62:1).
+                # Dame mu stejne vypnute tlacitko jako tmave tema: tmave pozadi,
+                # nevyrazny sedy text. Enabled tlacitka si dal berou barvu z palety
+                # (base), takze na tmave Windows palete disabled i enabled ladi.
+                self.setStyleSheet(
+                    base
+                    + """
+                    QPushButton:disabled { background: #2a2c30; color: #6b6e73; border: 1px solid #3a3d42; }
+                    """
+                )
 
         def open_preferences(self) -> None:
             PreferencesDialog(self).exec()

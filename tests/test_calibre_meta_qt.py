@@ -24,8 +24,8 @@ class QtHelperTests(unittest.TestCase):
     def test_qt_app_title_includes_version(self):
         import calibre_meta_qt as qt
 
-        self.assertEqual(qt.APP_VERSION, "0.4.9")
-        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.9")
+        self.assertEqual(qt.APP_VERSION, "0.4.10")
+        self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.10")
 
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
@@ -616,7 +616,7 @@ class QtHelperTests(unittest.TestCase):
 
         text = qt.statusbar_text("Ready", calibre_running=False, csv_loaded=True)
 
-        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.9")
+        self.assertEqual(text, "Ready | pracovni data nactena | 0.4.10")
 
     def test_default_filter_checked_hides_skip_after_start(self):
         import calibre_meta_qt as qt
@@ -1574,6 +1574,98 @@ class QtImportTests(unittest.TestCase):
         self.assertNotIn("QTableWidget::item { color:", style)
         self.assertNotIn("color: palette(text)", style)
         self.assertNotIn("QTableWidget::item { color: #111111; }", style)
+        app.processEvents()
+
+    def test_disabled_button_background_per_theme(self):
+        """Vypnuta tlacitka drive spadla na svetle base disabled (#bdbdbd/#eeeeee),
+        kde skoro bily text splyval s pozadim (1.62:1). System i light maji mit
+        vlastni citelny disabled: system tmavy jako dark tema, light svetlejsi nez
+        zapnute (ustupuje do svetleho okna)."""
+        from PySide6.QtWidgets import QApplication, QPushButton
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        cases = {
+            "system": (42, 44, 48),    # #2a2c30, jako tmave tema
+            "light": (240, 240, 240),  # #f0f0f0, svetlejsi nez enabled #e9e9e9
+            "dark": (42, 44, 48),      # #2a2c30
+        }
+        for theme, expected in cases.items():
+            window.theme = theme
+            window.apply_theme()
+            button = QPushButton("x")
+            button.setEnabled(False)
+            button.setStyleSheet(window.styleSheet())
+            button.resize(120, 30)
+            pixel = button.grab().toImage().pixelColor(60, 4)
+            self.assertEqual(
+                (pixel.red(), pixel.green(), pixel.blue()),
+                expected,
+                f"tema {theme}: nespravne pozadi vypnuteho tlacitka",
+            )
+        app.processEvents()
+
+    def test_preferences_neutral_buttons_follow_theme_not_grey(self):
+        """Zmenit/Ulozit/Zavrit/Pouzit z Calibre drive mely natvrdo sedou
+        neutralButton, ktera v light teme vypadala jako tmave tlacitko z jineho
+        tematu. Maji brat obecny styl (svetla v light). Cervena danger zustava."""
+        from PySide6.QtWidgets import QApplication, QPushButton
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "light"
+        window.apply_theme()
+        dialog = qt.PreferencesDialog(window)
+
+        by_text = {b.text(): b for b in dialog.findChildren(QPushButton)}
+        for label in ("Zmenit", "Pouzit z Calibre", "Ulozit", "Zavrit"):
+            button = by_text[label]
+            self.assertEqual(button.objectName(), "")
+            pixel = button.grab().toImage().pixelColor(button.width() // 2, 4)
+            # svetle #e9e9e9 = (233, 233, 233), ne seda #757575 = (117, 117, 117)
+            self.assertEqual((pixel.red(), pixel.green(), pixel.blue()), (233, 233, 233), label)
+        # Cervena destruktivni tlacitka zustavaji vyrazna.
+        self.assertEqual(by_text["Rebuild data"].objectName(), "dangerButton")
+        self.assertEqual(by_text["Rollback"].objectName(), "dangerButton")
+        app.processEvents()
+
+    def test_light_theme_uses_soft_gridline(self):
+        """Base gridline palette(mid) je v light teme #b8b8b8 a na bilych bunkach
+        vystupuje. Light ma mit jemnejsi #e0e0e0."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "light"
+        window.apply_theme()
+
+        self.assertIn("gridline-color: #e0e0e0", window.styleSheet())
+        app.processEvents()
+
+    def test_colored_buttons_have_hover_and_pressed_states(self):
+        """Barevna ID tlacitka drive nemela :hover/:pressed, takze na rozdil od
+        ostatnich tlacitek nereagovala na mys. ID selektor prebiji obecny hover."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "system"
+        window.apply_theme()
+
+        style = window.styleSheet()
+        for object_name in ("neutralButton", "dangerButton", "approveButton",
+                            "reviewButton", "storyButton"):
+            self.assertIn(f"#{object_name}:hover", style)
+            self.assertIn(f"#{object_name}:pressed", style)
         app.processEvents()
 
     def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
