@@ -4056,6 +4056,7 @@ if PYSIDE6_AVAILABLE:
                     QMainWindow, QWidget { background: #f5f5f5; color: #111111; }
                     QLineEdit, QComboBox, QTextEdit { background: #ffffff; color: #111111; border: 1px solid #c7c7c7; }
                     QHeaderView::section { background: #e8e8e8; color: #111111; padding: 4px; }
+                    QTableWidget { gridline-color: #e0e0e0; }
                     QPushButton { background: #e9e9e9; color: #111111; border: 1px solid #b8b8b8; }
                     QPushButton:hover { background: #dcdcdc; }
                     QPushButton:pressed { background: #cfcfcf; }

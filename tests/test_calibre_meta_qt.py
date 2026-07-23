@@ -1608,6 +1608,21 @@ class QtImportTests(unittest.TestCase):
             )
         app.processEvents()
 
+    def test_light_theme_uses_soft_gridline(self):
+        """Base gridline palette(mid) je v light teme #b8b8b8 a na bilych bunkach
+        vystupuje. Light ma mit jemnejsi #e0e0e0."""
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window.theme = "light"
+        window.apply_theme()
+
+        self.assertIn("gridline-color: #e0e0e0", window.styleSheet())
+        app.processEvents()
+
     def test_colored_buttons_have_hover_and_pressed_states(self):
         """Barevna ID tlacitka drive nemela :hover/:pressed, takze na rozdil od
         ostatnich tlacitek nereagovala na mys. ID selektor prebiji obecny hover."""
