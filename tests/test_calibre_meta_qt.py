@@ -1576,6 +1576,38 @@ class QtImportTests(unittest.TestCase):
         self.assertNotIn("QTableWidget::item { color: #111111; }", style)
         app.processEvents()
 
+    def test_disabled_button_background_per_theme(self):
+        """Vypnuta tlacitka drive spadla na svetle base disabled (#bdbdbd/#eeeeee),
+        kde skoro bily text splyval s pozadim (1.62:1). System i light maji mit
+        vlastni citelny disabled: system tmavy jako dark tema, light svetlejsi nez
+        zapnute (ustupuje do svetleho okna)."""
+        from PySide6.QtWidgets import QApplication, QPushButton
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+
+        cases = {
+            "system": (42, 44, 48),    # #2a2c30, jako tmave tema
+            "light": (240, 240, 240),  # #f0f0f0, svetlejsi nez enabled #e9e9e9
+            "dark": (42, 44, 48),      # #2a2c30
+        }
+        for theme, expected in cases.items():
+            window.theme = theme
+            window.apply_theme()
+            button = QPushButton("x")
+            button.setEnabled(False)
+            button.setStyleSheet(window.styleSheet())
+            button.resize(120, 30)
+            pixel = button.grab().toImage().pixelColor(60, 4)
+            self.assertEqual(
+                (pixel.red(), pixel.green(), pixel.blue()),
+                expected,
+                f"tema {theme}: nespravne pozadi vypnuteho tlacitka",
+            )
+        app.processEvents()
+
     def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication

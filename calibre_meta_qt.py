@@ -4045,10 +4045,21 @@ if PYSIDE6_AVAILABLE:
                     QPushButton { background: #e9e9e9; color: #111111; border: 1px solid #b8b8b8; }
                     QPushButton:hover { background: #dcdcdc; }
                     QPushButton:pressed { background: #cfcfcf; }
+                    QPushButton:disabled { background: #f0f0f0; color: #909090; border: 1px solid #d5d5d5; }
                     """
                 )
             else:
-                self.setStyleSheet(base)
+                # System tema jinak spadne na svetle base disabled #bdbdbd/#eeeeee,
+                # kde skoro bily text splyva se svetlym pozadim (kontrast 1.62:1).
+                # Dame mu stejne vypnute tlacitko jako tmave tema: tmave pozadi,
+                # nevyrazny sedy text. Enabled tlacitka si dal berou barvu z palety
+                # (base), takze na tmave Windows palete disabled i enabled ladi.
+                self.setStyleSheet(
+                    base
+                    + """
+                    QPushButton:disabled { background: #2a2c30; color: #6b6e73; border: 1px solid #3a3d42; }
+                    """
+                )
 
         def open_preferences(self) -> None:
             PreferencesDialog(self).exec()
