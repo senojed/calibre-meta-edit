@@ -5751,3 +5751,177 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertFalse(window.status_checks["review"].isChecked())
         self.assertTrue(window.status_checks["skip"].isChecked())
         app.processEvents()
+
+
+class ImportReviewDialogTests(unittest.TestCase):
+    """Faze 1 sjednoceneho import dialogu: postaveny vedle starych, nezapojeny."""
+
+    def _app(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+
+        return QApplication.instance() or QApplication(sys.argv)
+
+    def _analysis(
+        self,
+        *,
+        title="Kniha",
+        authors="Autor",
+        url="https://dk/1",
+        candidates=None,
+        signals=None,
+        duplicates=None,
+    ):
+        if candidates is None:
+            candidates = [cme.ImportCandidate("databazeknih", title, authors, url, score=100)]
+        return cme.ImportAnalysis(
+            epub_path="book.epub",
+            signals=signals or [],
+            candidates=candidates,
+            recommended=candidates[0] if candidates else None,
+            duplicates=duplicates or [],
+            preview=cme.ImportPreview(title=title, authors=authors, url=url),
+            messages=[],
+        )
+
+    def _item(self, name="book.epub", **analysis_kwargs):
+        return cme.build_single_import_batch_item(self._analysis(**analysis_kwargs), name)
+
+    def test_single_item_hides_list_selection_and_filter(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        dialog = qt.ImportReviewDialog([self._item()])
+
+        self.assertTrue(dialog.single)
+        self.assertTrue(dialog.items_table.isHidden())
+        self.assertTrue(dialog.selection_buttons_widget.isHidden())
+        self.assertTrue(dialog.filter_widget.isHidden())
+        self.assertTrue(dialog.summary_label.isHidden())
+        # Pravy detail zustava.
+        self.assertFalse(dialog.title_edit.isHidden())
+        self.assertFalse(dialog.authors_edit.isHidden())
+        app.processEvents()
+
+    def test_multiple_items_show_list_selection_and_filter(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        dialog = qt.ImportReviewDialog([self._item("a.epub"), self._item("b.epub")])
+
+        self.assertFalse(dialog.single)
+        self.assertFalse(dialog.items_table.isHidden())
+        self.assertFalse(dialog.selection_buttons_widget.isHidden())
+        self.assertFalse(dialog.filter_widget.isHidden())
+        self.assertEqual(dialog.items_table.rowCount(), 2)
+        app.processEvents()
+
+    def test_rows_hold_item_identity_and_checkbox_follows_after_sort(self):
+        from PySide6.QtCore import Qt
+
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        first = self._item("first.epub")
+        second = self._item("second.epub")
+        dialog = qt.ImportReviewDialog([first, second])
+
+        self.assertIs(dialog._item_for_row(0), first)
+        # Serazeni prehazi radky; identita se drzi v UserRole, ne v indexu.
+        dialog.items_table.sortItems(2, Qt.SortOrder.DescendingOrder)
+        self.assertIs(dialog._item_for_row(0), second)
+
+        # Zaskrtnuti radku 0 musi menit druhou knihu, ne prvni.
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+        self.assertTrue(second.checked_for_import)
+        self.assertFalse(first.checked_for_import)
+        app.processEvents()
+
+    def test_empty_sections_start_collapsed_filled_expanded(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        signal = cme.ImportSourceSignal(source="epub", title="Kniha", authors="Autor")
+        item = self._item(signals=[signal])  # signaly a kandidati jsou, duplicity ne
+
+        dialog = qt.ImportReviewDialog([item])
+
+        self.assertTrue(dialog.signals_section.is_expanded())
+        self.assertTrue(dialog.candidates_section.is_expanded())
+        self.assertFalse(dialog.duplicates_section.is_expanded())
+        app.processEvents()
+
+    def test_editing_title_author_flushes_into_item_preview(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = self._item()
+        dialog = qt.ImportReviewDialog([item])
+
+        dialog.title_edit.setText("Novy nazev")
+        dialog.authors_edit.setText("Novy autor")
+        preview = dialog.preview()
+
+        self.assertEqual(preview.title, "Novy nazev")
+        self.assertEqual(preview.authors, "Novy autor")
+        self.assertEqual(item.current_preview.title, "Novy nazev")
+        self.assertEqual(item.current_preview.authors, "Novy autor")
+        app.processEvents()
+
+    def test_switching_rows_saves_previous_edits_and_loads_next(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        a = self._item("a.epub")
+        b = self._item("b.epub", title="Kniha B")
+        dialog = qt.ImportReviewDialog([a, b])
+
+        dialog.title_edit.setText("Upraveno A")
+        dialog.items_table.setCurrentCell(1, 0)
+
+        self.assertEqual(a.current_preview.title, "Upraveno A")
+        self.assertEqual(dialog.title_edit.text(), "Kniha B")
+        app.processEvents()
+
+    def test_using_candidate_updates_preview_and_checks_item(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        cand = cme.ImportCandidate("databazeknih", "Vybrana", "Autor X", "https://dk/9", score=40)
+        item = self._item(candidates=[cand])
+        dialog = qt.ImportReviewDialog([item])
+
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.use_selected_candidate()
+
+        self.assertIs(item.selected_candidate, cand)
+        self.assertTrue(item.manually_confirmed)
+        self.assertTrue(item.checked_for_import)
+        self.assertEqual(dialog.title_edit.text(), "Vybrana")
+        self.assertEqual(item.current_preview.url, "https://dk/9")
+        app.processEvents()
+
+    def test_dialog_exposes_bottom_action_buttons(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        dialog = qt.ImportReviewDialog([self._item()])
+
+        for attr in ("backup_check", "validate_button", "export_button", "import_button", "close_button"):
+            self.assertTrue(hasattr(dialog, attr), f"chybi {attr}")
+        self.assertEqual(dialog.import_button.text(), "Importovat")
+        app.processEvents()
+
+    def test_analysis_error_item_disables_detail_editing(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = cme.MultiImportBatchItem(Path("bad.epub"), "bad.epub")
+        item.status = "analysis_error"
+        item.error_message = "rozbite"
+
+        dialog = qt.ImportReviewDialog([item])
+
+        self.assertFalse(dialog.title_edit.isEnabled())
+        self.assertFalse(dialog.candidates_list.isEnabled())
+        app.processEvents()

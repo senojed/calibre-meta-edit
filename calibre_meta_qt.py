@@ -2120,6 +2120,824 @@ if PYSIDE6_AVAILABLE:
             )
 
 
+    class CollapsibleSection(QWidget):
+        """Sekce se sbalitelnym obsahem. Hlavicka je tlacitko se sipkou.
+
+        Prazdne sekce (bez kandidatu, bez duplicit) se otevrou sbalene, aby na
+        detailu nezel prazdny prostor; uzivatel je kdykoli rozklikne.
+        """
+
+        def __init__(self, title: str, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(2)
+            self.toggle_button = QToolButton()
+            self.toggle_button.setText(title)
+            self.toggle_button.setCheckable(True)
+            self.toggle_button.setAutoRaise(True)
+            self.toggle_button.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
+            self.toggle_button.setArrowType(Qt.ArrowType.RightArrow)
+            self.toggle_button.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+            self.toggle_button.toggled.connect(self._apply_expanded)
+            layout.addWidget(self.toggle_button)
+            self.content = QWidget()
+            self._content_layout = QVBoxLayout(self.content)
+            self._content_layout.setContentsMargins(14, 0, 0, 4)
+            layout.addWidget(self.content)
+            self._apply_expanded(False)
+
+        def add_widget(self, widget: QWidget) -> None:
+            self._content_layout.addWidget(widget)
+
+        def add_layout(self, sublayout) -> None:
+            self._content_layout.addLayout(sublayout)
+
+        def _apply_expanded(self, expanded: bool) -> None:
+            self.content.setVisible(expanded)
+            self.toggle_button.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+            )
+
+        def set_expanded(self, expanded: bool) -> None:
+            # setChecked vyvola toggled -> _apply_expanded; kdyz uz je ve stavu,
+            # srovname sipku i viditelnost primo.
+            if self.toggle_button.isChecked() != expanded:
+                self.toggle_button.setChecked(expanded)
+            else:
+                self._apply_expanded(expanded)
+
+        def is_expanded(self) -> bool:
+            return self.toggle_button.isChecked()
+
+    class ImportReviewDialog(QDialog):
+        """Sjednoceny import dialog: single = davka o jedne, multi = cela davka.
+
+        Ma nahradit ImportDialog + MultiImportResultsDialog. Ve fazi 1 stoji jen
+        vedle nich, nezapojeny. Leva strana (seznam, hromadny vyber, filtr) se u
+        jedne knihy skryje; zustane pravy detail se stejnym rozlozenim jako u
+        davky. Radky drzi identitu polozky v UserRole (ne index), takze razeni
+        nerozbije, ktera kniha se zaskrtava.
+        """
+
+        # (item, kandidati|None, chyba) z vlakna "Hledat znovu".
+        research_done = Signal(object, object, str)
+        # (item, payload|None, chyba) z vlakna "Pouzit odkaz".
+        use_link_done = Signal(object, object, str)
+
+        def __init__(
+            self,
+            items: Sequence[cme.MultiImportBatchItem],
+            parent: QWidget | None = None,
+            *,
+            write_one: Callable[[cme.ImportPreview, Path], cme.ImportApplyResult] | None = None,
+            post_write_refresh: Callable[[cme.MultiImportWriteSummary], None] | None = None,
+            prepare_backup: Callable[[bool], Path | None] | None = None,
+            connectivity_check: Callable[[], bool] | None = None,
+            duplicate_finder: Callable[[cme.ImportPreview], list[cme.DuplicateCandidate]] | None = None,
+            link_data_func: Callable[[str], tuple[str, str, str, cme.BookDetailMetadata]] | None = None,
+            search_func: Callable[[str, str], list[cme.ImportCandidate]] | None = None,
+            runner: Callable[[Callable[[], None]], None] | None = None,
+        ) -> None:
+            super().__init__(parent)
+            self.items = list(items)
+            self.single = len(self.items) <= 1
+            self.write_one = write_one or getattr(parent, "_write_multiimport_item", None)
+            self.post_write_refresh = post_write_refresh or getattr(
+                parent, "_refresh_after_multiimport_write", None
+            )
+            self.prepare_backup = prepare_backup or getattr(
+                parent, "prepare_multiimport_backup", None
+            )
+            self.connectivity_check = connectivity_check or getattr(
+                parent, "is_online_now", None
+            )
+            self.duplicate_finder = duplicate_finder or getattr(
+                parent, "_find_import_duplicates", None
+            )
+            self.link_data_func = link_data_func or (lambda url: cme.fetch_import_link_data(url))
+            self.search_func = search_func or (
+                lambda title, authors: cme.lookup_import_candidates_for_query(title, authors)
+            )
+            self.research_runner = runner or (
+                lambda target: threading.Thread(target=target, daemon=True).start()
+            )
+
+            self._current_item: cme.MultiImportBatchItem | None = None
+            self._loading_detail = False
+            self._updating_check_state = False
+
+            self.setWindowTitle("Import knihy" if self.single else "Import knih")
+            self.resize(1000, 680)
+
+            root = QVBoxLayout(self)
+            self.summary_label = QLabel(multiimport_analysis_summary(self.items))
+            root.addWidget(self.summary_label)
+            self.selected_summary_label = QLabel()
+            root.addWidget(self.selected_summary_label)
+
+            self.selection_buttons_widget = QWidget()
+            selection_buttons = QHBoxLayout(self.selection_buttons_widget)
+            selection_buttons.setContentsMargins(0, 0, 0, 0)
+            self.select_safe_button = QPushButton("Vybrat 100 %")
+            self.select_safe_button.clicked.connect(self.select_safe_items)
+            selection_buttons.addWidget(self.select_safe_button)
+            self.select_all_button = QPushButton("Vybrat vše")
+            self.select_all_button.clicked.connect(self.select_all_items)
+            selection_buttons.addWidget(self.select_all_button)
+            self.clear_selection_button = QPushButton("Vše odznačit")
+            self.clear_selection_button.clicked.connect(self.clear_selected_items)
+            selection_buttons.addWidget(self.clear_selection_button)
+            selection_buttons.addStretch(1)
+            root.addWidget(self.selection_buttons_widget)
+
+            self.filter_widget = QWidget()
+            filter_bar = QHBoxLayout(self.filter_widget)
+            filter_bar.setContentsMargins(0, 0, 0, 0)
+            filter_bar.addWidget(QLabel("Filtr:"))
+            self.name_filter = QLineEdit()
+            self.name_filter.setPlaceholderText("Soubor")
+            self.name_filter.setClearButtonEnabled(True)
+            self.name_filter.textChanged.connect(self.apply_filters)
+            filter_bar.addWidget(self.name_filter, stretch=1)
+            filter_bar.addWidget(QLabel("Stav:"))
+            self.status_checks: dict[str, QCheckBox] = {}
+            for status in ("ready", "needs_review", "duplicate_warning",
+                           "analysis_error", "written", "write_error"):
+                check = QCheckBox(multiimport_status_label(status))
+                check.setChecked(True)
+                check.stateChanged.connect(lambda _state: self.apply_filters())
+                filter_bar.addWidget(check)
+                self.status_checks[status] = check
+            self.checked_filter = QComboBox()
+            self.checked_filter.addItem("Import: vše", None)
+            self.checked_filter.addItem("Zaškrtnuté", True)
+            self.checked_filter.addItem("Nezaškrtnuté", False)
+            self.checked_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
+            filter_bar.addWidget(self.checked_filter)
+            root.addWidget(self.filter_widget)
+
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+            self.items_table = QTableWidget(0, 3)
+            self.items_table.setHorizontalHeaderLabels(("Import", "Stav", "Soubor"))
+            self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+            self.items_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+            self.items_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.items_table.verticalHeader().setVisible(False)
+            header = self.items_table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            body.addWidget(self.items_table, stretch=1)
+
+            right_panel = QVBoxLayout()
+            body.addLayout(right_panel, stretch=2)
+            right_panel.addWidget(QLabel("Co se naimportuje"))
+            form = QFormLayout()
+            self.title_edit = QLineEdit()
+            self.authors_edit = QLineEdit()
+            form.addRow("Název", self.title_edit)
+            form.addRow("Autor/autoři", self.authors_edit)
+            self.source_label = QLabel()
+            self.source_label.setWordWrap(True)
+            form.addRow("Zdroj", self.source_label)
+            link_row = QHBoxLayout()
+            self.url_edit = QLineEdit()
+            self.url_edit.setPlaceholderText("odkaz na zdroj (lze upravit)")
+            link_row.addWidget(self.url_edit, stretch=1)
+            self.open_link_button = QPushButton("Otevřít odkaz")
+            self.open_link_button.clicked.connect(self.open_current_url)
+            link_row.addWidget(self.open_link_button)
+            form.addRow("Odkaz", link_row)
+            right_panel.addLayout(form)
+
+            self.signals_section = CollapsibleSection("Signály")
+            self.signals_list = QListWidget()
+            self.signals_section.add_widget(self.signals_list)
+            right_panel.addWidget(self.signals_section)
+
+            self.candidates_section = CollapsibleSection("Kandidáti")
+            self.candidates_list = QListWidget()
+            self.candidates_list.currentRowChanged.connect(lambda _row: self.update_candidate_buttons())
+            self.candidates_list.itemDoubleClicked.connect(lambda _item: self.use_selected_candidate())
+            self.candidates_section.add_widget(self.candidates_list)
+            candidate_buttons = QHBoxLayout()
+            self.use_candidate_button = QPushButton("Použít kandidáta")
+            self.use_candidate_button.clicked.connect(self.use_selected_candidate)
+            candidate_buttons.addWidget(self.use_candidate_button)
+            self.open_candidate_link_button = QPushButton("Otevřít odkaz")
+            self.open_candidate_link_button.clicked.connect(self.open_selected_candidate_link)
+            candidate_buttons.addWidget(self.open_candidate_link_button)
+            candidate_buttons.addStretch(1)
+            self.candidates_section.add_layout(candidate_buttons)
+            self.research_button = QPushButton("Hledat znovu")
+            self.research_button.clicked.connect(self.start_research)
+            self.candidates_section.add_widget(self.research_button)
+            manual_row = QHBoxLayout()
+            self.manual_url_edit = QLineEdit()
+            self.manual_url_edit.setPlaceholderText("Vlastní odkaz (URL), který znám jako správný")
+            manual_row.addWidget(self.manual_url_edit, stretch=1)
+            self.use_manual_url_button = QPushButton("Použít odkaz")
+            self.use_manual_url_button.clicked.connect(self.start_use_link)
+            manual_row.addWidget(self.use_manual_url_button)
+            self.candidates_section.add_layout(manual_row)
+            right_panel.addWidget(self.candidates_section)
+
+            self.duplicates_section = CollapsibleSection("Duplicity")
+            self.duplicates_list = QListWidget()
+            self.duplicates_section.add_widget(self.duplicates_list)
+            self.allow_duplicate_check = QCheckBox("Importovat i přes duplicitu")
+            self.duplicates_section.add_widget(self.allow_duplicate_check)
+            right_panel.addWidget(self.duplicates_section)
+            right_panel.addStretch(1)
+
+            buttons = QHBoxLayout()
+            self.backup_check = QCheckBox("Zálohovat databázi před importem")
+            self.backup_check.setChecked(True)
+            self.backup_check.setToolTip(
+                "Před začátkem importu vytvoří jednu kopii metadata.db do složky backups."
+            )
+            buttons.addWidget(self.backup_check)
+            buttons.addStretch(1)
+            self.validate_button = QPushButton("Ověřit výběr")
+            self.validate_button.clicked.connect(self.validate_selection)
+            buttons.addWidget(self.validate_button)
+            self.export_button = QPushButton("Exportovat CSV")
+            self.export_button.clicked.connect(self.export_csv)
+            buttons.addWidget(self.export_button)
+            self.import_button = QPushButton("Importovat" if self.single else "Importovat zaškrtnuté")
+            self.import_button.clicked.connect(self._on_import)
+            buttons.addWidget(self.import_button)
+            self.close_button = QPushButton("Zavřít")
+            self.close_button.clicked.connect(self.reject)
+            buttons.addWidget(self.close_button)
+            root.addLayout(buttons)
+
+            self.title_edit.textChanged.connect(lambda _t: self.update_import_button_enabled())
+            self.authors_edit.textChanged.connect(lambda _t: self.update_import_button_enabled())
+            self.url_edit.textChanged.connect(
+                lambda _t: self.open_link_button.setEnabled(bool(self.current_url()))
+            )
+            self.research_done.connect(self.finish_research)
+            self.use_link_done.connect(self.finish_use_link)
+
+            self._populate_items_table()
+            self.items_table.itemChanged.connect(self._on_check_changed)
+            self.items_table.currentCellChanged.connect(
+                lambda row, _col, _prow, _pcol: self._on_current_row_changed(row)
+            )
+            if self.items:
+                self.items_table.setCurrentCell(0, 0)
+            else:
+                self._load_detail(None)
+            self.update_selected_summary()
+
+            if self.single:
+                for hidden in (
+                    self.summary_label,
+                    self.selected_summary_label,
+                    self.selection_buttons_widget,
+                    self.filter_widget,
+                    self.items_table,
+                ):
+                    hidden.hide()
+
+        # --- tabulka polozek (identita v UserRole, ne index) ---
+
+        def _populate_items_table(self) -> None:
+            self.items_table.setSortingEnabled(False)
+            self.items_table.setRowCount(len(self.items))
+            for row, item in enumerate(self.items):
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                checkbox_item = QTableWidgetItem()
+                flags = (checkbox_item.flags() | Qt.ItemFlag.ItemIsUserCheckable) & ~Qt.ItemFlag.ItemIsEditable
+                if item.status == "analysis_error":
+                    flags &= ~Qt.ItemFlag.ItemIsUserCheckable
+                checkbox_item.setFlags(flags)
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                )
+                # Identita polozky na sloupci 0; vsechny per-radkove operace ji cti
+                # odsud, takze razeni (jine poradi radku) nic nerozbije.
+                checkbox_item.setData(Qt.ItemDataRole.UserRole, item)
+                status_item = QTableWidgetItem(multiimport_row_status_symbol(item))
+                status_item.setToolTip(multiimport_row_status_tooltip(item))
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                file_item = QTableWidgetItem(item.display_name)
+                file_item.setFlags(file_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.items_table.setItem(row, 0, checkbox_item)
+                self.items_table.setItem(row, 1, status_item)
+                self.items_table.setItem(row, 2, file_item)
+            self.items_table.setSortingEnabled(True)
+
+        def _item_for_row(self, row: int) -> "cme.MultiImportBatchItem | None":
+            if not 0 <= row < self.items_table.rowCount():
+                return None
+            cell = self.items_table.item(row, 0)
+            return cell.data(Qt.ItemDataRole.UserRole) if cell is not None else None
+
+        def _row_for_item(self, item: cme.MultiImportBatchItem) -> int:
+            for row in range(self.items_table.rowCount()):
+                if self._item_for_row(row) is item:
+                    return row
+            return -1
+
+        def _on_check_changed(self, table_item: QTableWidgetItem) -> None:
+            if self._updating_check_state or table_item.column() != 0:
+                return
+            item = table_item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                return
+            self._updating_check_state = True
+            try:
+                if item.status == "analysis_error":
+                    item.checked_for_import = False
+                    table_item.setCheckState(Qt.CheckState.Unchecked)
+                else:
+                    item.checked_for_import = table_item.checkState() == Qt.CheckState.Checked
+            finally:
+                self._updating_check_state = False
+            self.update_selected_summary()
+
+        def _on_current_row_changed(self, row: int) -> None:
+            if self._loading_detail:
+                return
+            self._flush_detail()
+            self._load_detail(self._item_for_row(row))
+
+        # --- detail (pravy panel) ---
+
+        def _flush_detail(self) -> None:
+            """Ulozi editace nazvu/autora/odkazu do nahledu prave zobrazene polozky."""
+            item = self._current_item
+            if item is None or item.current_preview is None:
+                return
+            item.current_preview = replace(
+                item.current_preview,
+                title=self.title_edit.text(),
+                authors=self.authors_edit.text(),
+                url=self.url_edit.text().strip(),
+                allow_strong_duplicate=self.allow_duplicate_check.isChecked(),
+            )
+
+        def _load_detail(self, item: "cme.MultiImportBatchItem | None") -> None:
+            self._current_item = item
+            editable = (
+                item is not None
+                and item.current_preview is not None
+                and item.status != "analysis_error"
+            )
+            self._loading_detail = True
+            try:
+                preview = (
+                    item.current_preview
+                    if item is not None and item.current_preview is not None
+                    else cme.ImportPreview()
+                )
+                self.title_edit.setText(preview.title)
+                self.authors_edit.setText(preview.authors)
+                self.source_label.setText(preview.source or "nenačteno")
+                self.url_edit.setText((preview.url or "").strip())
+
+                self.signals_list.clear()
+                signals = list(item.analysis.signals) if (item and item.analysis) else []
+                for signal in signals:
+                    self.signals_list.addItem(f"{signal.source}: {signal.title} / {signal.authors}")
+
+                self.populate_candidates(item)
+
+                self.duplicates_list.clear()
+                duplicates = list(item.duplicates) if item else []
+                for duplicate in duplicates:
+                    self.duplicates_list.addItem(
+                        f"{duplicate.score} {duplicate.book_id}: {duplicate.title} / {duplicate.authors}"
+                    )
+                self.allow_duplicate_check.setChecked(bool(preview.allow_strong_duplicate))
+                self.allow_duplicate_check.setEnabled(editable and bool(duplicates))
+
+                self.title_edit.setEnabled(editable)
+                self.authors_edit.setEnabled(editable)
+                self.url_edit.setEnabled(editable)
+                self.open_link_button.setEnabled(bool(self.current_url()))
+                self.research_button.setEnabled(editable)
+                self.manual_url_edit.setEnabled(editable)
+                self.use_manual_url_button.setEnabled(editable)
+
+                # Chytry vychozi stav: sekce s obsahem rozbalena, prazdna sbalena.
+                self.signals_section.set_expanded(bool(signals))
+                candidates = list(item.analysis.candidates) if (item and item.analysis) else []
+                self.candidates_section.set_expanded(bool(candidates))
+                self.duplicates_section.set_expanded(bool(duplicates))
+            finally:
+                self._loading_detail = False
+            self.update_import_button_enabled()
+
+        def current_url(self) -> str:
+            return (self.url_edit.text() or "").strip()
+
+        def open_current_url(self) -> None:
+            url = self.current_url()
+            if url:
+                QDesktopServices.openUrl(QUrl(url))
+
+        def preview(self) -> cme.ImportPreview:
+            self._flush_detail()
+            item = self._current_item or (self.items[0] if self.items else None)
+            if item is None or item.current_preview is None:
+                return cme.ImportPreview()
+            return item.current_preview
+
+        def current_item(self) -> "cme.MultiImportBatchItem | None":
+            return self._current_item
+
+        # --- kandidati ---
+
+        def populate_candidates(self, item: "cme.MultiImportBatchItem | None") -> None:
+            self.candidates_list.clear()
+            can_edit = (
+                item is not None
+                and item.status != "analysis_error"
+                and item.analysis is not None
+            )
+            if can_edit:
+                for candidate in item.analysis.candidates:
+                    label = (
+                        f"{candidate.score}% | {candidate.source} | "
+                        f"{candidate.title} / {candidate.authors}\n{candidate.url}"
+                    )
+                    list_item = QListWidgetItem(label)
+                    list_item.setData(Qt.ItemDataRole.UserRole, candidate)
+                    self.candidates_list.addItem(list_item)
+            self.candidates_list.setEnabled(can_edit)
+            self.update_candidate_buttons()
+
+        def selected_list_candidate(self) -> "cme.ImportCandidate | None":
+            list_item = self.candidates_list.currentItem()
+            if list_item is None:
+                return None
+            return list_item.data(Qt.ItemDataRole.UserRole)
+
+        def update_candidate_buttons(self) -> None:
+            has_candidate = self.selected_list_candidate() is not None
+            enabled = self.candidates_list.isEnabled() and has_candidate
+            self.use_candidate_button.setEnabled(enabled)
+            self.open_candidate_link_button.setEnabled(enabled)
+
+        def use_selected_candidate(self) -> None:
+            item = self._current_item
+            candidate = self.selected_list_candidate()
+            if item is None or candidate is None:
+                return
+            self._flush_detail()
+            cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
+            if item.manually_confirmed:
+                item.checked_for_import = True
+            self.refresh_item_row(item)
+            self._load_detail(item)
+
+        def open_selected_candidate_link(self) -> None:
+            candidate = self.selected_list_candidate()
+            url = (candidate.url if candidate is not None else "").strip()
+            if url:
+                QDesktopServices.openUrl(QUrl(url))
+
+        # --- "Hledat znovu" a "Pouzit odkaz" na pozadi, vazane na polozku ---
+
+        def start_research(self) -> None:
+            item = self._current_item
+            if item is None or item.analysis is None:
+                return
+            self._flush_detail()
+            title = self.title_edit.text().strip()
+            authors = self.authors_edit.text().strip()
+            if not title:
+                return
+            self.research_button.setEnabled(False)
+            self.research_button.setText("Hledám...")
+
+            def worker() -> None:
+                try:
+                    candidates = self.search_func(title, authors)
+                    self.research_done.emit(item, candidates, "")
+                except Exception as exc:
+                    self.research_done.emit(item, None, str(exc))
+
+            self.research_runner(worker)
+
+        def finish_research(self, item: object, candidates: object, error: str) -> None:
+            self.research_button.setEnabled(True)
+            self.research_button.setText("Hledat znovu")
+            if error or candidates is None:
+                QMessageBox.warning(self, "Hledat znovu", error or "Hledání se nezdařilo.")
+                return
+            if item.analysis is not None:
+                item.analysis = replace(item.analysis, candidates=list(candidates))
+            if self.duplicate_finder is not None and item.current_preview is not None:
+                try:
+                    item.duplicates = list(self.duplicate_finder(item.current_preview))
+                except Exception:
+                    pass
+            if self._current_item is item:
+                self._load_detail(item)
+
+        def start_use_link(self) -> None:
+            item = self._current_item
+            if item is None or item.analysis is None:
+                return
+            url = self.manual_url_edit.text().strip()
+            if not url:
+                QMessageBox.information(self, "Vlastní odkaz", "Zadejte URL odkazu.")
+                return
+            self._flush_detail()
+            self.use_manual_url_button.setEnabled(False)
+            self.use_manual_url_button.setText("Načítám...")
+
+            def worker() -> None:
+                try:
+                    title, authors, written_url, detail = self.link_data_func(url)
+                    self.use_link_done.emit(item, (title, authors, (written_url or url), detail), "")
+                except Exception as exc:
+                    self.use_link_done.emit(item, None, str(exc))
+
+            self.research_runner(worker)
+
+        def finish_use_link(self, item: object, payload: object, error: str) -> None:
+            self.use_manual_url_button.setEnabled(True)
+            self.use_manual_url_button.setText("Použít odkaz")
+            if error or payload is None:
+                QMessageBox.warning(self, "Použít odkaz", error or "Odkaz se nepodařilo načíst.")
+                return
+            title, authors, target_url, detail = payload
+            target_url = (target_url or "").strip()
+            candidate = cme.build_manual_import_candidate(
+                target_url,
+                item,
+                title=title,
+                authors=authors,
+                source=cme.source_and_work_type_for_url(target_url)[0],
+                detail=detail,
+            )
+            cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
+            if item.manually_confirmed:
+                item.checked_for_import = True
+            self.refresh_item_row(item)
+            if self._current_item is item:
+                self._load_detail(item)
+
+        # --- hromadny vyber, filtr, stav ---
+
+        def update_selected_summary(self) -> None:
+            selected = sum(1 for item in self.items if item.checked_for_import)
+            self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
+            self.update_import_button_enabled()
+
+        def update_import_button_enabled(self) -> None:
+            if self.single:
+                # Jako stary single dialog: staci nazev a autor.
+                ready = bool(self.title_edit.text().strip() and self.authors_edit.text().strip())
+                self.import_button.setEnabled(ready)
+                self.import_button.setToolTip("" if ready else "Vyplňte název a autora.")
+                return
+            enabled = self.write_one is not None and any(
+                item.checked_for_import for item in self.items
+            )
+            self.import_button.setEnabled(enabled)
+            if self.write_one is None:
+                self.import_button.setToolTip("Zápis není dostupný.")
+            elif enabled:
+                self.import_button.setToolTip(
+                    "Ověří výběr a importuje pouze bezpečně připravené položky."
+                )
+            else:
+                self.import_button.setToolTip("Vyberte alespoň jednu položku.")
+
+        def _set_bulk_selection(
+            self,
+            should_check: Callable[[cme.MultiImportBatchItem, QTableWidgetItem], bool],
+        ) -> None:
+            self._updating_check_state = True
+            try:
+                for row in range(self.items_table.rowCount()):
+                    checkbox_item = self.items_table.item(row, 0)
+                    item = checkbox_item.data(Qt.ItemDataRole.UserRole)
+                    checked = should_check(item, checkbox_item)
+                    item.checked_for_import = checked
+                    checkbox_item.setCheckState(
+                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                    )
+            finally:
+                self._updating_check_state = False
+            self.update_selected_summary()
+
+        def select_safe_items(self) -> None:
+            def is_safe(item: cme.MultiImportBatchItem, checkbox_item: QTableWidgetItem) -> bool:
+                if not checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    return False
+                candidate = replace(item, checked_for_import=True)
+                return cme.validate_multiimport_checked_items([candidate]).ok
+
+            self._set_bulk_selection(is_safe)
+
+        def select_all_items(self) -> None:
+            self._set_bulk_selection(
+                lambda _item, checkbox_item: bool(
+                    checkbox_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+                )
+            )
+
+        def clear_selected_items(self) -> None:
+            self._set_bulk_selection(lambda _item, _checkbox_item: False)
+
+        def apply_filters(self) -> None:
+            name_query = self.name_filter.text()
+            statuses = {
+                status for status, check in self.status_checks.items() if check.isChecked()
+            }
+            if statuses == set(self.status_checks):
+                statuses = None
+            checked = self.checked_filter.currentData()
+            for row in range(self.items_table.rowCount()):
+                item = self._item_for_row(row)
+                if item is None:
+                    continue
+                visible = multiimport_item_matches_filter(
+                    item,
+                    name_query=name_query,
+                    statuses=statuses,
+                    checked=checked,
+                )
+                self.items_table.setRowHidden(row, not visible)
+
+        def refresh_item_row(self, item: cme.MultiImportBatchItem) -> None:
+            row = self._row_for_item(item)
+            if row < 0:
+                return
+            self._updating_check_state = True
+            try:
+                checkbox_item = self.items_table.item(row, 0)
+                checkbox_item.setCheckState(
+                    Qt.CheckState.Checked if item.checked_for_import else Qt.CheckState.Unchecked
+                )
+                status_item = self.items_table.item(row, 1)
+                status_item.setText(multiimport_row_status_symbol(item))
+                status_item.setToolTip(multiimport_row_status_tooltip(item))
+            finally:
+                self._updating_check_state = False
+            self.update_selected_summary()
+
+        # --- spodni akce ---
+
+        def validate_selection(self) -> None:
+            self._flush_detail()
+            result = cme.validate_multiimport_checked_items(self.items)
+            QMessageBox.information(
+                self,
+                "Ověření výběru",
+                multiimport_validation_summary_text(result),
+            )
+
+        def export_csv(self) -> None:
+            self._flush_detail()
+            selected_path, _filter = QFileDialog.getSaveFileName(
+                self,
+                "Exportovat multiimport CSV",
+                "multiimport-report.csv",
+                "CSV soubory (*.csv)",
+            )
+            if not selected_path:
+                return
+            path = Path(selected_path)
+            try:
+                write_multiimport_csv_report(path, self.items)
+            except Exception as exc:
+                QMessageBox.warning(self, "Export CSV", f"Export se nepodaril:\n{exc}")
+                return
+            QMessageBox.information(self, "Export CSV", f"CSV ulozeno:\n{path}")
+
+        def _on_import(self) -> None:
+            # Single = davka o jedne: potvrdit a vratit nahled (zapis resi volajici,
+            # stejne jako stary single dialog). Davka: interni davkovy zapis.
+            if self.single:
+                self._flush_detail()
+                self.accept()
+            else:
+                self.import_checked_items()
+
+        def import_checked_items(self) -> None:
+            self._flush_detail()
+            validation = cme.validate_multiimport_checked_items(self.items)
+            if not validation.ok:
+                QMessageBox.warning(
+                    self,
+                    "Multiimport",
+                    multiimport_validation_summary_text(validation),
+                )
+                return
+            if self.write_one is None:
+                QMessageBox.warning(self, "Multiimport", "Zápis není dostupný.")
+                return
+            answer = QMessageBox.question(
+                self,
+                "Potvrdit multiimport",
+                f"Naimportovat {len(validation.valid_items)} vybraných knih do Calibre?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+            if self.connectivity_check is not None:
+                try:
+                    online = bool(self.connectivity_check())
+                except Exception:
+                    online = False
+                if not online:
+                    offline_answer = QMessageBox.question(
+                        self,
+                        "Bez připojení k internetu",
+                        "Zdá se, že počítač není online. Zápis do Calibre proběhne, "
+                        "ale stažení obálek a doplnění údajů z webu může selhat.\n\n"
+                        "Chcete přesto importovat?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if offline_answer != QMessageBox.StandardButton.Yes:
+                        return
+
+            if self.prepare_backup is not None:
+                try:
+                    self.prepare_backup(self.backup_check.isChecked())
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self,
+                        "Záloha databáze",
+                        f"Zálohu se nepodařilo vytvořit, import zrušen:\n{exc}",
+                    )
+                    return
+
+            progress = MultiImportProgressDialog(len(validation.valid_items), self)
+            progress.prepare(len(validation.valid_items))
+
+            def update_progress(
+                current: int,
+                total: int,
+                item: cme.MultiImportBatchItem,
+            ) -> None:
+                self.refresh_item_row(item)
+                progress.update_progress(current, total, item.display_name)
+                QApplication.processEvents()
+
+            summaries: list[cme.MultiImportWriteSummary] = []
+            errors: list[BaseException] = []
+
+            def run_write() -> None:
+                try:
+                    summaries.append(
+                        cme.run_multiimport_batch_write(
+                            self.items,
+                            self.write_one,
+                            progress_callback=update_progress,
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    progress.accept()
+
+            progress.run_after_first_paint(run_write)
+            progress.show_prepared()
+            progress.exec()
+            try:
+                if errors:
+                    raise errors[0]
+                if not summaries:
+                    return
+                summary = summaries[0]
+            finally:
+                progress.close()
+                progress.deleteLater()
+                QApplication.processEvents()
+
+            if summary.succeeded > 0 and self.post_write_refresh is not None:
+                self.post_write_refresh(summary)
+            outcome = "Úspěch" if summary.ok else "Dokončeno s chybami"
+            QMessageBox.information(
+                self,
+                "Výsledek multiimportu",
+                f"{outcome}\n\n"
+                f"Pokusů: {summary.attempted}\n"
+                f"Úspěšně: {summary.succeeded}\n"
+                f"Selhalo: {summary.failed}"
+                f"{multiimport_write_failures_text(self.items)}",
+            )
+            self.update_import_button_enabled()
+            if summary.ok and summary.attempted > 0:
+                self.accept()
+
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
 

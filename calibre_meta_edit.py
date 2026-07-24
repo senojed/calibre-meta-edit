@@ -544,6 +544,51 @@ def build_multiimport_batch_items(paths: Iterable[Path]) -> list[MultiImportBatc
     return [MultiImportBatchItem(source_path=path, display_name=path.name) for path in paths]
 
 
+def apply_multiimport_analysis(
+    item: MultiImportBatchItem,
+    analysis: ImportAnalysis,
+    *,
+    precheck_safe_matches: bool = False,
+) -> None:
+    """Zapise vysledek analyzy do polozky: nahled, kandidat, duplicity, stav.
+
+    Jedno misto pro davkovou analyzu i pro zabaleni single importu, aby obe
+    cesty urcovaly stav polozky stejne.
+    """
+    item.analysis = analysis
+    item.current_preview = analysis.preview
+    item.selected_candidate = analysis.recommended
+    item.duplicates = list(analysis.duplicates)
+    safe_match = is_safe_multiimport_precheck(analysis)
+    if item.duplicates:
+        item.status = "duplicate_warning"
+    elif safe_match:
+        item.status = "ready"
+    else:
+        item.status = "needs_review"
+    item.checked_for_import = precheck_safe_matches and safe_match
+
+
+def build_single_import_batch_item(
+    analysis: ImportAnalysis,
+    source_path: str | Path,
+    display_name: str = "",
+) -> MultiImportBatchItem:
+    """Zabali jednu ImportAnalysis do davkove polozky (single = davka o jedne).
+
+    Sjednoceny import dialog pracuje jen nad seznamem MultiImportBatchItem;
+    single import proto svou analyzu obali do jedne polozky pres stejnou logiku
+    jako davkova analyza, jen bez predzaskrtavani (import resi vlastni cesta).
+    """
+    path = Path(source_path)
+    item = MultiImportBatchItem(
+        source_path=path,
+        display_name=display_name or path.name,
+    )
+    apply_multiimport_analysis(item, analysis)
+    return item
+
+
 def multiimport_precheck_issues(analysis: ImportAnalysis) -> list[str]:
     issues = []
     recommended = analysis.recommended
@@ -613,18 +658,9 @@ def run_multiimport_batch_analysis(
         item.status = "analysis_error"
 
     def store_analysis(item: MultiImportBatchItem, analysis: ImportAnalysis) -> None:
-        item.analysis = analysis
-        item.current_preview = analysis.preview
-        item.selected_candidate = analysis.recommended
-        item.duplicates = list(analysis.duplicates)
-        safe_match = is_safe_multiimport_precheck(analysis)
-        if item.duplicates:
-            item.status = "duplicate_warning"
-        elif safe_match:
-            item.status = "ready"
-        else:
-            item.status = "needs_review"
-        item.checked_for_import = precheck_safe_matches and safe_match
+        apply_multiimport_analysis(
+            item, analysis, precheck_safe_matches=precheck_safe_matches
+        )
 
     if max_workers <= 1 or total <= 1:
         for index, item in enumerate(batch, start=1):

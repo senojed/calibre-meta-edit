@@ -346,6 +346,32 @@ class TextAndUrlTests(unittest.TestCase):
         self.assertEqual(candidate.title, item.current_preview.title)
         self.assertEqual(candidate.authors, item.current_preview.authors)
 
+    def test_build_single_import_batch_item_wraps_safe_analysis_as_ready(self):
+        # Single import = davka o jedne. Helper zabali jednu analyzu do polozky
+        # stejne, jak by to udelala davkova analyza (stav, nahled, kandidat).
+        analysis = self._multiimport_analysis()
+
+        item = cme.build_single_import_batch_item(analysis, "folder/book.epub")
+
+        self.assertEqual(item.source_path, Path("folder/book.epub"))
+        self.assertEqual(item.display_name, "book.epub")
+        self.assertIs(item.analysis, analysis)
+        self.assertEqual(item.current_preview, analysis.preview)
+        self.assertIs(item.selected_candidate, analysis.recommended)
+        self.assertEqual(item.duplicates, list(analysis.duplicates))
+        self.assertEqual(item.status, "ready")
+        # Single nema predzaskrtavat; import resi vlastni cesta, ne checkbox.
+        self.assertFalse(item.checked_for_import)
+
+    def test_build_single_import_batch_item_marks_duplicate_warning(self):
+        duplicate = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+        analysis = self._multiimport_analysis(duplicates=[duplicate])
+
+        item = cme.build_single_import_batch_item(analysis, "book.epub")
+
+        self.assertEqual(item.status, "duplicate_warning")
+        self.assertEqual(item.duplicates, [duplicate])
+
     def test_run_multiimport_batch_write_blocks_entire_batch_when_checked_item_is_invalid(self):
         from unittest.mock import Mock
 
