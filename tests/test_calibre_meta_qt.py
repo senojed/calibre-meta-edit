@@ -5012,7 +5012,8 @@ class QtImportWiringTests(unittest.TestCase):
         self.assertFalse(window.worker_running)
         app.processEvents()
 
-    def test_start_epub_import_opens_dialog_with_analysis_on_success(self):
+    def test_start_epub_import_opens_review_dialog_with_batch_of_one(self):
+        # Single import jde pres sjednoceny dialog jako davka o jedne polozce.
         from PySide6.QtWidgets import QApplication
         import sys
         import calibre_meta_qt as qt
@@ -5025,8 +5026,8 @@ class QtImportWiringTests(unittest.TestCase):
         captured = {}
 
         class FakeDialog:
-            def __init__(self, passed_analysis, parent=None, **kwargs):
-                captured["analysis"] = passed_analysis
+            def __init__(self, passed_items, parent=None, **kwargs):
+                captured["items"] = passed_items
                 captured["parent"] = parent
 
             def exec(self):
@@ -5036,7 +5037,7 @@ class QtImportWiringTests(unittest.TestCase):
         def fake_runner(target):
             target()
 
-        with patch.object(qt, "ImportDialog", FakeDialog):
+        with patch.object(qt, "ImportReviewDialog", FakeDialog):
             window.start_epub_import(
                 "book.epub",
                 analyze=lambda path: analysis,
@@ -5044,10 +5045,50 @@ class QtImportWiringTests(unittest.TestCase):
             )
             app.processEvents()
 
-        self.assertIs(captured.get("analysis"), analysis)
+        items = captured.get("items")
+        self.assertEqual(len(items), 1)
+        self.assertIs(items[0].analysis, analysis)
+        self.assertEqual(items[0].current_preview, analysis.preview)
         self.assertIs(captured.get("parent"), window)
         self.assertTrue(captured.get("exec"))
         self.assertFalse(window.worker_running)
+        app.processEvents()
+
+    def test_single_import_warns_when_ai_layer_failed(self):
+        # Multi tuhle hlasku ukazuje davno; single ji dosud nemel a na mrtvou AI
+        # se prislo jen tak, ze detekce byla zahadne horsi.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        window._last_ai_resolver = SimpleNamespace(last_error="doslo kredit")
+        analysis = self._make_analysis()
+
+        class FakeDialog:
+            def __init__(self, _items, parent=None, **kwargs):
+                pass
+
+            def exec(self):
+                return 0
+
+        def fake_runner(target):
+            target()
+
+        with (
+            patch.object(qt, "ImportReviewDialog", FakeDialog),
+            patch.object(qt.QMessageBox, "warning") as warning,
+        ):
+            window.start_epub_import(
+                "book.epub",
+                analyze=lambda path: analysis,
+                runner=fake_runner,
+            )
+            app.processEvents()
+
+        warning.assert_called_once()
+        self.assertIn("doslo kredit", warning.call_args.args[2])
         app.processEvents()
 
     def test_start_epub_import_shows_warning_on_analysis_failure(self):
@@ -5065,7 +5106,7 @@ class QtImportWiringTests(unittest.TestCase):
             target()
 
         with (
-            patch.object(qt, "ImportDialog") as dialog_class,
+            patch.object(qt, "ImportReviewDialog") as dialog_class,
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
             window.start_epub_import("book.epub", analyze=boom, runner=fake_runner)
@@ -5101,7 +5142,7 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt, "run_import_analysis", side_effect=fake_run_import_analysis),
             patch.object(qt, "read_app_settings", return_value=ai_payload),
-            patch.object(qt, "ImportDialog"),
+            patch.object(qt, "ImportReviewDialog"),
         ):
             window.start_epub_import("kniha.epub", runner=fake_runner)
             app.processEvents()
@@ -5135,7 +5176,7 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt, "run_import_analysis", side_effect=fake_run_import_analysis),
             patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "off"}}),
-            patch.object(qt, "ImportDialog"),
+            patch.object(qt, "ImportReviewDialog"),
         ):
             window.start_epub_import("kniha.epub", runner=fake_runner)
             app.processEvents()
@@ -5245,7 +5286,7 @@ class QtImportWiringTests(unittest.TestCase):
             target()
 
         with (
-            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(qt, "ImportReviewDialog", FakeDialog),
             patch.object(window, "run_import_apply") as apply_stub,
         ):
             window.start_epub_import("kniha.epub", analyze=lambda path: analysis, runner=fake_runner)
@@ -5281,7 +5322,7 @@ class QtImportWiringTests(unittest.TestCase):
             target()
 
         with (
-            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(qt, "ImportReviewDialog", FakeDialog),
             patch.object(window, "run_import_apply") as apply_stub,
         ):
             window.start_epub_import(
@@ -5737,7 +5778,7 @@ class QtImportWiringTests(unittest.TestCase):
             target()
 
         with (
-            patch.object(qt, "ImportDialog", FakeDialog),
+            patch.object(qt, "ImportReviewDialog", FakeDialog),
             patch.object(window, "run_import_apply") as apply_stub,
         ):
             window.start_epub_import(
@@ -5899,6 +5940,37 @@ class ImportReviewDialogTests(unittest.TestCase):
         self.assertTrue(item.checked_for_import)
         self.assertEqual(dialog.title_edit.text(), "Vybrana")
         self.assertEqual(item.current_preview.url, "https://dk/9")
+        app.processEvents()
+
+    def test_using_candidate_enriches_preview_from_candidate_detail(self):
+        # Parita se starym single dialogem: kandidat nese detail (rok, vydavatel,
+        # serie, tagy, obalku) a ten se musi propsat do nahledu, ne jen nazev/autor.
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        detail = cme.BookDetailMetadata(
+            published_year="2001",
+            publisher="Argo",
+            series="Serie",
+            series_index="2",
+            tags=["fantasy", "epos"],
+            cover_url="https://dk/cover.jpg",
+        )
+        cand = cme.ImportCandidate(
+            "databazeknih", "Vybrana", "Autor X", "https://dk/9", score=40, detail=detail
+        )
+        item = self._item(candidates=[cand])
+        dialog = qt.ImportReviewDialog([item])
+
+        dialog.candidates_list.setCurrentRow(0)
+        dialog.use_selected_candidate()
+
+        self.assertEqual(item.current_preview.published_year, "2001")
+        self.assertEqual(item.current_preview.publisher, "Argo")
+        self.assertEqual(item.current_preview.series, "Serie")
+        self.assertEqual(item.current_preview.series_index, "2")
+        self.assertEqual(item.current_preview.tags, "fantasy, epos")
+        self.assertEqual(item.current_preview.selected_cover_url, "https://dk/cover.jpg")
         app.processEvents()
 
     def test_dialog_exposes_bottom_action_buttons(self):

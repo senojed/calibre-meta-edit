@@ -2587,6 +2587,41 @@ if PYSIDE6_AVAILABLE:
             self.use_candidate_button.setEnabled(enabled)
             self.open_candidate_link_button.setEnabled(enabled)
 
+        def _preview_with_detail(
+            self,
+            preview: cme.ImportPreview,
+            detail: "cme.BookDetailMetadata | None",
+            url: str,
+        ) -> cme.ImportPreview:
+            """Doplni do nahledu bohata metadata z detailu kandidata nebo odkazu.
+
+            Bez tohohle by import ztratil rok, vydavatele, serii, tagy, komentar
+            i obalku - stary single dialog je doplnoval, davkovy nikdy ne.
+            """
+            if detail is None:
+                return preview
+            updates: dict[str, str] = {}
+            if detail.published_year:
+                updates["published_year"] = detail.published_year
+            if detail.publisher:
+                updates["publisher"] = detail.publisher
+            if detail.series:
+                updates["series"] = detail.series
+            if detail.series_index:
+                updates["series_index"] = detail.series_index
+            if detail.tags:
+                updates["tags"] = ", ".join(detail.tags)
+            if (
+                detail.about_text
+                or detail.rating_percent
+                or detail.original_title
+                or detail.original_publication
+            ):
+                updates["comment"] = cme.format_enriched_comment(url, detail)
+            if detail.cover_url:
+                updates["selected_cover_url"] = detail.cover_url
+            return replace(preview, **updates) if updates else preview
+
         def use_selected_candidate(self) -> None:
             item = self._current_item
             candidate = self.selected_list_candidate()
@@ -2594,6 +2629,10 @@ if PYSIDE6_AVAILABLE:
                 return
             self._flush_detail()
             cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
+            if item.current_preview is not None:
+                item.current_preview = self._preview_with_detail(
+                    item.current_preview, candidate.detail, candidate.url
+                )
             if item.manually_confirmed:
                 item.checked_for_import = True
             self.refresh_item_row(item)
@@ -2682,6 +2721,10 @@ if PYSIDE6_AVAILABLE:
                 detail=detail,
             )
             cme.select_multiimport_candidate(item, candidate, self.duplicate_finder)
+            if item.current_preview is not None:
+                item.current_preview = self._preview_with_detail(
+                    item.current_preview, detail, target_url
+                )
             if item.manually_confirmed:
                 item.checked_for_import = True
             self.refresh_item_row(item)
@@ -4511,16 +4554,22 @@ if PYSIDE6_AVAILABLE:
                 return
             self.write_output(f"Import knihy: nahled pripraven{log_suffix}")
             self.set_status("Import knihy: nahled pripraven")
+            # Hned po analyze, stejne jako u davky. I kdyz se kniha vzapeti
+            # naimportuje automaticky, o mrtve AI ma uzivatel vedet - jinak se na
+            # ni prijde jen tak, ze je detekce zahadne horsi.
+            self.warn_about_ai_failure()
             if should_auto_import(analysis):
                 self.write_output(f"Import knihy: 100% shoda bez duplicit, importuji automaticky{log_suffix}")
                 self.set_status("Import knihy: automaticky import")
                 self.run_import_apply(analysis.preview, Path(analysis.epub_path))
                 return
             library = self.library_path
-            dialog = ImportDialog(
-                analysis,
+            # Single jde pres sjednoceny dialog jako davka o jedne polozce.
+            item = cme.build_single_import_batch_item(analysis, analysis.epub_path)
+            dialog = ImportReviewDialog(
+                [item],
                 parent=self,
-                duplicate_func=lambda preview: cme.find_calibre_import_duplicates(library, preview),
+                duplicate_finder=lambda preview: cme.find_calibre_import_duplicates(library, preview),
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.run_import_apply(dialog.preview(), Path(analysis.epub_path))
