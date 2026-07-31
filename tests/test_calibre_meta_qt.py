@@ -5942,6 +5942,24 @@ class ImportReviewDialogTests(unittest.TestCase):
         self.assertEqual(item.current_preview.url, "https://dk/9")
         app.processEvents()
 
+    def test_candidate_label_is_single_line_with_url_in_tooltip(self):
+        # URL na druhem radku zdvojnasobovala vysku kazdeho kandidata. Kompaktni
+        # jeden radek; URL do tooltipu a porad dostupna pres "Otevrit odkaz".
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        cand = cme.ImportCandidate(
+            "databazeknih", "Na vlnach Orinoka", "Jules Verne", "https://dk/933", score=100
+        )
+        dialog = qt.ImportReviewDialog([self._item(candidates=[cand])])
+
+        list_item = dialog.candidates_list.item(0)
+        self.assertNotIn("\n", list_item.text())
+        self.assertIn("100%", list_item.text())
+        self.assertIn("Na vlnach Orinoka", list_item.text())
+        self.assertEqual(list_item.toolTip(), "https://dk/933")
+        app.processEvents()
+
     def test_using_candidate_enriches_preview_from_candidate_detail(self):
         # Parita se starym single dialogem: kandidat nese detail (rok, vydavatel,
         # serie, tagy, obalku) a ten se musi propsat do nahledu, ne jen nazev/autor.

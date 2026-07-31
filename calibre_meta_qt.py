@@ -2565,11 +2565,14 @@ if PYSIDE6_AVAILABLE:
             )
             if can_edit:
                 for candidate in item.analysis.candidates:
+                    # Jeden radek at se vejde vic kandidatu; URL do tooltipu a
+                    # porad dostupna pres "Otevrit odkaz".
                     label = (
                         f"{candidate.score}% | {candidate.source} | "
-                        f"{candidate.title} / {candidate.authors}\n{candidate.url}"
+                        f"{candidate.title} / {candidate.authors}"
                     )
                     list_item = QListWidgetItem(label)
+                    list_item.setToolTip(candidate.url)
                     list_item.setData(Qt.ItemDataRole.UserRole, candidate)
                     self.candidates_list.addItem(list_item)
             self.candidates_list.setEnabled(can_edit)
