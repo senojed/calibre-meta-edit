@@ -4521,7 +4521,9 @@ if PYSIDE6_AVAILABLE:
                         cme.run_multiimport_batch_analysis(
                             items,
                             lambda path: analyze_book(str(path)),
-                            precheck_safe_matches=False,
+                            # Jiste shody (100 % bez duplicit) rovnou zaskrtnout,
+                            # aby "Vybrat 100 %" byl vychozi stav davkoveho okna.
+                            precheck_safe_matches=True,
                             progress_callback=update_progress,
                             max_workers=int(
                                 normalize_ai_settings(read_app_settings())["workers"]
@@ -4540,7 +4542,7 @@ if PYSIDE6_AVAILABLE:
                 raise errors[0]
             analyzed_items = analyzed[0] if analyzed else items
             self.warn_about_ai_failure()
-            MultiImportResultsDialog(analyzed_items, parent=self).exec()
+            ImportReviewDialog(analyzed_items, parent=self).exec()
             return analyzed_items
 
         def finish_import_analysis(self, analysis: object, error: str) -> None:

@@ -4189,7 +4189,7 @@ class QtImportWiringTests(unittest.TestCase):
             patch.object(
                 qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.No
             ),
-            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(qt, "ImportReviewDialog"),
         ):
             window.run_multiimport_analysis(
                 [Path("C:/books/book.epub")],
@@ -4261,7 +4261,7 @@ class QtImportWiringTests(unittest.TestCase):
 
         with (
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(qt, "ImportReviewDialog"),
             patch.object(cme, "run_multiimport_batch_analysis", return_value=[]),
             patch.object(qt.QMessageBox, "warning") as warning,
         ):
@@ -4289,7 +4289,7 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt, "read_app_settings", return_value={"ai": {"workers": 3}}),
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(qt, "ImportReviewDialog"),
             patch.object(cme, "run_multiimport_batch_analysis", return_value=[]) as batch_analysis,
         ):
             scheduled = []
@@ -4303,6 +4303,45 @@ class QtImportWiringTests(unittest.TestCase):
 
         # Pocet workeru bere z nastaveni, ne z pevne konstanty.
         self.assertEqual(batch_analysis.call_args.kwargs["max_workers"], 3)
+        app.processEvents()
+
+    def test_multiimport_prechecks_safe_matches(self):
+        # V davkovem okne jsou jiste shody (100 % bez duplicit) po analyze rovnou
+        # zaskrtnute k importu - "Vybrat 100 %" jako vychozi stav.
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = qt.CalibreMetaQtWindow()
+        safe = cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://dk/1", score=100)
+        analysis = cme.ImportAnalysis(
+            epub_path="b.epub",
+            signals=[],
+            candidates=[safe],
+            recommended=safe,
+            duplicates=[],
+            preview=cme.ImportPreview(title="Kniha", authors="Autor", url="https://dk/1"),
+            messages=[],
+        )
+        scheduled = []
+
+        with (
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
+            patch.object(qt, "ImportReviewDialog"),
+            patch.object(qt, "MultiImportResultsDialog"),
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
+            progress_dialog.return_value.exec.side_effect = lambda: scheduled.pop(0)()
+            items = window.run_multiimport_analysis(
+                [Path("C:/books/a.epub")],
+                analyze=lambda _path: analysis,
+                connectivity_check=lambda: True,
+            )
+
+        self.assertEqual(items[0].status, "ready")
+        self.assertTrue(items[0].checked_for_import)
         app.processEvents()
 
     def test_prepare_multiimport_backup_creates_one_backup_when_enabled(self):
@@ -4662,7 +4701,7 @@ class QtImportWiringTests(unittest.TestCase):
             patch.object(window, "_build_import_analyze_callable", return_value=analyze) as build_analyzer,
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents") as process_events,
-            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+            patch.object(qt, "ImportReviewDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
@@ -4720,7 +4759,7 @@ class QtImportWiringTests(unittest.TestCase):
             ) as question,
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt.QApplication, "processEvents"),
-            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+            patch.object(qt, "ImportReviewDialog") as results_dialog,
             patch.object(cme, "apply_import_preview") as apply_preview,
             patch.object(window, "run_import_apply") as run_apply,
         ):
@@ -4764,7 +4803,7 @@ class QtImportWiringTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.No,
             ) as question,
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+            patch.object(qt, "ImportReviewDialog") as results_dialog,
         ):
             items = window.run_multiimport_analysis(
                 [Path("C:/books/book.epub")],
@@ -4797,7 +4836,7 @@ class QtImportWiringTests(unittest.TestCase):
                 return_value=QMessageBox.StandardButton.No,
             ) as question,
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt, "MultiImportResultsDialog") as results_dialog,
+            patch.object(qt, "ImportReviewDialog") as results_dialog,
         ):
             items = window.run_multiimport_analysis(
                 [Path("C:/books/book.epub")],
