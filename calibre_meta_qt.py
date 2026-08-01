@@ -2155,6 +2155,9 @@ if PYSIDE6_AVAILABLE:
         def add_layout(self, sublayout) -> None:
             self._content_layout.addLayout(sublayout)
 
+        def set_title(self, title: str) -> None:
+            self.toggle_button.setText(title)
+
         def _apply_expanded(self, expanded: bool) -> None:
             self.content.setVisible(expanded)
             self.toggle_button.setArrowType(
@@ -2233,10 +2236,19 @@ if PYSIDE6_AVAILABLE:
             self.resize(1000, 680)
 
             root = QVBoxLayout(self)
-            self.summary_label = QLabel(multiimport_analysis_summary(self.items))
-            root.addWidget(self.summary_label)
+            body = QHBoxLayout()
+            root.addLayout(body, stretch=1)
+
+            # Levy sloupec: prehled, hromadny vyber, filtr souboru a seznam knih.
+            # U jedne knihy se cely skryje (self.left_panel.hide()); zustane detail.
+            self.left_panel = QWidget()
+            left = QVBoxLayout(self.left_panel)
+            left.setContentsMargins(0, 0, 0, 0)
+            self.summary_label = QLabel()
+            left.addWidget(self.summary_label)
             self.selected_summary_label = QLabel()
-            root.addWidget(self.selected_summary_label)
+            self.selected_summary_label.setStyleSheet("font-weight: bold;")
+            left.addWidget(self.selected_summary_label)
 
             self.selection_buttons_widget = QWidget()
             selection_buttons = QHBoxLayout(self.selection_buttons_widget)
@@ -2244,43 +2256,43 @@ if PYSIDE6_AVAILABLE:
             self.select_safe_button = QPushButton("Vybrat 100 %")
             self.select_safe_button.clicked.connect(self.select_safe_items)
             selection_buttons.addWidget(self.select_safe_button)
-            self.select_all_button = QPushButton("Vybrat vše")
+            self.select_all_button = QPushButton("Vše")
             self.select_all_button.clicked.connect(self.select_all_items)
             selection_buttons.addWidget(self.select_all_button)
-            self.clear_selection_button = QPushButton("Vše odznačit")
+            self.clear_selection_button = QPushButton("Nic")
             self.clear_selection_button.clicked.connect(self.clear_selected_items)
             selection_buttons.addWidget(self.clear_selection_button)
             selection_buttons.addStretch(1)
-            root.addWidget(self.selection_buttons_widget)
+            left.addWidget(self.selection_buttons_widget)
 
             self.filter_widget = QWidget()
             filter_bar = QHBoxLayout(self.filter_widget)
             filter_bar.setContentsMargins(0, 0, 0, 0)
-            filter_bar.addWidget(QLabel("Filtr:"))
             self.name_filter = QLineEdit()
-            self.name_filter.setPlaceholderText("Soubor")
+            self.name_filter.setPlaceholderText("Filtr souboru…")
             self.name_filter.setClearButtonEnabled(True)
             self.name_filter.textChanged.connect(self.apply_filters)
             filter_bar.addWidget(self.name_filter, stretch=1)
-            filter_bar.addWidget(QLabel("Stav:"))
+            left.addWidget(self.filter_widget)
+
+            # Filtr stavu: 6 zaskrtavatek ve dvou sloupcich, at se vejdou do uzkeho
+            # leveho panelu (v puvodnim okne byly v jedne siroke rade).
+            self.status_filter_widget = QWidget()
+            status_grid = QGridLayout(self.status_filter_widget)
+            status_grid.setContentsMargins(0, 0, 0, 0)
+            status_grid.addWidget(QLabel("Stav:"), 0, 0, 1, 2)
             self.status_checks: dict[str, QCheckBox] = {}
-            for status in ("ready", "needs_review", "duplicate_warning",
-                           "analysis_error", "written", "write_error"):
+            for index, status in enumerate(
+                ("ready", "needs_review", "duplicate_warning",
+                 "analysis_error", "written", "write_error")
+            ):
                 check = QCheckBox(multiimport_status_label(status))
                 check.setChecked(True)
                 check.stateChanged.connect(lambda _state: self.apply_filters())
-                filter_bar.addWidget(check)
+                status_grid.addWidget(check, 1 + index // 2, index % 2)
                 self.status_checks[status] = check
-            self.checked_filter = QComboBox()
-            self.checked_filter.addItem("Import: vše", None)
-            self.checked_filter.addItem("Zaškrtnuté", True)
-            self.checked_filter.addItem("Nezaškrtnuté", False)
-            self.checked_filter.currentIndexChanged.connect(lambda _index: self.apply_filters())
-            filter_bar.addWidget(self.checked_filter)
-            root.addWidget(self.filter_widget)
+            left.addWidget(self.status_filter_widget)
 
-            body = QHBoxLayout()
-            root.addLayout(body, stretch=1)
             self.items_table = QTableWidget(0, 3)
             self.items_table.setHorizontalHeaderLabels(("Import", "Stav", "Soubor"))
             self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -2291,28 +2303,40 @@ if PYSIDE6_AVAILABLE:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            body.addWidget(self.items_table, stretch=1)
+            left.addWidget(self.items_table, stretch=1)
+            body.addWidget(self.left_panel, stretch=1)
 
-            right_panel = QVBoxLayout()
-            body.addLayout(right_panel, stretch=2)
-            right_panel.addWidget(QLabel("Co se naimportuje"))
-            form = QFormLayout()
+            # Pravy detail zacina od shora (uz ho netlaci horni pruhy).
+            right_container = QWidget()
+            right_panel = QVBoxLayout(right_container)
+            right_panel.setContentsMargins(0, 0, 0, 0)
+            heading = QLabel("Co se naimportuje")
+            heading.setStyleSheet("font-weight: bold;")
+            right_panel.addWidget(heading)
+            # Nazev|Autor a Zdroj|Odkaz vedle sebe (dva sloupce), at se vyuzije sirka.
+            fields = QGridLayout()
+            fields.setColumnStretch(0, 1)
+            fields.setColumnStretch(1, 1)
+            # Nazev|Autor vedle sebe (kratke), Zdroj a Odkaz kazdy na svem radku pres
+            # celou sirku (URL byva dlouha a na pulce se orezavala).
+            fields.addWidget(QLabel("Název"), 0, 0)
+            fields.addWidget(QLabel("Autor/autoři"), 0, 1)
             self.title_edit = QLineEdit()
             self.authors_edit = QLineEdit()
-            form.addRow("Název", self.title_edit)
-            form.addRow("Autor/autoři", self.authors_edit)
-            self.source_label = QLabel()
-            self.source_label.setWordWrap(True)
-            form.addRow("Zdroj", self.source_label)
+            fields.addWidget(self.title_edit, 1, 0)
+            fields.addWidget(self.authors_edit, 1, 1)
+            # Zdroj se nezobrazuje - je videt u kazdeho kandidata i v URL. Odkaz na
+            # jednom radku pres celou sirku (URL byva dlouha).
             link_row = QHBoxLayout()
+            link_row.addWidget(QLabel("Odkaz:"))
             self.url_edit = QLineEdit()
             self.url_edit.setPlaceholderText("odkaz na zdroj (lze upravit)")
             link_row.addWidget(self.url_edit, stretch=1)
             self.open_link_button = QPushButton("Otevřít odkaz")
             self.open_link_button.clicked.connect(self.open_current_url)
             link_row.addWidget(self.open_link_button)
-            form.addRow("Odkaz", link_row)
-            right_panel.addLayout(form)
+            fields.addLayout(link_row, 2, 0, 1, 2)
+            right_panel.addLayout(fields)
 
             self.signals_section = CollapsibleSection("Signály")
             self.signals_list = QListWidget()
@@ -2321,7 +2345,7 @@ if PYSIDE6_AVAILABLE:
 
             self.candidates_section = CollapsibleSection("Kandidáti")
             self.candidates_list = QListWidget()
-            self.candidates_list.currentRowChanged.connect(lambda _row: self.update_candidate_buttons())
+            self.candidates_list.currentRowChanged.connect(lambda _row: self._on_candidate_row_changed())
             self.candidates_list.itemDoubleClicked.connect(lambda _item: self.use_selected_candidate())
             self.candidates_section.add_widget(self.candidates_list)
             candidate_buttons = QHBoxLayout()
@@ -2331,11 +2355,11 @@ if PYSIDE6_AVAILABLE:
             self.open_candidate_link_button = QPushButton("Otevřít odkaz")
             self.open_candidate_link_button.clicked.connect(self.open_selected_candidate_link)
             candidate_buttons.addWidget(self.open_candidate_link_button)
-            candidate_buttons.addStretch(1)
-            self.candidates_section.add_layout(candidate_buttons)
             self.research_button = QPushButton("Hledat znovu")
             self.research_button.clicked.connect(self.start_research)
-            self.candidates_section.add_widget(self.research_button)
+            candidate_buttons.addWidget(self.research_button)
+            candidate_buttons.addStretch(1)
+            self.candidates_section.add_layout(candidate_buttons)
             manual_row = QHBoxLayout()
             self.manual_url_edit = QLineEdit()
             self.manual_url_edit.setPlaceholderText("Vlastní odkaz (URL), který znám jako správný")
@@ -2353,22 +2377,23 @@ if PYSIDE6_AVAILABLE:
             self.duplicates_section.add_widget(self.allow_duplicate_check)
             right_panel.addWidget(self.duplicates_section)
             right_panel.addStretch(1)
+            body.addWidget(right_container, stretch=2)
 
             buttons = QHBoxLayout()
-            self.backup_check = QCheckBox("Zálohovat databázi před importem")
+            self.backup_check = QCheckBox("Zálohovat DB před importem")
             self.backup_check.setChecked(True)
             self.backup_check.setToolTip(
                 "Před začátkem importu vytvoří jednu kopii metadata.db do složky backups."
             )
             buttons.addWidget(self.backup_check)
             buttons.addStretch(1)
-            self.validate_button = QPushButton("Ověřit výběr")
+            self.validate_button = QPushButton("Ověřit")
             self.validate_button.clicked.connect(self.validate_selection)
             buttons.addWidget(self.validate_button)
-            self.export_button = QPushButton("Exportovat CSV")
+            self.export_button = QPushButton("CSV")
             self.export_button.clicked.connect(self.export_csv)
             buttons.addWidget(self.export_button)
-            self.import_button = QPushButton("Importovat" if self.single else "Importovat zaškrtnuté")
+            self.import_button = QPushButton("Importovat")
             self.import_button.clicked.connect(self._on_import)
             buttons.addWidget(self.import_button)
             self.close_button = QPushButton("Zavřít")
@@ -2396,14 +2421,8 @@ if PYSIDE6_AVAILABLE:
             self.update_selected_summary()
 
             if self.single:
-                for hidden in (
-                    self.summary_label,
-                    self.selected_summary_label,
-                    self.selection_buttons_widget,
-                    self.filter_widget,
-                    self.items_table,
-                ):
-                    hidden.hide()
+                # Jedna kniha: cely levy sloupec (seznam, vyber, filtr) pryc.
+                self.left_panel.hide()
 
         # --- tabulka polozek (identita v UserRole, ne index) ---
 
@@ -2500,7 +2519,6 @@ if PYSIDE6_AVAILABLE:
                 )
                 self.title_edit.setText(preview.title)
                 self.authors_edit.setText(preview.authors)
-                self.source_label.setText(preview.source or "nenačteno")
                 self.url_edit.setText((preview.url or "").strip())
 
                 self.signals_list.clear()
@@ -2527,9 +2545,13 @@ if PYSIDE6_AVAILABLE:
                 self.manual_url_edit.setEnabled(editable)
                 self.use_manual_url_button.setEnabled(editable)
 
-                # Chytry vychozi stav: sekce s obsahem rozbalena, prazdna sbalena.
-                self.signals_section.set_expanded(bool(signals))
+                # Pocet do hlavicky sekce + chytry vychozi stav: sekce s obsahem
+                # rozbalena, prazdna sbalena.
                 candidates = list(item.analysis.candidates) if (item and item.analysis) else []
+                self.signals_section.set_title(f"Signály ({len(signals)})")
+                self.candidates_section.set_title(f"Kandidáti ({len(candidates)})")
+                self.duplicates_section.set_title(f"Duplicity ({len(duplicates)})")
+                self.signals_section.set_expanded(bool(signals))
                 self.candidates_section.set_expanded(bool(candidates))
                 self.duplicates_section.set_expanded(bool(duplicates))
             finally:
@@ -2589,6 +2611,37 @@ if PYSIDE6_AVAILABLE:
             enabled = self.candidates_list.isEnabled() and has_candidate
             self.use_candidate_button.setEnabled(enabled)
             self.open_candidate_link_button.setEnabled(enabled)
+
+        def _on_candidate_row_changed(self) -> None:
+            self.update_candidate_buttons()
+            # Behem _load_detail se seznam prepina programove; nahled nespoustet.
+            if self._loading_detail:
+                return
+            self._preview_selected_candidate()
+
+        def _preview_selected_candidate(self) -> None:
+            """Klik na kandidata = zivy nahled: prepise pole (nazev/autor/odkaz)
+            i skryta metadata, ale NEpotvrdi polozku, nezaskrtne ji a NEprepocitava
+            duplicity. Potvrzeni resi az "Pouzit kandidata"."""
+            item = self._current_item
+            candidate = self.selected_list_candidate()
+            if item is None or candidate is None or item.analysis is None:
+                return
+            enriched = cme.import_preview_from_candidate(candidate, item.analysis.preview)
+            enriched = self._preview_with_detail(enriched, candidate.detail, candidate.url)
+            # Zachovej volbu uzivatele "importovat i pres duplicitu".
+            item.current_preview = replace(
+                enriched, allow_strong_duplicate=self.allow_duplicate_check.isChecked()
+            )
+            self._loading_detail = True
+            try:
+                self.title_edit.setText(enriched.title)
+                self.authors_edit.setText(enriched.authors)
+                self.url_edit.setText((enriched.url or "").strip())
+                self.open_link_button.setEnabled(bool(self.current_url()))
+            finally:
+                self._loading_detail = False
+            self.update_import_button_enabled()
 
         def _preview_with_detail(
             self,
@@ -2736,7 +2789,26 @@ if PYSIDE6_AVAILABLE:
 
         # --- hromadny vyber, filtr, stav ---
 
+        def _summary_text(self) -> str:
+            """Kompaktni prehled davky na jeden radek misto stareho 8radkoveho bloku."""
+            total = len(self.items)
+            review = sum(1 for item in self.items if item.status == "needs_review")
+            dups = sum(
+                1 for item in self.items
+                if item.status == "duplicate_warning" or item.duplicates
+            )
+            errors = sum(1 for item in self.items if item.status == "analysis_error")
+            parts = [f"{total} souborů"]
+            if review:
+                parts.append(f"{review} ke kontrole")
+            if dups:
+                parts.append(f"{dups} duplicit")
+            if errors:
+                parts.append(f"{errors} chyb")
+            return " · ".join(parts)
+
         def update_selected_summary(self) -> None:
+            self.summary_label.setText(self._summary_text())
             selected = sum(1 for item in self.items if item.checked_for_import)
             self.selected_summary_label.setText(f"Vybráno k importu: {selected}")
             self.update_import_button_enabled()
@@ -2748,9 +2820,9 @@ if PYSIDE6_AVAILABLE:
                 self.import_button.setEnabled(ready)
                 self.import_button.setToolTip("" if ready else "Vyplňte název a autora.")
                 return
-            enabled = self.write_one is not None and any(
-                item.checked_for_import for item in self.items
-            )
+            selected = sum(1 for item in self.items if item.checked_for_import)
+            self.import_button.setText(f"Importovat ({selected})")
+            enabled = self.write_one is not None and selected > 0
             self.import_button.setEnabled(enabled)
             if self.write_one is None:
                 self.import_button.setToolTip("Zápis není dostupný.")
@@ -2803,9 +2875,9 @@ if PYSIDE6_AVAILABLE:
             statuses = {
                 status for status, check in self.status_checks.items() if check.isChecked()
             }
+            # Vse zaskrtnuto = bez omezeni stavem.
             if statuses == set(self.status_checks):
                 statuses = None
-            checked = self.checked_filter.currentData()
             for row in range(self.items_table.rowCount()):
                 item = self._item_for_row(row)
                 if item is None:
@@ -2814,7 +2886,7 @@ if PYSIDE6_AVAILABLE:
                     item,
                     name_query=name_query,
                     statuses=statuses,
-                    checked=checked,
+                    checked=None,
                 )
                 self.items_table.setRowHidden(row, not visible)
 

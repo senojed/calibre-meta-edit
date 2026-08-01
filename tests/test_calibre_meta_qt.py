@@ -5874,10 +5874,8 @@ class ImportReviewDialogTests(unittest.TestCase):
         dialog = qt.ImportReviewDialog([self._item()])
 
         self.assertTrue(dialog.single)
-        self.assertTrue(dialog.items_table.isHidden())
-        self.assertTrue(dialog.selection_buttons_widget.isHidden())
-        self.assertTrue(dialog.filter_widget.isHidden())
-        self.assertTrue(dialog.summary_label.isHidden())
+        # Cely levy sloupec (seznam, vyber, filtr, prehled) je pryc.
+        self.assertTrue(dialog.left_panel.isHidden())
         # Pravy detail zustava.
         self.assertFalse(dialog.title_edit.isHidden())
         self.assertFalse(dialog.authors_edit.isHidden())
@@ -5890,6 +5888,7 @@ class ImportReviewDialogTests(unittest.TestCase):
         dialog = qt.ImportReviewDialog([self._item("a.epub"), self._item("b.epub")])
 
         self.assertFalse(dialog.single)
+        self.assertFalse(dialog.left_panel.isHidden())
         self.assertFalse(dialog.items_table.isHidden())
         self.assertFalse(dialog.selection_buttons_widget.isHidden())
         self.assertFalse(dialog.filter_widget.isHidden())
@@ -5963,6 +5962,27 @@ class ImportReviewDialogTests(unittest.TestCase):
         self.assertEqual(dialog.title_edit.text(), "Kniha B")
         app.processEvents()
 
+    def test_selecting_candidate_previews_fields_without_committing(self):
+        # Klik na kandidata je jen zivy nahled: pole se prepisou, ale polozka se
+        # nepotvrdi ani nezaskrtne (to udela az "Pouzit kandidata").
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        cand = cme.ImportCandidate(
+            "databazeknih", "Nahled nazev", "Nahled autor", "https://dk/nahled", score=40
+        )
+        item = self._item(candidates=[cand])
+        dialog = qt.ImportReviewDialog([item])
+
+        dialog.candidates_list.setCurrentRow(0)
+
+        self.assertEqual(dialog.title_edit.text(), "Nahled nazev")
+        self.assertEqual(dialog.authors_edit.text(), "Nahled autor")
+        self.assertEqual(dialog.url_edit.text(), "https://dk/nahled")
+        self.assertFalse(item.manually_confirmed)
+        self.assertFalse(item.checked_for_import)
+        app.processEvents()
+
     def test_using_candidate_updates_preview_and_checks_item(self):
         app = self._app()
         import calibre_meta_qt as qt
@@ -5979,6 +5999,54 @@ class ImportReviewDialogTests(unittest.TestCase):
         self.assertTrue(item.checked_for_import)
         self.assertEqual(dialog.title_edit.text(), "Vybrana")
         self.assertEqual(item.current_preview.url, "https://dk/9")
+        app.processEvents()
+
+    def test_status_filter_hides_nonmatching_rows(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        ready = self._item("ready.epub")  # status "ready"
+        review = self._item("review.epub", candidates=[
+            cme.ImportCandidate("databazeknih", "X", "Y", "https://dk/2", score=40)
+        ])  # low score -> "needs_review"
+        dialog = qt.ImportReviewDialog([ready, review])
+
+        self.assertIn("ready", dialog.status_checks)
+        # Odznaci "needs_review" -> radek review.epub se skryje.
+        dialog.status_checks["needs_review"].setChecked(False)
+
+        self.assertFalse(dialog.items_table.isRowHidden(dialog._row_for_item(ready)))
+        self.assertTrue(dialog.items_table.isRowHidden(dialog._row_for_item(review)))
+        app.processEvents()
+
+    def test_section_titles_show_counts(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        signal = cme.ImportSourceSignal(source="epub", title="Kniha", authors="Autor")
+        dup = cme.DuplicateCandidate(1, "Kniha", "Autor", strong=True)
+        item = self._item(signals=[signal], duplicates=[dup])
+        dialog = qt.ImportReviewDialog([item])
+
+        self.assertEqual(dialog.signals_section.toggle_button.text(), "Signály (1)")
+        self.assertEqual(dialog.candidates_section.toggle_button.text(), "Kandidáti (1)")
+        self.assertEqual(dialog.duplicates_section.toggle_button.text(), "Duplicity (1)")
+        app.processEvents()
+
+    def test_batch_import_button_shows_checked_count(self):
+        from PySide6.QtCore import Qt
+
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        a = self._item("a.epub")
+        b = self._item("b.epub")
+        dialog = qt.ImportReviewDialog([a, b], write_one=lambda preview, path: None)
+
+        self.assertEqual(dialog.import_button.text(), "Importovat (0)")
+        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+        self.assertEqual(dialog.import_button.text(), "Importovat (1)")
+        self.assertTrue(dialog.import_button.isEnabled())
         app.processEvents()
 
     def test_candidate_label_is_single_line_with_url_in_tooltip(self):
