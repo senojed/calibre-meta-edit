@@ -2329,13 +2329,14 @@ if PYSIDE6_AVAILABLE:
             save = QPushButton("Ulozit")
             save.clicked.connect(self.save_library)
             close = QPushButton("Zavrit")
-            close.clicked.connect(self.accept)
+            close.clicked.connect(self.close)
             buttons.addWidget(rebuild)
             buttons.addWidget(rollback)
             buttons.addStretch(1)
             buttons.addWidget(save)
             buttons.addWidget(close)
             layout.addLayout(buttons)
+            self._clean_snapshot = self._current_field_values()
 
         def _on_ai_provider_changed(self, provider: str) -> None:
             """Pri zmene providera prepne model na jeho default a obnovi status klice."""
@@ -2434,6 +2435,56 @@ if PYSIDE6_AVAILABLE:
             self.parent_window.auto_settings = normalize_auto_settings(settings)
             self.parent_window.apply_theme()
             self.parent_window.set_status("Knihovna ulozena")
+            self._clean_snapshot = self._current_field_values()
+
+        def _current_field_values(self) -> dict:
+            return {
+                "library": self.library_edit.text(),
+                "theme": self.theme_combo.currentText(),
+                "startup_preview": self.startup_preview_check.isChecked(),
+                "auto_link_audit": self.auto_link_audit_check.isChecked(),
+                "auto_cover_audit": self.auto_cover_audit_check.isChecked(),
+                "provider": self.ai_provider_combo.currentText(),
+                "model": self.ai_model_edit.text(),
+                "text_limit": self.ai_text_limit_edit.text(),
+                "timeout": self.ai_timeout_edit.text(),
+                "workers": self.ai_workers_spin.value(),
+            }
+
+        def is_dirty(self) -> bool:
+            return self._current_field_values() != self._clean_snapshot
+
+        def keyPressEvent(self, event) -> None:
+            # Esc musi projit stejnym guardem jako krizek a tlacitko Zavrit.
+            if event.key() == Qt.Key.Key_Escape:
+                self.close()
+                return
+            super().keyPressEvent(event)
+
+        def closeEvent(self, event) -> None:
+            if not self.is_dirty():
+                event.accept()
+                return
+            answer = QMessageBox.question(
+                self,
+                "Neuložené změny",
+                "Máte neuložené změny. Uložit?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if answer == QMessageBox.StandardButton.Save:
+                self.save_library()
+                # Kdyz ulozeni neproslo (napr. prazdna knihovna), zustan v dialogu.
+                if self.is_dirty():
+                    event.ignore()
+                else:
+                    event.accept()
+            elif answer == QMessageBox.StandardButton.Discard:
+                event.accept()
+            else:
+                event.ignore()
 
         def run_rebuild(self) -> None:
             self.save_library()

@@ -1924,6 +1924,100 @@ class PreferencesDialogAITests(unittest.TestCase):
         self.assertEqual(captured, {"provider": "ollama", "model": "llama-test", "timeout": 42})
         app.processEvents()
 
+    def test_dialog_starts_clean_and_marks_dirty_on_change(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                self.assertFalse(dialog.is_dirty())
+                dialog.ai_model_edit.setText("something-else")
+                self.assertTrue(dialog.is_dirty())
+        app.processEvents()
+
+    def test_save_resets_dirty_state(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                dialog.ai_model_edit.setText("something-else")
+                dialog.save_library()
+                self.assertFalse(dialog.is_dirty())
+        app.processEvents()
+
+    def test_close_when_dirty_prompts_and_saves(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtGui import QCloseEvent
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                dialog.ai_model_edit.setText("something-else")
+                event = QCloseEvent()
+                with (
+                    patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Save) as question,
+                    patch.object(dialog, "save_library", wraps=dialog.save_library) as save,
+                ):
+                    dialog.closeEvent(event)
+                question.assert_called_once()
+                save.assert_called_once()
+                self.assertTrue(event.isAccepted())
+        app.processEvents()
+
+    def test_close_when_dirty_cancel_stays_open(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtGui import QCloseEvent
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                dialog.ai_model_edit.setText("something-else")
+                event = QCloseEvent()
+                with patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel):
+                    dialog.closeEvent(event)
+                self.assertFalse(event.isAccepted())
+        app.processEvents()
+
+    def test_close_when_clean_does_not_prompt(self):
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QCloseEvent
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                event = QCloseEvent()
+                with patch.object(qt.QMessageBox, "question") as question:
+                    dialog.closeEvent(event)
+                question.assert_not_called()
+                self.assertTrue(event.isAccepted())
+        app.processEvents()
+
     def test_preferences_dialog_has_key_status_label(self):
         from PySide6.QtWidgets import QApplication
         import sys
