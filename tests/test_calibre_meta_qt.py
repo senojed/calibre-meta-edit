@@ -940,48 +940,6 @@ class QtImportTests(unittest.TestCase):
         progress.close()
         app.processEvents()
 
-    def test_multiimport_write_starts_after_prepared_progress_dialog_enters_event_loop(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        events = []
-        scheduled = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: (
-                events.append("write") or cme.ImportApplyResult(1, "updated")
-            ),
-        )
-
-        def register(callback):
-            events.append("registered")
-            scheduled.append(callback)
-
-        with (
-            patch.object(
-                qt.QMessageBox,
-                "question",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch.object(qt.QMessageBox, "information"),
-            patch.object(qt, "MultiImportProgressDialog") as progress_class,
-            patch.object(qt.QApplication, "processEvents"),
-        ):
-            progress = progress_class.return_value
-            progress.run_after_first_paint.side_effect = register
-            progress.show_prepared.side_effect = lambda: events.append("painted")
-            progress.exec.side_effect = lambda: (events.append("event-loop"), scheduled.pop(0)())
-            dialog.import_button.click()
-
-        # Prace se registruje, pak se okno ukaze, a teprve po vstupu do event
-        # loopu (kde probehne prvni paint) se spusti zapis. Zadna bila plocha.
-        self.assertEqual(events[:4], ["registered", "painted", "event-loop", "write"])
-        progress.run_after_first_paint.assert_called_once()
-        app.processEvents()
-
     def _valid_multiimport_item(
         self,
         name: str = "book.epub",
@@ -1045,220 +1003,6 @@ class QtImportTests(unittest.TestCase):
             selected_candidate=recommended,
         )
 
-    def test_multiimport_results_manual_candidate_unlocks_import(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-        )
-
-        self.assertEqual(dialog.candidates_list.count(), 2)
-        dialog.candidates_list.setCurrentRow(1)
-        dialog.use_selected_candidate()
-
-        self.assertTrue(item.manually_confirmed)
-        self.assertTrue(item.checked_for_import)
-        self.assertEqual(item.current_preview.url, item.analysis.candidates[1].url)
-        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
-        self.assertEqual(dialog.items_table.item(0, 1).text(), "W")
-        app.processEvents()
-
-    def test_manual_candidate_pick_rechecks_duplicates_and_blocks_import(self):
-        # Presne scenar ze smoke testu: rucne vybrany spravny odkaz ma duplicitu,
-        # ktera u puvodniho (spatneho) kandidata nebyla.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        duplicate = cme.DuplicateCandidate(616, "Kniha", "Autor", score=100, strong=True)
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-            duplicate_finder=lambda _preview: [duplicate],
-        )
-
-        dialog.candidates_list.setCurrentRow(1)
-        dialog.use_selected_candidate()
-
-        self.assertEqual(item.duplicates, [duplicate])
-        self.assertEqual(item.status, "duplicate_warning")
-        # Uzivatel to ted vidi hned, a overeni/import to zablokuje.
-        result = cme.validate_multiimport_checked_items([item])
-        self.assertFalse(result.ok)
-        self.assertEqual([issue.reason for issue in result.issues], ["duplicate_warning"])
-        self.assertIn("Duplicity: 1", dialog.detail_text.toPlainText())
-        app.processEvents()
-
-    def test_manual_candidate_pick_without_duplicates_stays_importable(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-            duplicate_finder=lambda _preview: [],
-        )
-
-        dialog.candidates_list.setCurrentRow(1)
-        dialog.use_selected_candidate()
-
-        self.assertEqual(item.duplicates, [])
-        self.assertTrue(item.manually_confirmed)
-        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
-        app.processEvents()
-
-    def test_multiimport_results_manual_url_confirms_item(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-            link_data_func=lambda url: ("Kniha", "Autor", url, cme.BookDetailMetadata()),
-            duplicate_finder=lambda _preview: [],
-        )
-
-        dialog.manual_url_edit.setText("https://dk/custom")
-        dialog.use_manual_url()
-
-        self.assertTrue(item.manually_confirmed)
-        self.assertTrue(item.checked_for_import)
-        self.assertEqual(item.current_preview.url, "https://dk/custom")
-        self.assertEqual(item.current_preview.title, "Kniha")
-        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
-        app.processEvents()
-
-    def test_manual_url_fills_missing_author_from_link(self):
-        # Presne scenar ze smoke testu: analyza nenasla autora, uzivatel da
-        # spravny odkaz -> autor se stahne z odkazu a import uz neni blokovany.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        item.current_preview = cme.ImportPreview(title="UZ-26-Zlodej casu", authors="")
-        item.selected_candidate = None
-        self.assertFalse(cme.is_valid_import_preview(item.current_preview))
-
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-            link_data_func=lambda url: (
-                "Zloděj času",
-                "Terry Pratchett",
-                url,
-                cme.BookDetailMetadata(),
-            ),
-            duplicate_finder=lambda _preview: [],
-        )
-
-        dialog.manual_url_edit.setText("https://www.databazeknih.cz/knihy/zlodej-casu-477")
-        dialog.use_manual_url()
-
-        self.assertEqual(item.current_preview.authors, "Terry Pratchett")
-        self.assertEqual(item.current_preview.title, "Zloděj času")
-        self.assertTrue(cme.is_valid_import_preview(item.current_preview))
-        self.assertTrue(cme.validate_multiimport_checked_items([item]).ok)
-        app.processEvents()
-
-    def test_manual_url_failure_shows_warning_and_keeps_item(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        original_url = item.current_preview.url
-
-        def failing_fetch(_url):
-            raise OSError("404")
-
-        dialog = qt.MultiImportResultsDialog([item], link_data_func=failing_fetch)
-        dialog.manual_url_edit.setText("https://dk/rozbity")
-
-        with patch.object(qt.QMessageBox, "warning") as warning:
-            dialog.use_manual_url()
-
-        warning.assert_called_once()
-        self.assertIn("nepodařilo načíst", warning.call_args.args[2])
-        self.assertEqual(item.current_preview.url, original_url)
-        self.assertFalse(item.manually_confirmed)
-        # Tlacitko se musi vratit do puvodniho stavu i po chybe.
-        self.assertTrue(dialog.use_manual_url_button.isEnabled())
-        self.assertEqual(dialog.use_manual_url_button.text(), "Použít odkaz")
-        app.processEvents()
-
-    def test_multiimport_results_open_candidate_link_uses_desktop_services(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._needs_review_multiimport_item()
-        dialog = qt.MultiImportResultsDialog([item])
-        dialog.candidates_list.setCurrentRow(0)
-
-        with patch.object(qt.QDesktopServices, "openUrl") as open_url:
-            dialog.open_selected_candidate_link()
-
-        open_url.assert_called_once()
-        self.assertEqual(
-            open_url.call_args.args[0].toString(),
-            item.analysis.candidates[0].url,
-        )
-        app.processEvents()
-
-    def test_multiimport_results_filters_hide_rows(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        ready = self._valid_multiimport_item("alfa.epub", checked=True)
-        review = self._needs_review_multiimport_item("beta.epub")
-        dialog = qt.MultiImportResultsDialog([ready, review])
-
-        dialog.name_filter.setText("beta")
-        self.assertTrue(dialog.items_table.isRowHidden(0))
-        self.assertFalse(dialog.items_table.isRowHidden(1))
-
-        dialog.name_filter.setText("")
-        self.assertFalse(dialog.items_table.isRowHidden(0))
-        self.assertFalse(dialog.items_table.isRowHidden(1))
-
-        # Stav jako zaskrtavatka: necham jen 'ready' -> review radek zmizi.
-        for status, check in dialog.status_checks.items():
-            check.setChecked(status == "ready")
-        self.assertFalse(dialog.items_table.isRowHidden(0))
-        self.assertTrue(dialog.items_table.isRowHidden(1))
-
-        # Vic stavu naraz: ready + needs_review -> oba viditelne.
-        for status, check in dialog.status_checks.items():
-            check.setChecked(status in ("ready", "needs_review"))
-        self.assertFalse(dialog.items_table.isRowHidden(0))
-        self.assertFalse(dialog.items_table.isRowHidden(1))
-
-        for check in dialog.status_checks.values():
-            check.setChecked(True)
-        dialog.checked_filter.setCurrentIndex(dialog.checked_filter.findData(True))
-        self.assertFalse(dialog.items_table.isRowHidden(0))
-        self.assertTrue(dialog.items_table.isRowHidden(1))
-        app.processEvents()
-
     def _run_import_click(self, dialog, qt):
         from PySide6.QtWidgets import QMessageBox
 
@@ -1277,83 +1021,15 @@ class QtImportTests(unittest.TestCase):
             dialog.import_button.click()
         return warning
 
-    def test_multiimport_backup_prepared_once_before_write(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        events = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: (
-                events.append("write") or cme.ImportApplyResult(1, "updated")
-            ),
-            prepare_backup=lambda enabled: events.append(f"backup:{enabled}"),
-        )
-
-        self.assertTrue(dialog.backup_check.isChecked())
-        self._run_import_click(dialog, qt)
-
-        # Zaloha se pripravi prave jednou a jeste pred prvnim zapisem.
-        self.assertEqual(events[:2], ["backup:True", "write"])
-        self.assertEqual(events.count("backup:True"), 1)
-        app.processEvents()
-
-    def test_multiimport_backup_unchecked_passes_false(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        events = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: (
-                events.append("write") or cme.ImportApplyResult(1, "updated")
-            ),
-            prepare_backup=lambda enabled: events.append(f"backup:{enabled}"),
-        )
-        dialog.backup_check.setChecked(False)
-
-        self._run_import_click(dialog, qt)
-
-        self.assertEqual(events[:2], ["backup:False", "write"])
-        app.processEvents()
-
-    def test_multiimport_backup_failure_aborts_import(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        events = []
-
-        def failing_backup(_enabled):
-            raise OSError("disk plny")
-
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: (
-                events.append("write") or cme.ImportApplyResult(1, "updated")
-            ),
-            prepare_backup=failing_backup,
-        )
-
-        warning = self._run_import_click(dialog, qt)
-
-        self.assertEqual(events, [])
-        warning.assert_called_once()
-        self.assertIn("import zrušen", warning.call_args.args[2])
-        app.processEvents()
-
     def _offline_dialog(self, qt, events, *, online: bool):
-        item = self._valid_multiimport_item(checked=True)
-        return qt.MultiImportResultsDialog(
-            [item],
+        # Dve polozky = davkovy rezim, takze import_button jde na import_checked_items
+        # (kde je offline kontrola), ne na single-accept.
+        items = [
+            self._valid_multiimport_item("a.epub", checked=True),
+            self._valid_multiimport_item("b.epub", checked=True),
+        ]
+        return qt.ImportReviewDialog(
+            items,
             write_one=lambda _preview, _path: (
                 events.append("write") or cme.ImportApplyResult(1, "updated")
             ),
@@ -1446,119 +1122,10 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("write", events)
         app.processEvents()
 
-    def test_multiimport_results_candidate_controls_disabled_for_analysis_error(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item()
-        item.status = "analysis_error"
-        item.analysis = None
-        dialog = qt.MultiImportResultsDialog([item])
-
-        self.assertEqual(dialog.candidates_list.count(), 0)
-        self.assertFalse(dialog.candidates_list.isEnabled())
-        self.assertFalse(dialog.use_manual_url_button.isEnabled())
-        self.assertFalse(dialog.use_candidate_button.isEnabled())
-        app.processEvents()
-
     def test_qt_imports_when_pyside6_available(self):
         import calibre_meta_qt as qt
 
         self.assertIsNotNone(qt.CalibreMetaQtWindow)
-
-    def test_import_dialog_validates_title_and_author(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        self.assertFalse(dialog.import_button.isEnabled())
-        dialog.title_edit.setText("Kniha")
-        dialog.authors_edit.setText("Autor")
-        dialog.update_import_enabled()
-
-        self.assertTrue(dialog.import_button.isEnabled())
-        app.processEvents()
-
-    def test_multiimport_results_dialog_is_read_only_and_updates_details(self):
-        from PySide6.QtWidgets import QApplication, QHeaderView, QTableWidget
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        items = [
-            cme.MultiImportBatchItem(
-                Path("ready.epub"),
-                "ready.epub",
-                status="ready",
-                current_preview=cme.ImportPreview(title="Ready", authors="Autor"),
-            ),
-            cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review"),
-            cme.MultiImportBatchItem(
-                Path("duplicate.epub"),
-                "duplicate.epub",
-                status="duplicate_warning",
-                duplicates=[cme.DuplicateCandidate(5, "Duplicita", "Autor D.")],
-            ),
-            cme.MultiImportBatchItem(
-                Path("error.epub"),
-                "error.epub",
-                status="analysis_error",
-                error_message="analysis failed",
-            ),
-        ]
-
-        dialog = qt.MultiImportResultsDialog(items)
-
-        self.assertIsInstance(dialog.items_table, QTableWidget)
-        self.assertEqual(dialog.items_table.rowCount(), 4)
-        self.assertEqual(dialog.items_table.columnCount(), 3)
-        self.assertEqual(
-            [dialog.items_table.horizontalHeaderItem(column).text() for column in range(3)],
-            ["Import", "Stav", "Soubor"],
-        )
-        self.assertEqual(
-            [dialog.items_table.item(row, 1).text() for row in range(4)],
-            ["✓", "👁", "⧉", "✕"],
-        )
-        self.assertEqual(
-            [dialog.items_table.item(row, 1).toolTip() for row in range(4)],
-            ["OK", "Kontrola", "Duplicita", "Chyba"],
-        )
-        self.assertEqual(
-            dialog.items_table.horizontalHeader().sectionResizeMode(1),
-            QHeaderView.ResizeMode.ResizeToContents,
-        )
-        self.assertFalse(dialog.items_table.isSortingEnabled())
-        displayed_rows = [
-            " | ".join(dialog.items_table.item(row, column).text() for column in range(3))
-            for row in range(4)
-        ]
-        self.assertTrue(all("Predvybrano" not in row for row in displayed_rows))
-        self.assertTrue(all("Předvybráno" not in row for row in displayed_rows))
-        self.assertTrue(all("Duplicity:" not in row for row in displayed_rows))
-        self.assertTrue(dialog.detail_text.isReadOnly())
-        self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
-        self.assertFalse(dialog.import_button.isEnabled())
-        self.assertIn("Ready", dialog.detail_text.toPlainText())
-        dialog.items_table.setCurrentCell(2, 0)
-        self.assertIn("Duplicita", dialog.detail_text.toPlainText())
-        dialog.items_table.setCurrentCell(3, 0)
-        self.assertIn("analysis failed", dialog.detail_text.toPlainText())
-        app.processEvents()
 
     def test_table_item_style_does_not_override_explicit_main_table_foreground(self):
         from PySide6.QtWidgets import QApplication
@@ -1668,308 +1235,6 @@ class QtImportTests(unittest.TestCase):
             self.assertIn(f"#{object_name}:pressed", style)
         app.processEvents()
 
-    def test_multiimport_results_dialog_initializes_checks_and_disables_errors(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        ready = cme.MultiImportBatchItem(
-            Path("ready.epub"),
-            "ready.epub",
-            checked_for_import=True,
-            status="ready",
-        )
-        error = cme.MultiImportBatchItem(
-            Path("error.epub"),
-            "error.epub",
-            checked_for_import=True,
-            status="analysis_error",
-            error_message="failed",
-        )
-
-        dialog = qt.MultiImportResultsDialog([ready, error])
-
-        self.assertEqual(dialog.items_table.item(0, 0).checkState(), Qt.CheckState.Checked)
-        self.assertEqual(dialog.items_table.item(1, 0).checkState(), Qt.CheckState.Unchecked)
-        self.assertFalse(error.checked_for_import)
-        self.assertFalse(
-            dialog.items_table.item(1, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
-        )
-        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
-        app.processEvents()
-
-    def test_multiimport_results_dialog_toggle_updates_model_summary_and_detail(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review")
-        dialog = qt.MultiImportResultsDialog([item])
-
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-
-        self.assertTrue(item.checked_for_import)
-        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
-        self.assertIn("Predvybrano: ano", dialog.detail_text.toPlainText())
-
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
-
-        self.assertFalse(item.checked_for_import)
-        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
-        app.processEvents()
-
-    def test_multiimport_import_button_tracks_eligible_checked_items(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item()
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(1, "updated"),
-        )
-
-        self.assertFalse(dialog.import_button.isEnabled())
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-        self.assertTrue(dialog.import_button.isEnabled())
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
-        self.assertFalse(dialog.import_button.isEnabled())
-        app.processEvents()
-
-    def test_multiimport_validation_failure_blocks_writer_and_confirmation(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        valid = self._valid_multiimport_item("valid.epub", checked=True)
-        invalid = self._valid_multiimport_item("review.epub", checked=True)
-        invalid.status = "needs_review"
-        writer_calls = []
-        dialog = qt.MultiImportResultsDialog(
-            [valid, invalid],
-            write_one=lambda preview, path: writer_calls.append((preview, path)),
-            post_write_refresh=lambda summary: writer_calls.append(("refresh", summary)),
-        )
-
-        with (
-            patch.object(qt.QMessageBox, "warning") as warning,
-            patch.object(qt.QMessageBox, "question") as question,
-            patch.object(cme, "run_multiimport_batch_write") as run_write,
-            patch.object(dialog, "accept") as accept,
-        ):
-            dialog.import_button.click()
-
-        self.assertTrue(dialog.import_button.isEnabled())
-        self.assertEqual(writer_calls, [])
-        run_write.assert_not_called()
-        question.assert_not_called()
-        accept.assert_not_called()
-        self.assertIn("Nic nebylo importováno.", warning.call_args.args[2])
-        self.assertEqual([valid.status, invalid.status], ["ready", "needs_review"])
-        app.processEvents()
-
-    def test_multiimport_confirmation_cancel_does_not_run_writer(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        writer_calls = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda preview, path: writer_calls.append((preview, path)),
-            post_write_refresh=lambda summary: writer_calls.append(("refresh", summary)),
-        )
-
-        with (
-            patch.object(
-                qt.QMessageBox,
-                "question",
-                return_value=QMessageBox.StandardButton.No,
-            ),
-            patch.object(cme, "run_multiimport_batch_write") as run_write,
-            patch.object(dialog, "accept") as accept,
-        ):
-            dialog.import_button.click()
-
-        self.assertEqual(writer_calls, [])
-        run_write.assert_not_called()
-        accept.assert_not_called()
-        self.assertEqual(item.status, "ready")
-        app.processEvents()
-
-    def test_multiimport_confirmation_runs_guarded_writer_and_refreshes_rows(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        first = self._valid_multiimport_item("first.epub", checked=True)
-        ignored = self._valid_multiimport_item("ignored.epub", checked=False)
-        second = self._valid_multiimport_item("second.epub", checked=True)
-        events = []
-        refresh_summaries = []
-        real_validate = cme.validate_multiimport_checked_items
-
-        def validate(items):
-            events.append("validate")
-            return real_validate(items)
-
-        def write_one(_preview, path):
-            events.append(f"write:{path.name}")
-            if path == first.source_path:
-                return cme.ImportApplyResult(book_id=41, status="updated")
-            return cme.ImportApplyResult(book_id=0, status="failed", error="failed")
-
-        dialog = qt.MultiImportResultsDialog(
-            [first, ignored, second],
-            write_one=write_one,
-            post_write_refresh=refresh_summaries.append,
-        )
-
-        with (
-            patch.object(cme, "validate_multiimport_checked_items", side_effect=validate),
-            patch.object(
-                qt.QMessageBox,
-                "question",
-                return_value=QMessageBox.StandardButton.Yes,
-            ) as question,
-            patch.object(qt.QMessageBox, "information") as information,
-            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt.QApplication, "processEvents"),
-            patch.object(dialog, "accept") as accept,
-            patch.object(
-                cme,
-                "should_auto_import",
-                side_effect=AssertionError("must not be called"),
-                create=True,
-            ),
-        ):
-            # Simuluje odpaleni prace az po prvnim vykresleni (paint-hook).
-            progress_dialog.return_value.run_after_first_paint.side_effect = (
-                lambda callback: callback()
-            )
-            dialog.import_button.click()
-
-        self.assertEqual(events[0], "validate")
-        self.assertGreaterEqual(events.count("validate"), 2)
-        self.assertEqual(
-            [event for event in events if event.startswith("write:")],
-            ["write:first.epub", "write:second.epub"],
-        )
-        question.assert_called_once()
-        self.assertEqual([first.status, ignored.status, second.status], ["written", "ready", "write_error"])
-        self.assertEqual([first.calibre_id, ignored.calibre_id, second.calibre_id], [41, None, None])
-        self.assertEqual(
-            [dialog.items_table.item(row, 1).text() for row in range(3)],
-            ["✓", "✓", "✕"],
-        )
-        self.assertEqual(dialog.items_table.item(0, 1).toolTip(), "Hotovo")
-        self.assertEqual(dialog.items_table.item(2, 1).toolTip(), "Chyba zápisu")
-        self.assertFalse(first.checked_for_import)
-        self.assertFalse(second.checked_for_import)
-        self.assertFalse(dialog.import_button.isEnabled())
-        self.assertEqual(len(refresh_summaries), 1)
-        self.assertEqual(refresh_summaries[0].succeeded, 1)
-        accept.assert_not_called()
-        summary_text = information.call_args.args[2]
-        self.assertIn("Pokusů: 2", summary_text)
-        self.assertIn("Úspěšně: 1", summary_text)
-        self.assertIn("Selhalo: 1", summary_text)
-        progress = progress_dialog.return_value
-        progress_dialog.assert_called_once_with(2, dialog)
-        self.assertGreater(
-            progress.method_calls.index(call.show_prepared()),
-            progress.method_calls.index(call.prepare(2)),
-        )
-        progress.update_progress.assert_has_calls(
-            [call(1, 2, "first.epub"), call(2, 2, "second.epub")]
-        )
-        progress.close.assert_called_once_with()
-        progress.deleteLater.assert_called_once_with()
-        app.processEvents()
-
-    def test_multiimport_all_success_refreshes_and_closes_dialog(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        refresh_summaries = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(61, "updated"),
-            post_write_refresh=refresh_summaries.append,
-        )
-
-        with (
-            patch.object(
-                qt.QMessageBox,
-                "question",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch.object(qt.QMessageBox, "information") as information,
-            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt.QApplication, "processEvents"),
-            patch.object(dialog, "accept") as accept,
-        ):
-            progress_dialog.return_value.run_after_first_paint.side_effect = (
-                lambda callback: callback()
-            )
-            dialog.import_button.click()
-
-        self.assertEqual(len(refresh_summaries), 1)
-        self.assertTrue(refresh_summaries[0].ok)
-        information.assert_called_once()
-        accept.assert_called_once_with()
-        app.processEvents()
-
-    def test_multiimport_all_failure_stays_open_without_refresh(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = self._valid_multiimport_item(checked=True)
-        refresh_summaries = []
-        dialog = qt.MultiImportResultsDialog(
-            [item],
-            write_one=lambda _preview, _path: cme.ImportApplyResult(
-                0, "failed", "write failed"
-            ),
-            post_write_refresh=refresh_summaries.append,
-        )
-
-        with (
-            patch.object(
-                qt.QMessageBox,
-                "question",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch.object(qt.QMessageBox, "information"),
-            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
-            patch.object(qt.QApplication, "processEvents"),
-            patch.object(dialog, "accept") as accept,
-        ):
-            progress_dialog.return_value.run_after_first_paint.side_effect = (
-                lambda callback: callback()
-            )
-            dialog.import_button.click()
-
-        self.assertEqual(refresh_summaries, [])
-        self.assertEqual(item.status, "write_error")
-        accept.assert_not_called()
-        app.processEvents()
-
     def test_multiimport_production_writer_adapter_reuses_single_item_apply_contract(self):
         from PySide6.QtWidgets import QApplication
         import sys
@@ -2015,1032 +1280,6 @@ class QtImportTests(unittest.TestCase):
 
         show_review.assert_called_once_with()
         load_csv.assert_called_once_with(show_message=False)
-        app.processEvents()
-
-    def test_multiimport_import_button_allows_checked_blocked_item_to_show_warning(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        window = qt.CalibreMetaQtWindow()
-        item = cme.MultiImportBatchItem(Path("ready.epub"), "ready.epub", status="ready")
-        dialog = qt.MultiImportResultsDialog([item], parent=window)
-
-        self.assertEqual(dialog.import_button.text(), "Importovat zaškrtnuté")
-        self.assertFalse(dialog.import_button.isEnabled())
-        self.assertIn("Vyberte alespoň jednu položku", dialog.import_button.toolTip())
-        self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
-        self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
-
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-
-        self.assertTrue(item.checked_for_import)
-        self.assertTrue(dialog.import_button.isEnabled())
-        with (
-            patch.object(qt.QMessageBox, "warning") as warning,
-            patch.object(cme, "apply_import_preview") as apply_preview,
-            patch.object(window, "run_import_apply") as run_apply,
-        ):
-            dialog.import_button.click()
-
-        self.assertIn("ready.epub: Chybí analýza", warning.call_args.args[2])
-        self.assertIn("Nic nebylo importováno", warning.call_args.args[2])
-        apply_preview.assert_not_called()
-        run_apply.assert_not_called()
-        app.processEvents()
-
-    def test_multiimport_blocked_warning_lists_duplicate_unrecognized_and_ambiguous_reasons(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        duplicate = cme.MultiImportBatchItem(
-            Path("duplicate.epub"),
-            "duplicate.epub",
-            checked_for_import=True,
-            status="duplicate_warning",
-            duplicates=[cme.DuplicateCandidate(7, "Existující", "Autor")],
-        )
-        unrecognized_analysis = cme.ImportAnalysis(
-            epub_path="unknown.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Unknown", authors="Autor"),
-            messages=[],
-        )
-        unrecognized = cme.MultiImportBatchItem(
-            Path("unknown.epub"),
-            "unknown.epub",
-            checked_for_import=True,
-            status="needs_review",
-            analysis=unrecognized_analysis,
-            current_preview=unrecognized_analysis.preview,
-        )
-        first = cme.ImportCandidate("databazeknih", "Kniha A", "Autor", "https://dk/1", score=100)
-        second = cme.ImportCandidate("databazeknih", "Kniha B", "Autor", "https://dk/2", score=100)
-        ambiguous_analysis = cme.ImportAnalysis(
-            epub_path="ambiguous.epub",
-            signals=[],
-            candidates=[first, second],
-            recommended=first,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Kniha A", authors="Autor", url=first.url),
-            messages=[],
-        )
-        ambiguous = cme.MultiImportBatchItem(
-            Path("ambiguous.epub"),
-            "ambiguous.epub",
-            checked_for_import=True,
-            status="needs_review",
-            analysis=ambiguous_analysis,
-            current_preview=ambiguous_analysis.preview,
-            selected_candidate=first,
-        )
-        writer_calls = []
-        dialog = qt.MultiImportResultsDialog(
-            [duplicate, unrecognized, ambiguous],
-            write_one=lambda preview, path: writer_calls.append((preview, path)),
-        )
-
-        with patch.object(qt.QMessageBox, "warning") as warning:
-            dialog.import_button.click()
-
-        message = warning.call_args.args[2]
-        self.assertIn("duplicate.epub", message)
-        self.assertIn("varování na duplicitu", message)
-        self.assertIn("unknown.epub", message)
-        self.assertIn("Chybí vybraný kandidát", message)
-        self.assertIn("ambiguous.epub", message)
-        self.assertIn("více různých kandidátů se 100% shodou", message)
-        self.assertIn("bezpečně vybrat jednu", message)
-        self.assertEqual(writer_calls, [])
-        app.processEvents()
-
-    def test_multiimport_results_dialog_exposes_bulk_selection_buttons(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        dialog = qt.MultiImportResultsDialog([])
-
-        self.assertEqual(dialog.select_safe_button.text(), "Vybrat 100 %")
-        self.assertEqual(dialog.select_all_button.text(), "Vybrat vše")
-        self.assertEqual(dialog.clear_selection_button.text(), "Vše odznačit")
-        self.assertFalse(dialog.import_button.isEnabled())
-        app.processEvents()
-
-    def test_multiimport_results_dialog_select_safe_checks_only_valid_ready_items(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        window = qt.CalibreMetaQtWindow()
-        candidate = cme.ImportCandidate(
-            source="databazeknih",
-            title="Safe",
-            authors="Autor",
-            url="https://example.test/safe",
-            score=100,
-        )
-        preview = cme.ImportPreview(
-            title="Safe",
-            authors="Autor",
-            url="https://example.test/safe",
-        )
-        analysis = cme.ImportAnalysis(
-            epub_path="safe.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=candidate,
-            duplicates=[],
-            preview=preview,
-            messages=[],
-        )
-        items = [
-            cme.MultiImportBatchItem(
-                Path("safe.epub"),
-                "safe.epub",
-                status="ready",
-                analysis=analysis,
-                current_preview=preview,
-                selected_candidate=candidate,
-            ),
-            cme.MultiImportBatchItem(
-                Path("review.epub"),
-                "review.epub",
-                checked_for_import=True,
-                status="needs_review",
-            ),
-            cme.MultiImportBatchItem(
-                Path("duplicate.epub"),
-                "duplicate.epub",
-                checked_for_import=True,
-                status="duplicate_warning",
-            ),
-            cme.MultiImportBatchItem(
-                Path("error.epub"),
-                "error.epub",
-                checked_for_import=True,
-                status="analysis_error",
-            ),
-            cme.MultiImportBatchItem(
-                Path("invalid.epub"),
-                "invalid.epub",
-                checked_for_import=True,
-                status="ready",
-            ),
-        ]
-        dialog = qt.MultiImportResultsDialog(items, parent=window)
-
-        with (
-            patch.object(cme, "apply_import_preview") as apply_preview,
-            patch.object(window, "run_import_apply") as run_apply,
-        ):
-            dialog.select_safe_items()
-
-        self.assertEqual([item.checked_for_import for item in items], [True, False, False, False, False])
-        self.assertEqual(
-            [dialog.items_table.item(row, 0).checkState() for row in range(5)],
-            [Qt.CheckState.Checked] + [Qt.CheckState.Unchecked] * 4,
-        )
-        self.assertFalse(
-            dialog.items_table.item(3, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
-        )
-        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 1")
-        self.assertTrue(dialog.import_button.isEnabled())
-        apply_preview.assert_not_called()
-        run_apply.assert_not_called()
-        app.processEvents()
-
-    def test_multiimport_results_dialog_select_all_and_clear_update_selection_only(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        window = qt.CalibreMetaQtWindow()
-        items = [
-            cme.MultiImportBatchItem(Path("ready.epub"), "ready.epub", status="ready"),
-            cme.MultiImportBatchItem(Path("review.epub"), "review.epub", status="needs_review"),
-            cme.MultiImportBatchItem(
-                Path("duplicate.epub"), "duplicate.epub", status="duplicate_warning"
-            ),
-            cme.MultiImportBatchItem(Path("error.epub"), "error.epub", status="analysis_error"),
-        ]
-        dialog = qt.MultiImportResultsDialog(items, parent=window)
-
-        with (
-            patch.object(cme, "apply_import_preview") as apply_preview,
-            patch.object(window, "run_import_apply") as run_apply,
-        ):
-            dialog.select_all_items()
-            self.assertEqual([item.checked_for_import for item in items], [True, True, True, False])
-            self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 3")
-            self.assertTrue(dialog.import_button.isEnabled())
-
-            dialog.clear_selected_items()
-
-        self.assertEqual([item.checked_for_import for item in items], [False, False, False, False])
-        self.assertTrue(
-            all(
-                dialog.items_table.item(row, 0).checkState() == Qt.CheckState.Unchecked
-                for row in range(4)
-            )
-        )
-        self.assertEqual(dialog.selected_summary_label.text(), "Vybráno k importu: 0")
-        self.assertFalse(dialog.import_button.isEnabled())
-        apply_preview.assert_not_called()
-        run_apply.assert_not_called()
-        app.processEvents()
-
-    def test_multiimport_results_dialog_exports_current_items(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        item = cme.MultiImportBatchItem(Path("book.epub"), "book.epub", status="ready")
-        dialog = qt.MultiImportResultsDialog([item])
-        dialog.items_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-        output_path = "C:/reports/multiimport.csv"
-
-        with (
-            patch.object(qt.QFileDialog, "getSaveFileName", return_value=(output_path, "")) as picker,
-            patch.object(qt, "write_multiimport_csv_report") as writer,
-            patch.object(qt.QMessageBox, "information") as information,
-        ):
-            dialog.export_csv()
-
-        self.assertEqual(dialog.export_button.text(), "Exportovat CSV")
-        picker.assert_called_once_with(
-            dialog,
-            "Exportovat multiimport CSV",
-            "multiimport-report.csv",
-            "CSV soubory (*.csv)",
-        )
-        writer.assert_called_once_with(Path(output_path), dialog.items)
-        self.assertTrue(item.checked_for_import)
-        information.assert_called_once()
-        app.processEvents()
-
-    def test_multiimport_results_dialog_cancelled_export_does_not_write(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        dialog = qt.MultiImportResultsDialog([])
-
-        with (
-            patch.object(qt.QFileDialog, "getSaveFileName", return_value=("", "")),
-            patch.object(qt, "write_multiimport_csv_report") as writer,
-        ):
-            dialog.export_csv()
-
-        writer.assert_not_called()
-        app.processEvents()
-
-    def test_multiimport_results_dialog_reports_export_error(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        dialog = qt.MultiImportResultsDialog([])
-
-        with (
-            patch.object(qt.QFileDialog, "getSaveFileName", return_value=("C:/reports/report.csv", "")),
-            patch.object(qt, "write_multiimport_csv_report", side_effect=OSError("disk full")),
-            patch.object(qt.QMessageBox, "warning") as warning,
-        ):
-            dialog.export_csv()
-
-        self.assertIn("disk full", warning.call_args.args[2])
-        app.processEvents()
-
-    def test_multiimport_results_dialog_validates_current_selection_without_writing(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        window = qt.CalibreMetaQtWindow()
-        item = cme.MultiImportBatchItem(
-            Path("book.epub"),
-            "book.epub",
-            checked_for_import=True,
-            status="needs_review",
-        )
-        dialog = qt.MultiImportResultsDialog([item], parent=window)
-        result = cme.MultiImportValidationResult(
-            [],
-            [cme.MultiImportValidationIssue(item, "status_not_ready")],
-        )
-
-        with (
-            patch.object(cme, "validate_multiimport_checked_items", return_value=result) as validate,
-            patch.object(qt.QMessageBox, "information") as information,
-            patch.object(cme, "apply_import_preview") as apply_preview,
-            patch.object(window, "run_import_apply") as run_apply,
-        ):
-            dialog.validate_selection()
-
-        self.assertEqual(dialog.validate_button.text(), "Ověřit výběr")
-        self.assertTrue(dialog.import_button.isEnabled())
-        validate.assert_called_once_with(dialog.items)
-        self.assertTrue(item.checked_for_import)
-        self.assertIn("Položka není ve stavu Připraveno.", information.call_args.args[2])
-        apply_preview.assert_not_called()
-        run_apply.assert_not_called()
-        app.processEvents()
-
-    def test_import_dialog_returns_preview_with_edited_title_author(self):
-        # Dialog je zjednoduseny: uzivatel edituje jen nazev a autora.
-        # Zbyle pole (publisher, comment, ...) se berou z puvodniho preview.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Stary", authors="Autor", publisher="Vydavatel", comment="Popis"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        dialog.title_edit.setText("Novy")
-
-        preview = dialog.preview()
-
-        self.assertEqual(preview.title, "Novy")
-        self.assertEqual(preview.authors, "Autor")
-        # Nezobrazena pole zustavaji zachovana z puvodniho preview.
-        self.assertEqual(preview.publisher, "Vydavatel")
-        self.assertEqual(preview.comment, "Popis")
-        app.processEvents()
-
-    def test_import_dialog_has_no_editable_metadata_fields(self):
-        # Zjednoduseny dialog uz nesmi vystavovat siroky editor metadat.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        # url_edit je ZAMERNE editovatelne (rucni vlozeni odkazu) - neni v seznamu.
-        for removed in ("series_edit", "series_index_edit", "year_edit", "publisher_edit", "tags_edit", "comment_edit"):
-            self.assertFalse(hasattr(dialog, removed), f"{removed} ma byt odstraneno")
-        app.processEvents()
-
-    def test_import_dialog_candidate_score_display_includes_percent(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[cme.ImportCandidate("databazeknih", "Kniha", "Autor", "https://x", score=42)],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        self.assertTrue(dialog.candidates_list.item(0).text().startswith("42% databazeknih:"))
-        app.processEvents()
-
-    def test_import_dialog_low_score_candidate_can_be_manually_applied(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        detail = cme.BookDetailMetadata(published_year="1990", publisher="Talpress", tags=["Fantasy", "Humor"])
-        candidate = cme.ImportCandidate("databazeknih", "Kandidat", "Autor", "https://x", score=12, detail=detail)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Puvodni", authors="Puvodni autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        dialog.candidates_list.setCurrentRow(0)
-
-        dialog.apply_selected_candidate()
-
-        # Nazev/autor se promitnou do editovatelnych poli.
-        self.assertEqual(dialog.title_edit.text(), "Kandidat")
-        self.assertEqual(dialog.authors_edit.text(), "Autor")
-        # URL se promitne do editovatelneho pole.
-        self.assertEqual(dialog.url_edit.text(), "https://x")
-        # Obohacena metadata (rok, vydavatel, tagy) jdou interne do preview().
-        preview = dialog.preview()
-        self.assertEqual(preview.url, "https://x")
-        self.assertEqual(preview.published_year, "1990")
-        self.assertEqual(preview.publisher, "Talpress")
-        self.assertEqual(preview.tags, "Fantasy, Humor")
-        app.processEvents()
-
-    def test_import_dialog_double_clicking_candidate_populates_preview_fields(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        item = dialog.candidates_list.item(0)
-        dialog.candidates_list.setCurrentItem(item)
-
-        dialog.candidates_list.itemDoubleClicked.emit(item)
-
-        self.assertEqual(dialog.title_edit.text(), "Manual")
-        self.assertEqual(dialog.authors_edit.text(), "Autor")
-        self.assertEqual(dialog.url_edit.text(), "https://manual")
-        self.assertEqual(dialog.preview().url, "https://manual")
-        app.processEvents()
-
-    def test_import_dialog_use_candidate_button_state_and_click(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        self.assertFalse(dialog.use_candidate_button.isEnabled())
-        dialog.candidates_list.setCurrentRow(0)
-        self.assertTrue(dialog.use_candidate_button.isEnabled())
-        dialog.use_candidate_button.click()
-
-        self.assertEqual(dialog.title_edit.text(), "Manual")
-        self.assertEqual(dialog.url_edit.text(), "https://manual")
-        self.assertEqual(dialog.preview().url, "https://manual")
-        app.processEvents()
-
-    def test_import_dialog_open_link_button_state_tracks_url(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://example.test/book", score=5)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        # Bez URL je tlacitko vypnute; po aplikaci kandidata s URL se zapne.
-        self.assertFalse(dialog.open_link_button.isEnabled())
-        dialog.candidates_list.setCurrentRow(0)
-        dialog.apply_selected_candidate()
-        self.assertTrue(dialog.open_link_button.isEnabled())
-        app.processEvents()
-
-    def test_import_dialog_open_link_button_opens_current_url(self):
-        from PySide6.QtCore import QUrl
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(url="https://example.test/book"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        with patch.object(qt.QDesktopServices, "openUrl", return_value=True) as open_url:
-            dialog.open_link_button.click()
-
-        opened = open_url.call_args.args[0]
-        self.assertIsInstance(opened, QUrl)
-        self.assertEqual(opened.toString(), "https://example.test/book")
-        app.processEvents()
-
-    def test_import_dialog_open_link_ignores_empty_url(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        with patch.object(qt.QDesktopServices, "openUrl") as open_url:
-            dialog.open_current_url()
-
-        open_url.assert_not_called()
-        app.processEvents()
-
-    def test_import_dialog_manual_url_flows_into_preview(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Hrr na ne", authors="Terry Pratchett"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        dialog.url_edit.setText("https://www.databazeknih.cz/knihy/x")
-        self.assertEqual(dialog.preview().url, "https://www.databazeknih.cz/knihy/x")
-        self.assertTrue(dialog.open_link_button.isEnabled())
-        app.processEvents()
-
-    def test_import_dialog_research_repopulates_candidates(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Hrr", authors="Terry Pratchett"),
-            messages=[],
-        )
-        found = [cme.ImportCandidate("databazeknih", "Hrrr na ně!", "", "https://dk/x", score=100)]
-        captured = {}
-
-        def fake_search(title, authors):
-            captured["title"] = title
-            captured["authors"] = authors
-            return found
-
-        dialog = qt.ImportDialog(analysis, search_func=fake_search, runner=lambda target: target())
-        dialog.title_edit.setText("Hrrr na ně!")
-        dialog.start_research()
-
-        self.assertEqual(captured["title"], "Hrrr na ně!")
-        self.assertEqual(dialog.candidates_list.count(), 1)
-        self.assertIn("Hrrr na ně!", dialog.candidates_list.item(0).text())
-        app.processEvents()
-
-    def test_import_dialog_use_link_enriches_preview(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Strata", authors="Terry Pratchett"),
-            messages=[],
-        )
-        detail = cme.BookDetailMetadata(published_year="1981", publisher="Talpress", tags=["fantasy"], about_text="popis", cover_url="https://dk/cover.jpg")
-        url = "https://www.databazeknih.cz/knihy/strata-17178"
-        dialog = qt.ImportDialog(
-            analysis,
-            runner=lambda target: target(),
-            link_data_func=lambda u: ("Strata", "Terry Pratchett", url, detail),
-            search_func=lambda title, authors: [],
-        )
-        dialog.url_edit.setText(url)
-        dialog.start_use_link()
-
-        result = dialog.preview()
-        self.assertEqual(result.title, "Strata")
-        self.assertEqual(result.authors, "Terry Pratchett")
-        self.assertEqual(result.published_year, "1981")
-        self.assertEqual(result.publisher, "Talpress")
-        self.assertEqual(result.url, url)
-        self.assertIn("fantasy", result.tags)
-        self.assertEqual(result.selected_cover_url, "https://dk/cover.jpg")
-        app.processEvents()
-
-    def test_import_dialog_use_link_fixes_title_and_author_from_catalog(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="HRR NA NE", authors=""),
-            messages=[],
-        )
-        url = "https://www.databazeknih.cz/knihy/hrrr-na-ne-471"
-        found = [cme.ImportCandidate("databazeknih", "Hrrr na ně!", "", "https://dk/hrrr", score=100)]
-        dups = [cme.DuplicateCandidate(book_id=471, title="Hrrr na ně!", authors="Terry Pratchett", score=100)]
-        dialog = qt.ImportDialog(
-            analysis,
-            runner=lambda target: target(),
-            link_data_func=lambda u: ("Hrrr na ně!", "Terry Pratchett", url, cme.BookDetailMetadata()),
-            search_func=lambda title, authors: found,
-            duplicate_func=lambda preview: dups,
-        )
-        dialog.url_edit.setText(url)
-        dialog.start_use_link()
-
-        self.assertEqual(dialog.title_edit.text(), "Hrrr na ně!")
-        self.assertEqual(dialog.authors_edit.text(), "Terry Pratchett")
-        # Po opraveni se automaticky prehledalo: kandidati i duplicity.
-        self.assertEqual(dialog.candidates_list.count(), 1)
-        self.assertEqual(dialog.duplicates_list.count(), 1)
-        app.processEvents()
-
-    def test_import_dialog_use_link_skips_when_url_empty(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Strata", authors="Terry Pratchett"),
-            messages=[],
-        )
-        called = {"n": 0}
-
-        def fake_link_data(url):
-            called["n"] += 1
-            return ("", "", "u", cme.BookDetailMetadata())
-
-        dialog = qt.ImportDialog(analysis, runner=lambda target: target(), link_data_func=fake_link_data)
-        dialog.url_edit.setText("")
-        dialog.start_use_link()
-
-        self.assertEqual(called["n"], 0)
-        app.processEvents()
-
-    def test_import_dialog_allow_duplicate_checkbox_sets_preview_flag(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        dup = cme.DuplicateCandidate(book_id=1, title="Kniha", authors="Autor", score=100)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[dup],
-            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        # S duplicitou je zatrzitko aktivni; bez nej preview.allow_strong_duplicate False.
-        self.assertTrue(dialog.allow_duplicate_check.isEnabled())
-        self.assertFalse(dialog.preview().allow_strong_duplicate)
-        dialog.allow_duplicate_check.setChecked(True)
-        self.assertTrue(dialog.preview().allow_strong_duplicate)
-        app.processEvents()
-
-    def test_import_dialog_allow_duplicate_disabled_without_duplicates(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        self.assertFalse(dialog.allow_duplicate_check.isEnabled())
-        app.processEvents()
-
-    def test_import_dialog_allow_duplicate_keeps_user_choice_on_recompute(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        dup = cme.DuplicateCandidate(book_id=1, title="Kniha", authors="Autor", score=100)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[dup],
-            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        dialog.allow_duplicate_check.setChecked(True)
-        # Prepocet duplicit (napr. po 'Hledat znovu') nesmi odskrtnout volbu uzivatele.
-        dialog.populate_duplicates([])
-        self.assertTrue(dialog.allow_duplicate_check.isChecked())
-        app.processEvents()
-
-    def test_import_dialog_research_skips_when_title_empty(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="", authors=""),
-            messages=[],
-        )
-        called = {"n": 0}
-
-        def fake_search(title, authors):
-            called["n"] += 1
-            return []
-
-        dialog = qt.ImportDialog(analysis, search_func=fake_search, runner=lambda target: target())
-        dialog.title_edit.setText("   ")
-        dialog.start_research()
-
-        self.assertEqual(called["n"], 0)
-        app.processEvents()
-
-    def test_import_dialog_using_candidate_does_not_accept_or_apply(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate = cme.ImportCandidate("openlibrary", "Manual", "Autor", "https://manual", score=5)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-        dialog.candidates_list.setCurrentRow(0)
-
-        with patch.object(dialog, "accept") as accept:
-            dialog.use_candidate_button.click()
-
-        accept.assert_not_called()
-        self.assertEqual(dialog.title_edit.text(), "Manual")
-        app.processEvents()
-
-    def test_import_dialog_accept_uses_final_preview(self):
-        # Dialog lze potvrdit; preview() vraci aktualni rozhodnuti.
-        from PySide6.QtWidgets import QApplication, QDialog
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Kniha", authors="Autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        self.assertTrue(dialog.import_button.isEnabled())
-        dialog.import_button.click()
-
-        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
-        preview = dialog.preview()
-        self.assertEqual(preview.title, "Kniha")
-        self.assertEqual(preview.authors, "Autor")
-        app.processEvents()
-
-    def test_import_dialog_using_candidate_updates_import_choice(self):
-        # Vyber a pouziti kandidata zmeni preview pouzity pro import (URL, zdroj).
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate = cme.ImportCandidate("databazeknih", "Spravny", "Autor", "https://spravny", score=88)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Fallback", authors="Fallback autor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        # Pred pouzitim kandidata drzi preview fallback.
-        self.assertEqual(dialog.preview().title, "Fallback")
-        dialog.candidates_list.setCurrentRow(0)
-        dialog.apply_selected_candidate()
-
-        preview = dialog.preview()
-        self.assertEqual(preview.title, "Spravny")
-        self.assertEqual(preview.authors, "Autor")
-        self.assertEqual(preview.url, "https://spravny")
-        self.assertEqual(preview.source, "databazeknih")
-        self.assertEqual(dialog.source_label.text(), "databazeknih")
-        app.processEvents()
-
-    def test_import_dialog_preserves_candidate_series_metadata_without_controls(self):
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        detail = cme.BookDetailMetadata(series="Nadace", series_index="2")
-        candidate = cme.ImportCandidate("databazeknih", "Nadace", "Isaac Asimov", "https://x", detail=detail)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate],
-            recommended=candidate,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Nadace", authors="Isaac Asimov"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis, runner=lambda target: target())
-
-        dialog.candidates_list.setCurrentRow(0)
-        dialog.apply_selected_candidate()
-
-        self.assertEqual(dialog.current_preview.series, "Nadace")
-        self.assertEqual(dialog.current_preview.series_index, "2")
-        self.assertFalse(hasattr(dialog, "series_edit"))
-        self.assertFalse(hasattr(dialog, "series_index_edit"))
-        app.processEvents()
-
-    def test_import_dialog_switching_candidate_does_not_leak_hidden_metadata(self):
-        # Kandidat A ma detail metadata; kandidat B ne. Po prepnuti z A na B
-        # nesmi B podedit skryta metadata z A; ma padnout jen na base_preview.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        detail = cme.BookDetailMetadata(published_year="1990", publisher="Talpress", tags=["Fantasy", "Humor"], about_text="popis A")
-        candidate_a = cme.ImportCandidate("databazeknih", "Kniha A", "Autor A", "https://a", score=80, detail=detail)
-        candidate_b = cme.ImportCandidate("openlibrary", "Kniha B", "Autor B", "https://b", score=70)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate_a, candidate_b],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="Fallback", authors="Fallback autor", publisher="BaseVydavatel"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        # Aplikuj A -> preview ma detail metadata z A.
-        dialog.candidates_list.setCurrentRow(0)
-        dialog.apply_selected_candidate()
-        preview_a = dialog.preview()
-        self.assertEqual(preview_a.publisher, "Talpress")
-        self.assertEqual(preview_a.tags, "Fantasy, Humor")
-        self.assertEqual(preview_a.published_year, "1990")
-        self.assertTrue(preview_a.comment)
-
-        # Aplikuj B -> preview pouziva B, ale neprosaknou metadata z A.
-        dialog.candidates_list.setCurrentRow(1)
-        dialog.apply_selected_candidate()
-        preview_b = dialog.preview()
-        self.assertEqual(preview_b.title, "Kniha B")
-        self.assertEqual(preview_b.authors, "Autor B")
-        self.assertEqual(preview_b.url, "https://b")
-        self.assertEqual(preview_b.source, "openlibrary")
-        # Zadne A metadata.
-        self.assertNotEqual(preview_b.publisher, "Talpress")
-        self.assertEqual(preview_b.tags, "")
-        self.assertEqual(preview_b.published_year, "")
-        self.assertEqual(preview_b.comment, "")
-        # Fallback jen na base_preview metadata.
-        self.assertEqual(preview_b.publisher, "BaseVydavatel")
-        app.processEvents()
-
-    def test_import_dialog_candidate_without_title_uses_base_fallback(self):
-        # Kandidat bez title/authors nesmi nechat stare viditelne hodnoty;
-        # ma ukazat enriched/base fallback.
-        from PySide6.QtWidgets import QApplication
-        import sys
-        import calibre_meta_qt as qt
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        candidate_a = cme.ImportCandidate("databazeknih", "Kniha A", "Autor A", "https://a", score=80)
-        candidate_empty = cme.ImportCandidate("openlibrary", "", "", "https://b", score=70)
-        analysis = cme.ImportAnalysis(
-            epub_path="book.epub",
-            signals=[],
-            candidates=[candidate_a, candidate_empty],
-            recommended=None,
-            duplicates=[],
-            preview=cme.ImportPreview(title="BaseTitul", authors="BaseAutor"),
-            messages=[],
-        )
-        dialog = qt.ImportDialog(analysis)
-
-        dialog.candidates_list.setCurrentRow(0)
-        dialog.apply_selected_candidate()
-        self.assertEqual(dialog.title_edit.text(), "Kniha A")
-
-        # Kandidat bez title/authors -> fallback na base, ne stale "Kniha A".
-        dialog.candidates_list.setCurrentRow(1)
-        dialog.apply_selected_candidate()
-        self.assertEqual(dialog.title_edit.text(), "BaseTitul")
-        self.assertEqual(dialog.authors_edit.text(), "BaseAutor")
-        self.assertEqual(dialog.preview().url, "https://b")
         app.processEvents()
 
     def test_import_epub_icon_is_distinct_from_cover_icon(self):
@@ -4329,7 +2568,6 @@ class QtImportWiringTests(unittest.TestCase):
         with (
             patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
             patch.object(qt, "ImportReviewDialog"),
-            patch.object(qt, "MultiImportResultsDialog"),
             patch.object(qt.QApplication, "processEvents"),
         ):
             progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
@@ -6121,4 +4359,141 @@ class ImportReviewDialogTests(unittest.TestCase):
 
         self.assertFalse(dialog.title_edit.isEnabled())
         self.assertFalse(dialog.candidates_list.isEnabled())
+        app.processEvents()
+
+    # --- pokryti prenesene z byvalych ImportDialog/MultiImportResultsDialog testu ---
+
+    def test_bulk_selection_safe_all_clear(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        safe = self._item("safe.epub")  # 100% bez duplicit -> "ready"
+        review = self._item("review.epub", candidates=[
+            cme.ImportCandidate("databazeknih", "X", "Y", "https://dk/2", score=40)
+        ])  # nizke skore -> "needs_review"
+        dialog = qt.ImportReviewDialog([safe, review])
+
+        dialog.select_all_items()
+        self.assertTrue(safe.checked_for_import)
+        self.assertTrue(review.checked_for_import)
+
+        dialog.clear_selected_items()
+        self.assertFalse(safe.checked_for_import)
+        self.assertFalse(review.checked_for_import)
+
+        dialog.select_safe_items()
+        self.assertTrue(safe.checked_for_import)
+        self.assertFalse(review.checked_for_import)
+        app.processEvents()
+
+    def test_validate_selection_shows_summary(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        dialog = qt.ImportReviewDialog([self._item()])
+        with patch.object(qt.QMessageBox, "information") as info:
+            dialog.validate_selection()
+        info.assert_called_once()
+        app.processEvents()
+
+    def test_export_csv_writes_report(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        dialog = qt.ImportReviewDialog([self._item()])
+        with (
+            patch.object(qt.QFileDialog, "getSaveFileName", return_value=("out.csv", "")),
+            patch.object(qt, "write_multiimport_csv_report") as writer,
+            patch.object(qt.QMessageBox, "information"),
+        ):
+            dialog.export_csv()
+        writer.assert_called_once()
+        app.processEvents()
+
+    def test_import_checked_items_runs_batch_write(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = self._item()
+        item.checked_for_import = True
+        writes = []
+
+        def write_one(preview, path):
+            writes.append(path)
+            return cme.ImportApplyResult(book_id=1, status="updated")
+
+        dialog = qt.ImportReviewDialog(
+            [item],
+            write_one=write_one,
+            connectivity_check=lambda: True,
+            prepare_backup=lambda enabled: None,
+        )
+        scheduled = []
+        with (
+            patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+            patch.object(qt.QMessageBox, "information"),
+            patch.object(qt, "MultiImportProgressDialog") as progress_dialog,
+            patch.object(qt.QApplication, "processEvents"),
+        ):
+            progress_dialog.return_value.run_after_first_paint.side_effect = scheduled.append
+            progress_dialog.return_value.exec.side_effect = lambda: scheduled.pop(0)()
+            dialog.import_checked_items()
+
+        self.assertEqual(len(writes), 1)
+        app.processEvents()
+
+    def test_manual_url_builds_candidate_and_checks_item(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = self._item()
+        detail = cme.BookDetailMetadata()
+
+        def fake_link(url):
+            return ("Titul z odkazu", "Autor z odkazu", "https://dk/manual", detail)
+
+        dialog = qt.ImportReviewDialog(
+            [item],
+            link_data_func=fake_link,
+            runner=lambda target: target(),
+            duplicate_finder=lambda preview: [],
+        )
+        dialog.manual_url_edit.setText("https://dk/manual")
+        dialog.start_use_link()
+
+        self.assertTrue(item.manually_confirmed)
+        self.assertTrue(item.checked_for_import)
+        self.assertEqual(item.current_preview.url, "https://dk/manual")
+        app.processEvents()
+
+    def test_research_replaces_candidates(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = self._item()
+        new_cands = [cme.ImportCandidate("databazeknih", "Novy", "Autor", "https://dk/new", score=80)]
+        dialog = qt.ImportReviewDialog(
+            [item],
+            search_func=lambda title, authors: new_cands,
+            runner=lambda target: target(),
+            duplicate_finder=lambda preview: [],
+        )
+        dialog.start_research()
+
+        self.assertEqual(item.analysis.candidates, new_cands)
+        self.assertEqual(dialog.candidates_list.count(), 1)
+        app.processEvents()
+
+    def test_allow_duplicate_flushes_into_preview(self):
+        app = self._app()
+        import calibre_meta_qt as qt
+
+        item = self._item(duplicates=[cme.DuplicateCandidate(1, "K", "A", strong=True)])
+        dialog = qt.ImportReviewDialog([item])
+
+        self.assertTrue(dialog.allow_duplicate_check.isEnabled())
+        dialog.allow_duplicate_check.setChecked(True)
+        self.assertTrue(dialog.preview().allow_strong_duplicate)
         app.processEvents()
