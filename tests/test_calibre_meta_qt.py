@@ -1971,11 +1971,11 @@ class PreferencesDialogAITests(unittest.TestCase):
                 dialog.ai_model_edit.setText("something-else")
                 event = QCloseEvent()
                 with (
-                    patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Save) as question,
+                    patch.object(dialog, "_confirm_unsaved", return_value="save") as confirm,
                     patch.object(dialog, "save_library", wraps=dialog.save_library) as save,
                 ):
                     dialog.closeEvent(event)
-                question.assert_called_once()
+                confirm.assert_called_once()
                 save.assert_called_once()
                 self.assertTrue(event.isAccepted())
         app.processEvents()
@@ -1994,7 +1994,7 @@ class PreferencesDialogAITests(unittest.TestCase):
                 dialog = qt.PreferencesDialog(window)
                 dialog.ai_model_edit.setText("something-else")
                 event = QCloseEvent()
-                with patch.object(qt.QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel):
+                with patch.object(dialog, "_confirm_unsaved", return_value="cancel"):
                     dialog.closeEvent(event)
                 self.assertFalse(event.isAccepted())
         app.processEvents()
@@ -2012,9 +2012,9 @@ class PreferencesDialogAITests(unittest.TestCase):
                 window = qt.CalibreMetaQtWindow()
                 dialog = qt.PreferencesDialog(window)
                 event = QCloseEvent()
-                with patch.object(qt.QMessageBox, "question") as question:
+                with patch.object(dialog, "_confirm_unsaved") as confirm:
                     dialog.closeEvent(event)
-                question.assert_not_called()
+                confirm.assert_not_called()
                 self.assertTrue(event.isAccepted())
         app.processEvents()
 

@@ -2462,27 +2462,41 @@ if PYSIDE6_AVAILABLE:
                 return
             super().keyPressEvent(event)
 
+        def _confirm_unsaved(self) -> str:
+            """Ceska hlaska u neulozenych zmen. Vraci 'save' / 'discard' / 'cancel'.
+
+            QMessageBox.question by mel tlacitka anglicky (Save/Discard/Cancel z Qt
+            locale), tak je stavime rucne s ceskymi popisky.
+            """
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Neuložené změny")
+            box.setText("Máte neuložené změny. Uložit?")
+            save_button = box.addButton("Uložit", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Zahodit", QMessageBox.ButtonRole.DestructiveRole)
+            cancel_button = box.addButton("Zrušit", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(save_button)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is save_button:
+                return "save"
+            if clicked is cancel_button:
+                return "cancel"
+            return "discard"
+
         def closeEvent(self, event) -> None:
             if not self.is_dirty():
                 event.accept()
                 return
-            answer = QMessageBox.question(
-                self,
-                "Neuložené změny",
-                "Máte neuložené změny. Uložit?",
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Save,
-            )
-            if answer == QMessageBox.StandardButton.Save:
+            choice = self._confirm_unsaved()
+            if choice == "save":
                 self.save_library()
                 # Kdyz ulozeni neproslo (napr. prazdna knihovna), zustan v dialogu.
                 if self.is_dirty():
                     event.ignore()
                 else:
                     event.accept()
-            elif answer == QMessageBox.StandardButton.Discard:
+            elif choice == "discard":
                 event.accept()
             else:
                 event.ignore()
