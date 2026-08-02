@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 import threading
+import time
 import webbrowser
 from dataclasses import replace
 from pathlib import Path
@@ -2223,12 +2224,29 @@ if PYSIDE6_AVAILABLE:
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
 
-        def __init__(self, parent: "CalibreMetaQtWindow") -> None:
+        # (last_error, elapsed) z vlakna "Test AI".
+        ai_test_done = Signal(str, float)
+
+        def __init__(
+            self,
+            parent: "CalibreMetaQtWindow",
+            *,
+            resolver_factory: Callable[[str, str, int], object] | None = None,
+            test_runner: Callable[[Callable[[], None]], None] | None = None,
+        ) -> None:
             super().__init__(parent)
             self.parent_window = parent
+            self._resolver_factory = resolver_factory or (
+                lambda provider, model, timeout: cme.build_ai_resolver(provider, model, timeout)
+            )
+            self._test_runner = test_runner or (
+                lambda target: threading.Thread(target=target, daemon=True).start()
+            )
+            self._ai_test_disabled = False
             self.setWindowTitle("Preferences")
             self.setMinimumWidth(720)
             self._build_ui()
+            self.ai_test_done.connect(self.finish_ai_test)
 
         def _build_ui(self) -> None:
             layout = QVBoxLayout(self)
@@ -2263,7 +2281,10 @@ if PYSIDE6_AVAILABLE:
             self.ai_provider_combo = QComboBox()
             self.ai_provider_combo.addItems(AI_PROVIDER_VALUES)
             self.ai_provider_combo.setCurrentText(str(ai_settings["provider"]))
-            form.addWidget(self.ai_provider_combo, 5, 1, 1, 3)
+            form.addWidget(self.ai_provider_combo, 5, 1, 1, 2)
+            self.ai_test_button = QPushButton("Test AI")
+            self.ai_test_button.clicked.connect(self.start_ai_test)
+            form.addWidget(self.ai_test_button, 5, 3)
             form.addWidget(QLabel("Model"), 6, 0)
             self.ai_model_edit = QLineEdit(str(ai_settings["model"]))
             form.addWidget(self.ai_model_edit, 6, 1, 1, 3)
@@ -2287,9 +2308,12 @@ if PYSIDE6_AVAILABLE:
             workers_hint.setEnabled(False)
             form.addWidget(workers_hint, 9, 2, 1, 2)
             # Status klice pro cloud providery: rekne jestli appka nasla API klic.
+            self.ai_test_result_label = QLabel()
+            form.addWidget(QLabel("AI test"), 10, 0)
+            form.addWidget(self.ai_test_result_label, 10, 1, 1, 3)
             self.ai_key_status_label = QLabel()
-            form.addWidget(QLabel("API klic"), 10, 0)
-            form.addWidget(self.ai_key_status_label, 10, 1, 1, 3)
+            form.addWidget(QLabel("API klic"), 11, 0)
+            form.addWidget(self.ai_key_status_label, 11, 1, 1, 3)
             # Signal az po nastaveni hodnot, jinak by init prepsal ulozeny model defaultem.
             self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_changed)
             self._update_ai_key_status()
@@ -2326,6 +2350,53 @@ if PYSIDE6_AVAILABLE:
                 self.ai_key_status_label.setText("nalezen" if found else "CHYBI (nastav v .env)")
             else:
                 self.ai_key_status_label.setText("nepouziva se")
+
+        AI_TEST_SAMPLE = (
+            "Jules Verne\nTajemný ostrov\n\n"
+            "Kapitola první. Trosečníci vzduchu."
+        )
+
+        def start_ai_test(self) -> None:
+            """Otestuje prave nastaveneho AI providera malym realnym dotazem."""
+            provider = self.ai_provider_combo.currentText()
+            model = self.ai_model_edit.text().strip()
+            try:
+                timeout = int(self.ai_timeout_edit.text())
+            except ValueError:
+                timeout = 120
+            resolver = self._resolver_factory(provider, model, timeout)
+            self._ai_test_disabled = isinstance(resolver, cme.DisabledAIResolver)
+            if self._ai_test_disabled:
+                self._show_ai_test_result(disabled=True, last_error="", elapsed=0.0)
+                return
+            self.ai_test_button.setEnabled(False)
+            self.ai_test_result_label.setText("Testuji…")
+            self.ai_test_result_label.setStyleSheet("")
+
+            def worker() -> None:
+                start = time.perf_counter()
+                try:
+                    resolver.extract(self.AI_TEST_SAMPLE)
+                    error = getattr(resolver, "last_error", "") or ""
+                except Exception as exc:
+                    error = str(exc) or type(exc).__name__
+                elapsed = time.perf_counter() - start
+                self.ai_test_done.emit(error, elapsed)
+
+            self._test_runner(worker)
+
+        def finish_ai_test(self, last_error: str, elapsed: float) -> None:
+            self.ai_test_button.setEnabled(True)
+            self._show_ai_test_result(disabled=False, last_error=last_error, elapsed=elapsed)
+
+        def _show_ai_test_result(self, *, disabled: bool, last_error: str, elapsed: float) -> None:
+            self.ai_test_result_label.setText(ai_test_result_text(disabled, last_error, elapsed))
+            if disabled:
+                self.ai_test_result_label.setStyleSheet("")
+            elif last_error:
+                self.ai_test_result_label.setStyleSheet("color: #c62828;")
+            else:
+                self.ai_test_result_label.setStyleSheet("color: #2e7d32;")
 
         def choose_library(self) -> None:
             selected = QFileDialog.getExistingDirectory(self, "Vyber Calibre knihovnu", self.library_edit.text())

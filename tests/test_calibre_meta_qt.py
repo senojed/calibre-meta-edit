@@ -1824,6 +1824,106 @@ class PreferencesDialogAITests(unittest.TestCase):
             SETTINGS_PATH=tmp_path,
         )
 
+    def _open_dialog_with_ai_test(self, qt, window, resolver, runner=None):
+        return qt.PreferencesDialog(
+            window,
+            resolver_factory=lambda provider, model, timeout: resolver,
+            test_runner=runner or (lambda target: target()),
+        )
+
+    def test_ai_test_reports_success(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        class FakeResolver:
+            last_error = ""
+            def extract(self, text):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog_with_ai_test(qt, window, FakeResolver())
+                dialog.start_ai_test()
+        self.assertTrue(dialog.ai_test_result_label.text().startswith("Funguje"))
+        app.processEvents()
+
+    def test_ai_test_reports_failure_reason(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        class FakeResolver:
+            last_error = "Ollama neběží"
+            def extract(self, text):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog_with_ai_test(qt, window, FakeResolver())
+                dialog.start_ai_test()
+        self.assertEqual(dialog.ai_test_result_label.text(), "Nefunguje: Ollama neběží")
+        app.processEvents()
+
+    def test_ai_test_reports_disabled(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = self._open_dialog_with_ai_test(qt, window, cme.DisabledAIResolver())
+                dialog.start_ai_test()
+        self.assertEqual(dialog.ai_test_result_label.text(), "AI je vypnutá")
+        app.processEvents()
+
+    def test_ai_test_uses_current_dialog_values(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        captured = {}
+
+        class FakeResolver:
+            last_error = ""
+            def extract(self, text):
+                return None
+
+        def factory(provider, model, timeout):
+            captured["provider"] = provider
+            captured["model"] = model
+            captured["timeout"] = timeout
+            return FakeResolver()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(
+                    window,
+                    resolver_factory=factory,
+                    test_runner=lambda target: target(),
+                )
+                dialog.ai_provider_combo.setCurrentText("ollama")
+                dialog.ai_model_edit.setText("llama-test")
+                dialog.ai_timeout_edit.setText("42")
+                dialog.start_ai_test()
+
+        self.assertEqual(captured, {"provider": "ollama", "model": "llama-test", "timeout": 42})
+        app.processEvents()
+
     def test_preferences_dialog_has_key_status_label(self):
         from PySide6.QtWidgets import QApplication
         import sys
