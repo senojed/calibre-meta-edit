@@ -27,6 +27,13 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.APP_VERSION, "0.4.11")
         self.assertEqual(qt.app_title(), "Calibre Meta Edit 0.4.11")
 
+    def test_ai_test_result_text_variants(self):
+        import calibre_meta_qt as qt
+
+        self.assertEqual(qt.ai_test_result_text(True, "", 0.0), "AI je vypnutá")
+        self.assertEqual(qt.ai_test_result_text(False, "Ollama neběží", 1.2), "Nefunguje: Ollama neběží")
+        self.assertEqual(qt.ai_test_result_text(False, "", 2.34), "Funguje (~2.3 s)")
+
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
 

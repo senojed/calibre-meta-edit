@@ -763,6 +763,19 @@ def should_auto_import(analysis: cme.ImportAnalysis) -> bool:
     return max(candidate.score for candidate in candidates) >= 100
 
 
+def ai_test_result_text(disabled: bool, last_error: str, elapsed: float) -> str:
+    """Text vysledku tlacitka 'Test AI'. Cista funkce, testovatelna bez Qt.
+
+    disabled = AI je vypnuta (nic se netestovalo); last_error = realny duvod
+    selhani z resolveru; jinak uspech se zmerenym casem.
+    """
+    if disabled:
+        return "AI je vypnutá"
+    if last_error:
+        return f"Nefunguje: {last_error}"
+    return f"Funguje (~{elapsed:.1f} s)"
+
+
 def run_import_analysis(
     epub_path: str | Path,
     library: str | Path,
