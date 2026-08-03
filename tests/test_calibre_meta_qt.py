@@ -1189,6 +1189,48 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("write", events)
         app.processEvents()
 
+    def test_ollama_indicator_green_when_ollama_ready(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "ollama", "model": "llama3.1:8b"}}):
+            with patch.object(qt.cme, "ollama_status", return_value=cme.OllamaStatus(True, True)) as probe:
+                window = qt.CalibreMetaQtWindow()
+                window.refresh_ai_indicators()
+        probe.assert_called()
+        self.assertIn("#2e7d32", window.ollama_indicator.text())
+        app.processEvents()
+
+    def test_ollama_indicator_not_probed_for_cloud(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "anthropic", "model": ""}}):
+            with patch.object(qt.cme, "ollama_status") as probe:
+                window = qt.CalibreMetaQtWindow()
+                window.refresh_ai_indicators()
+        probe.assert_not_called()
+        self.assertIn("#9e9e9e", window.ollama_indicator.text())
+        app.processEvents()
+
+    def test_api_indicator_reflects_key_presence(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "anthropic", "model": ""}}):
+            with patch.object(qt.cme, "read_api_key", return_value="k"):
+                window = qt.CalibreMetaQtWindow()
+                window.refresh_ai_indicators()
+        self.assertIn("#2e7d32", window.api_indicator.text())
+        self.assertIn("API", window.api_indicator.text())
+        app.processEvents()
+
     def test_qt_imports_when_pyside6_available(self):
         import calibre_meta_qt as qt
 

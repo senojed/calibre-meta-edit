@@ -2601,6 +2601,7 @@ if PYSIDE6_AVAILABLE:
             self._build_ui()
             self.calibre_timer = QTimer(self)
             self.calibre_timer.timeout.connect(self.refresh_calibre_indicator)
+            self.calibre_timer.timeout.connect(self.refresh_ai_indicators)
             # V testech (CALIBRE_META_EDIT_TEST=1) casovac nespoustime: jinak by
             # kazde nahromadene testovaci okno kazdych 5 s poustelo `tasklist`
             # (subprocess) a sada by kvadraticky zpomalovala.
@@ -2630,6 +2631,14 @@ if PYSIDE6_AVAILABLE:
             self.statusBar().addPermanentWidget(self.online_indicator)
             self.calibre_indicator = QLabel()
             self.statusBar().addPermanentWidget(self.calibre_indicator)
+            self.ollama_indicator = QLabel()
+            self.statusBar().addPermanentWidget(self.ollama_indicator)
+            self.api_indicator = QLabel()
+            self.statusBar().addPermanentWidget(self.api_indicator)
+            self._ollama_state = ("off", False, False)
+            self._api_state = ("off", False)
+            self.update_ollama_indicator()
+            self.update_api_indicator()
             self.update_online_indicator()
             self.set_status("Ready")
             self.apply_theme()
@@ -4409,6 +4418,37 @@ if PYSIDE6_AVAILABLE:
             color = "#2e7d32" if self.calibre_running else "#c62828"
             label = "Calibre zapnuto" if self.calibre_running else "Calibre vypnuto"
             self.calibre_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")
+
+        def refresh_ai_indicators(self) -> None:
+            """Obnovi Ollama a API tecky podle prave nastaveneho providera.
+
+            Ollamu probehne zive (localhost, levne) jen kdyz je aktivni provider;
+            cloud se neprobiha (dotaz stoji penize) - API tecka jen cte, jestli je klic.
+            """
+            ai = normalize_ai_settings(read_app_settings())
+            provider = str(ai["provider"])
+            model = str(ai["model"])
+            reachable = model_present = False
+            if provider == "ollama":
+                status = cme.ollama_status(model)
+                reachable, model_present = status.reachable, status.model_present
+            self._ollama_state = (provider, reachable, model_present)
+            key_present = provider in ("anthropic", "openai") and bool(cme.read_api_key(provider))
+            self._api_state = (provider, key_present)
+            self.update_ollama_indicator()
+            self.update_api_indicator()
+
+        def update_ollama_indicator(self) -> None:
+            provider, reachable, model_present = self._ollama_state
+            color, label, tooltip = ollama_indicator_state(provider, reachable, model_present)
+            self.ollama_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")
+            self.ollama_indicator.setToolTip(tooltip)
+
+        def update_api_indicator(self) -> None:
+            provider, key_present = self._api_state
+            color, label, tooltip = api_indicator_state(provider, key_present)
+            self.api_indicator.setText(f"<span style='color:{color}; font-size:16px;'>●</span> {label}")
+            self.api_indicator.setToolTip(tooltip)
 
         def update_online_indicator(self) -> None:
             """Prekresli puntik pripojeni ve statusbaru podle posledniho zjisteni."""
