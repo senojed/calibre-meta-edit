@@ -6978,5 +6978,35 @@ class ImportCoverCommandTests(unittest.TestCase):
         self.assertTrue(cover_field.endswith("cover.jpg"))
 
 
+class FrozenPathTests(unittest.TestCase):
+    def test_dev_dirs_are_module_dir(self):
+        import sys
+        module_dir = Path(cme.__file__).resolve().parent
+        with patch.object(sys, "frozen", False, create=True):
+            self.assertEqual(cme.app_base_dir(), module_dir)
+            self.assertEqual(cme.app_data_dir(), module_dir)
+
+    def test_frozen_base_dir_uses_meipass(self):
+        import sys
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "_MEIPASS", r"C:\bundle\_internal", create=True),
+            patch.object(sys, "executable", r"C:\app\CalibreMetaEdit.exe"),
+        ):
+            self.assertEqual(cme.app_base_dir(), Path(r"C:\bundle\_internal"))
+
+    def test_frozen_data_dir_is_exe_parent(self):
+        import sys
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "executable", r"C:\app\CalibreMetaEdit.exe"),
+        ):
+            self.assertEqual(cme.app_data_dir(), Path(r"C:\app"))
+
+    def test_app_dir_in_app_module_is_data_dir(self):
+        import calibre_meta_app as app
+        self.assertEqual(app.APP_DIR, cme.app_data_dir())
+
+
 if __name__ == "__main__":
     unittest.main()

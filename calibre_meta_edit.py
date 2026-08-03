@@ -1462,6 +1462,22 @@ def _parse_env_file(env_path: Path) -> dict[str, str]:
     return values
 
 
+def app_base_dir() -> Path:
+    """Slozka se zabalenymi read-only soubory (ikony). Ve frozen exe je to
+    PyInstaller bundle (_MEIPASS), ve vyvoji slozka modulu."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
+def app_data_dir() -> Path:
+    """Slozka pro zapisovatelna data (settings, backups, matches, .env). Ve frozen
+    exe je to slozka vedle .exe, ve vyvoji slozka modulu."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def read_api_key(
     provider: str,
     environ: dict[str, str] | None = None,
