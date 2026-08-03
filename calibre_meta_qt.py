@@ -21,7 +21,7 @@ import calibre_meta_app as shared
 import calibre_meta_edit as cme
 
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = cme.app_base_dir()
 APP_VERSION = "0.4.11"
 PYSIDE6_AVAILABLE = importlib.util.find_spec("PySide6") is not None
 ICON_PATH = APP_DIR / "app_icon.svg"
@@ -4575,7 +4575,7 @@ def main() -> int:
         raise RuntimeError("PySide6 neni nainstalovane. Spust: python -m pip install PySide6")
     # Diagnostika do konzole (hlavne AI import). Spust z konzole pro videni logu.
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    os.chdir(APP_DIR)
+    os.chdir(cme.app_data_dir())
     app = QApplication([])
     app.setFont(QFont("Segoe UI", 9))
     window = CalibreMetaQtWindow()
