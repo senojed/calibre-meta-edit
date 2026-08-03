@@ -22,3 +22,8 @@ __pycache__/
 review-*.diff
 multiimport-report.csv
 .superpowers/
+
+# PyInstaller build vystupy - generovane, nikdy necommitovat.
+build/
+dist/
+CalibreMetaEdit-*.zip
