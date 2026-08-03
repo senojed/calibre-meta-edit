@@ -720,6 +720,7 @@ class QtHelperTests(unittest.TestCase):
                 "startup_preview": True,
                 "auto_link_audit": True,
                 "auto_cover_audit": True,
+                "hide_startup_check": False,
             },
         )
 
