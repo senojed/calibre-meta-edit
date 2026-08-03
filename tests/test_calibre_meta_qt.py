@@ -34,6 +34,47 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.ai_test_result_text(False, "Ollama neběží", 1.2), "Nefunguje: Ollama neběží")
         self.assertEqual(qt.ai_test_result_text(False, "", 2.34), "Funguje (~2.3 s)")
 
+    def test_startup_readiness_all_ok_ollama(self):
+        import calibre_meta_qt as qt
+        problems = qt.startup_readiness_problems(
+            calibre_ok=True, provider="ollama", ollama_reachable=True,
+            model_present=True, model="llama3.1:8b", key_present=False,
+        )
+        self.assertEqual(problems, [])
+
+    def test_startup_readiness_reports_missing_calibre_and_ollama(self):
+        import calibre_meta_qt as qt
+        problems = qt.startup_readiness_problems(
+            calibre_ok=False, provider="ollama", ollama_reachable=False,
+            model_present=False, model="llama3.1:8b", key_present=False,
+        )
+        self.assertIn("Calibre nenalezeno", problems)
+        self.assertTrue(any("Ollama" in p for p in problems))
+
+    def test_startup_readiness_reports_missing_model(self):
+        import calibre_meta_qt as qt
+        problems = qt.startup_readiness_problems(
+            calibre_ok=True, provider="ollama", ollama_reachable=True,
+            model_present=False, model="llama3.1:8b", key_present=False,
+        )
+        self.assertEqual(problems, ["Model llama3.1:8b není stažený (ollama pull llama3.1:8b)"])
+
+    def test_startup_readiness_cloud_missing_key(self):
+        import calibre_meta_qt as qt
+        problems = qt.startup_readiness_problems(
+            calibre_ok=True, provider="anthropic", ollama_reachable=False,
+            model_present=False, model="", key_present=False,
+        )
+        self.assertEqual(problems, ["Chybí API klíč pro anthropic"])
+
+    def test_startup_readiness_off_ignores_ai(self):
+        import calibre_meta_qt as qt
+        problems = qt.startup_readiness_problems(
+            calibre_ok=True, provider="off", ollama_reachable=False,
+            model_present=False, model="", key_present=False,
+        )
+        self.assertEqual(problems, [])
+
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
 

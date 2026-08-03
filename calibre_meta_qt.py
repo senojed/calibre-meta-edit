@@ -777,6 +777,34 @@ def ai_test_result_text(disabled: bool, last_error: str, elapsed: float) -> str:
     return f"Funguje (~{elapsed:.1f} s)"
 
 
+def startup_readiness_problems(
+    *,
+    calibre_ok: bool,
+    provider: str,
+    ollama_reachable: bool,
+    model_present: bool,
+    model: str,
+    key_present: bool,
+) -> list[str]:
+    """Seznam chybejicich zavislosti pro aktivniho providera. Prazdny = vse OK.
+
+    Calibre se kontroluje vzdy; Ollama+model jen u ollama providera; klic jen u
+    cloud providera; off AI neresi.
+    """
+    problems: list[str] = []
+    if not calibre_ok:
+        problems.append("Calibre nenalezeno")
+    if provider == "ollama":
+        if not ollama_reachable:
+            problems.append("Ollama neběží (spusťte Ollama server)")
+        elif not model_present:
+            problems.append(f"Model {model} není stažený (ollama pull {model})")
+    elif provider in ("anthropic", "openai"):
+        if not key_present:
+            problems.append(f"Chybí API klíč pro {provider}")
+    return problems
+
+
 def run_import_analysis(
     epub_path: str | Path,
     library: str | Path,
