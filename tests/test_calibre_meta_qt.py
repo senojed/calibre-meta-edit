@@ -75,6 +75,11 @@ class QtHelperTests(unittest.TestCase):
         )
         self.assertEqual(problems, [])
 
+    def test_normalize_auto_settings_has_hide_startup_check_default_false(self):
+        import calibre_meta_qt as qt
+        self.assertFalse(qt.normalize_auto_settings({})["hide_startup_check"])
+        self.assertTrue(qt.normalize_auto_settings({"hide_startup_check": True})["hide_startup_check"])
+
     def test_ollama_indicator_states(self):
         import calibre_meta_qt as qt
         self.assertEqual(qt.ollama_indicator_state("ollama", True, True)[0], "#2e7d32")
