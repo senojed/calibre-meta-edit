@@ -75,6 +75,20 @@ class QtHelperTests(unittest.TestCase):
         )
         self.assertEqual(problems, [])
 
+    def test_ollama_indicator_states(self):
+        import calibre_meta_qt as qt
+        self.assertEqual(qt.ollama_indicator_state("ollama", True, True)[0], "#2e7d32")
+        self.assertEqual(qt.ollama_indicator_state("ollama", False, False)[0], "#c62828")
+        self.assertEqual(qt.ollama_indicator_state("ollama", True, False)[0], "#c62828")
+        self.assertEqual(qt.ollama_indicator_state("anthropic", True, True)[0], "#9e9e9e")
+
+    def test_api_indicator_states(self):
+        import calibre_meta_qt as qt
+        self.assertEqual(qt.api_indicator_state("anthropic", True)[0], "#2e7d32")
+        self.assertEqual(qt.api_indicator_state("openai", False)[0], "#c62828")
+        self.assertEqual(qt.api_indicator_state("ollama", True)[0], "#9e9e9e")
+        self.assertEqual(qt.api_indicator_state("off", False)[0], "#9e9e9e")
+
     def test_book_import_filter_lists_all_supported_formats(self):
         import calibre_meta_qt as qt
 

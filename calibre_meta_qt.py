@@ -805,6 +805,24 @@ def startup_readiness_problems(
     return problems
 
 
+def ollama_indicator_state(provider: str, reachable: bool, model_present: bool) -> tuple[str, str, str]:
+    """(barva, popisek, tooltip) pro Ollama tecku v liste."""
+    if provider != "ollama":
+        return ("#9e9e9e", "Ollama", "Aktivní je jiný AI provider")
+    if reachable and model_present:
+        return ("#2e7d32", "Ollama", "Ollama běží, model stažený")
+    return ("#c62828", "Ollama", "Ollama neběží nebo chybí model")
+
+
+def api_indicator_state(provider: str, key_present: bool) -> tuple[str, str, str]:
+    """(barva, popisek, tooltip) pro API tecku v liste."""
+    if provider not in ("anthropic", "openai"):
+        return ("#9e9e9e", "API", "Aktivní je Ollama nebo AI vypnutá")
+    if key_present:
+        return ("#2e7d32", "API", "Klíč nalezen; funkčnost ověř přes Test AI")
+    return ("#c62828", "API", "Chybí API klíč")
+
+
 def run_import_analysis(
     epub_path: str | Path,
     library: str | Path,
