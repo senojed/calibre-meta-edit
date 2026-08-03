@@ -372,6 +372,27 @@ class TextAndUrlTests(unittest.TestCase):
         self.assertEqual(item.status, "duplicate_warning")
         self.assertEqual(item.duplicates, [duplicate])
 
+    def test_ollama_status_reachable_with_model(self):
+        def fake_get(url, timeout):
+            return '{"models": [{"name": "llama3.1:8b"}, {"name": "qwen2.5:3b"}]}'
+        status = cme.ollama_status("llama3.1:8b", requester=fake_get)
+        self.assertTrue(status.reachable)
+        self.assertTrue(status.model_present)
+
+    def test_ollama_status_reachable_without_model(self):
+        def fake_get(url, timeout):
+            return '{"models": [{"name": "other:1b"}]}'
+        status = cme.ollama_status("llama3.1:8b", requester=fake_get)
+        self.assertTrue(status.reachable)
+        self.assertFalse(status.model_present)
+
+    def test_ollama_status_unreachable(self):
+        def boom(url, timeout):
+            raise OSError("connection refused")
+        status = cme.ollama_status("llama3.1:8b", requester=boom)
+        self.assertFalse(status.reachable)
+        self.assertFalse(status.model_present)
+
     def test_run_multiimport_batch_write_blocks_entire_batch_when_checked_item_is_invalid(self):
         from unittest.mock import Mock
 

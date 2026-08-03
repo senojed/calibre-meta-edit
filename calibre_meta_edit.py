@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, NamedTuple, Sequence
 
 
 # Logger pro diagnostiku (hlavne AI import). Defaultne tichy; appka/CLI mu da handler.
@@ -1503,6 +1503,41 @@ def build_ai_resolver(
         cls = AnthropicAIResolver if provider == "anthropic" else OpenAIAIResolver
         return cls(model, api_key=key, timeout=timeout)
     return DisabledAIResolver()
+
+
+class OllamaStatus(NamedTuple):
+    reachable: bool
+    model_present: bool
+
+
+def _http_get(url: str, timeout: int) -> str:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def ollama_status(
+    model: str,
+    base_url: str = "http://127.0.0.1:11434",
+    timeout: int = 2,
+    requester: Callable[[str, int], str] | None = None,
+) -> OllamaStatus:
+    """Zjisti, jestli Ollama server bezi a jestli ma stazeny dany model.
+
+    Dotaz na /api/tags. `requester` injektovatelny (default urllib GET), aby testy
+    nesly po siti. Kratky timeout, at nezasekne start. Nedostupnost -> vse False.
+    """
+    get = requester or _http_get
+    try:
+        raw = get(f"{base_url}/api/tags", timeout)
+        data = json.loads(raw)
+    except Exception:
+        return OllamaStatus(False, False)
+    names = [
+        str(entry.get("name", ""))
+        for entry in data.get("models", [])
+        if isinstance(entry, dict)
+    ]
+    return OllamaStatus(True, model.strip() in names)
 
 
 def extract_ai_identity(text: str, resolver: object | None) -> AIBookIdentity:
