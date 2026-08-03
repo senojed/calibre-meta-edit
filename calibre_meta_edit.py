@@ -1495,7 +1495,7 @@ def read_api_key(
     from_env = (environ.get(env_name) or "").strip()
     if from_env:
         return from_env
-    env_path = env_path if env_path is not None else Path(__file__).resolve().parent / ".env"
+    env_path = env_path if env_path is not None else app_data_dir() / ".env"
     return _parse_env_file(env_path).get(env_name, "").strip()
 
 

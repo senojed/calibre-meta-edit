@@ -34,6 +34,18 @@ class QtHelperTests(unittest.TestCase):
         self.assertEqual(qt.ai_test_result_text(False, "Ollama neběží", 1.2), "Nefunguje: Ollama neběží")
         self.assertEqual(qt.ai_test_result_text(False, "", 2.34), "Funguje (~2.3 s)")
 
+    def test_shared_writable_paths_use_app_data_dir(self):
+        import calibre_meta_qt as qt
+        self.assertEqual(qt.shared.SETTINGS_PATH, cme.app_data_dir() / "settings.json")
+        self.assertEqual(qt.shared.BACKUPS_DIR, cme.app_data_dir() / "backups")
+
+    def test_icon_paths_use_app_base_dir(self):
+        import calibre_meta_qt as qt
+        base = cme.app_base_dir()
+        self.assertEqual(qt.ICON_PATH, base / "app_icon.svg")
+        self.assertEqual(qt.ICON_DIR, base / "icons")
+        self.assertEqual(qt.ASSETS_ICON_DIR, base / "assets" / "icons")
+
     def test_startup_readiness_all_ok_ollama(self):
         import calibre_meta_qt as qt
         problems = qt.startup_readiness_problems(
