@@ -1231,6 +1231,69 @@ class QtImportTests(unittest.TestCase):
         self.assertIn("API", window.api_indicator.text())
         app.processEvents()
 
+    def test_run_startup_check_shows_dialog_when_problems(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        shown = {}
+
+        class FakeDialog:
+            def __init__(self, problems, parent=None):
+                shown["problems"] = problems
+
+            def exec(self):
+                shown["exec"] = True
+                return 0
+
+            def dont_show_again(self):
+                return False
+
+        with (
+            patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "ollama", "model": "llama3.1:8b"}}),
+            patch.object(qt.cme, "find_calibredb", return_value=""),
+            patch.object(qt.cme, "ollama_status", return_value=cme.OllamaStatus(False, False)),
+            patch.object(qt, "StartupCheckDialog", FakeDialog),
+        ):
+            window = qt.CalibreMetaQtWindow()
+            window.run_startup_check()
+        self.assertTrue(shown.get("exec"))
+        self.assertTrue(any("Calibre" in p for p in shown["problems"]))
+        app.processEvents()
+
+    def test_run_startup_check_silent_when_ok(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with (
+            patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "off", "model": ""}}),
+            patch.object(qt.cme, "find_calibredb", return_value="C:/calibredb.exe"),
+            patch.object(qt, "StartupCheckDialog") as dialog_class,
+        ):
+            window = qt.CalibreMetaQtWindow()
+            window.run_startup_check()
+        dialog_class.assert_not_called()
+        app.processEvents()
+
+    def test_run_startup_check_respects_hidden_flag(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with (
+            patch.object(qt, "read_app_settings", return_value={"ai": {"provider": "off", "model": ""}, "hide_startup_check": True}),
+            patch.object(qt.cme, "find_calibredb", return_value=""),
+            patch.object(qt, "StartupCheckDialog") as dialog_class,
+        ):
+            window = qt.CalibreMetaQtWindow()
+            window.run_startup_check()
+        dialog_class.assert_not_called()
+        app.processEvents()
+
     def test_qt_imports_when_pyside6_available(self):
         import calibre_meta_qt as qt
 
@@ -2024,6 +2087,25 @@ class PreferencesDialogAITests(unittest.TestCase):
                 dialog.start_ai_test()
 
         self.assertEqual(captured, {"provider": "ollama", "model": "llama-test", "timeout": 42})
+        app.processEvents()
+
+    def test_startup_check_toggle_saves_hide_flag(self):
+        from PySide6.QtWidgets import QApplication
+        import sys
+        import calibre_meta_qt as qt
+
+        app = QApplication.instance() or QApplication(sys.argv)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "settings.json"
+            with patch.object(qt.shared, "SETTINGS_PATH", tmp_path):
+                window = qt.CalibreMetaQtWindow()
+                dialog = qt.PreferencesDialog(window)
+                # Zaskrtnuto = kontrola zapnuta = neschovano. Odskrtnu -> schovat.
+                self.assertTrue(dialog.startup_check_check.isChecked())
+                dialog.startup_check_check.setChecked(False)
+                dialog.save_library()
+                saved = json.loads(tmp_path.read_text(encoding="utf-8"))
+        self.assertTrue(saved["hide_startup_check"])
         app.processEvents()
 
     def test_dialog_starts_clean_and_marks_dirty_on_change(self):

@@ -2268,6 +2268,40 @@ if PYSIDE6_AVAILABLE:
             if summary.ok and summary.attempted > 0:
                 self.accept()
 
+    class StartupCheckDialog(QDialog):
+        """Hlaska pri chybejicich zavislostech + odkazy + 'nezobrazovat priste'."""
+
+        GUIDE_URL = "https://github.com/senojed/calibre-meta-edit#instalace"
+
+        def __init__(self, problems, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setWindowTitle("Kontrola připravenosti")
+            layout = QVBoxLayout(self)
+            items = "".join(f"<li>{p}</li>" for p in problems)
+            body = QLabel(
+                "<b>Než začneš, chybí tohle:</b>"
+                f"<ul>{items}</ul>"
+                "Ke stažení: "
+                "<a href='https://calibre-ebook.com/download'>Calibre</a> · "
+                "<a href='https://ollama.com/download'>Ollama</a> · "
+                f"<a href='{self.GUIDE_URL}'>návod</a>"
+            )
+            body.setTextFormat(Qt.TextFormat.RichText)
+            body.setOpenExternalLinks(True)
+            body.setWordWrap(True)
+            layout.addWidget(body)
+            self.dont_show_check = QCheckBox("Nezobrazovat příště")
+            layout.addWidget(self.dont_show_check)
+            buttons = QHBoxLayout()
+            buttons.addStretch(1)
+            ok = QPushButton("OK")
+            ok.clicked.connect(self.accept)
+            buttons.addWidget(ok)
+            layout.addLayout(buttons)
+
+        def dont_show_again(self) -> bool:
+            return self.dont_show_check.isChecked()
+
     class PreferencesDialog(QDialog):
         """Dialog pro knihovnu a rizikove servisni akce."""
 
@@ -2362,6 +2396,9 @@ if PYSIDE6_AVAILABLE:
             self.ai_key_status_label = QLabel()
             form.addWidget(QLabel("API klic"), 11, 0)
             form.addWidget(self.ai_key_status_label, 11, 1, 1, 3)
+            self.startup_check_check = QCheckBox("Kontrola připravenosti při startu")
+            self.startup_check_check.setChecked(not auto_settings["hide_startup_check"])
+            form.addWidget(self.startup_check_check, 12, 1, 1, 3)
             # Signal az po nastaveni hodnot, jinak by init prepsal ulozeny model defaultem.
             self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_changed)
             self._update_ai_key_status()
@@ -2469,6 +2506,7 @@ if PYSIDE6_AVAILABLE:
             settings["startup_preview"] = self.startup_preview_check.isChecked()
             settings["auto_link_audit"] = self.auto_link_audit_check.isChecked()
             settings["auto_cover_audit"] = self.auto_cover_audit_check.isChecked()
+            settings["hide_startup_check"] = not self.startup_check_check.isChecked()
             ai_raw = {
                 "provider": self.ai_provider_combo.currentText(),
                 "model": self.ai_model_edit.text(),
@@ -2497,6 +2535,7 @@ if PYSIDE6_AVAILABLE:
                 "text_limit": self.ai_text_limit_edit.text(),
                 "timeout": self.ai_timeout_edit.text(),
                 "workers": self.ai_workers_spin.value(),
+                "hide_startup_check": not self.startup_check_check.isChecked(),
             }
 
         def is_dirty(self) -> bool:
@@ -2616,6 +2655,11 @@ if PYSIDE6_AVAILABLE:
                 and os.environ.get("CALIBRE_META_EDIT_TEST") != "1"
             ):
                 schedule_qt_startup_preview(self.run_preview)
+            if (
+                os.environ.get("CALIBRE_META_EDIT_TEST") != "1"
+                and os.environ.get("QT_QPA_PLATFORM") != "offscreen"
+            ):
+                QTimer.singleShot(300, self.run_startup_check)
 
         def _build_ui(self) -> None:
             root = QWidget()
@@ -4437,6 +4481,37 @@ if PYSIDE6_AVAILABLE:
             self._api_state = (provider, key_present)
             self.update_ollama_indicator()
             self.update_api_indicator()
+
+        def run_startup_check(self) -> None:
+            """Pri chybejicich zavislostech aktivniho providera ukaze onboarding hlasku."""
+            settings = read_app_settings()
+            if normalize_auto_settings(settings)["hide_startup_check"]:
+                return
+            ai = normalize_ai_settings(settings)
+            provider = str(ai["provider"])
+            model = str(ai["model"])
+            reachable = model_present = False
+            if provider == "ollama":
+                status = cme.ollama_status(model)
+                reachable, model_present = status.reachable, status.model_present
+            key_present = provider in ("anthropic", "openai") and bool(cme.read_api_key(provider))
+            problems = startup_readiness_problems(
+                calibre_ok=bool(cme.find_calibredb()),
+                provider=provider,
+                ollama_reachable=reachable,
+                model_present=model_present,
+                model=model,
+                key_present=key_present,
+            )
+            if not problems:
+                return
+            dialog = StartupCheckDialog(problems, parent=self)
+            dialog.exec()
+            if dialog.dont_show_again():
+                settings["hide_startup_check"] = True
+                shared.SETTINGS_PATH.write_text(
+                    json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
 
         def update_ollama_indicator(self) -> None:
             provider, reachable, model_present = self._ollama_state
