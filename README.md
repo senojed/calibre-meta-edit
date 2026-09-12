@@ -1,10 +1,21 @@
 # Calibre Meta Edit
 
+> **TL;DR (English):** Windows desktop app (Python/PySide6) for reviewing and
+> fixing book metadata in a [Calibre](https://calibre-ebook.com/) library —
+> matches books against multiple sources, fetches covers, imports EPUB/other
+> formats, and writes back safely (auto-backup, nothing saved without
+> confirmation). AI-assisted title/author detection via local Ollama or a
+> cloud LLM. 741 unit tests. Built for the Czech book market (UI and metadata
+> sources are Czech — [databazeknih.cz](https://databazeknih.cz),
+> [Legie.info](https://legie.info)), so the rest of this README stays in Czech.
+
 Desktopová appka (Windows, Python/Qt) na kontrolu a doplnění metadat knih v
 knihovně [Calibre](https://calibre-ebook.com/). Načte knihy, dohledá k nim
 metadata a obálky z více zdrojů, umí importovat EPUB (a další formáty) a bezpečně
 zapsat výsledek zpět do Calibre. Detekci názvu a autora umí podpořit AI (lokální
 Ollama nebo cloud).
+
+![Hlavní okno](assets/screenshot-main.png)
 
 ## Co umí
 
@@ -46,3 +57,7 @@ python calibre_meta_qt.py
 ## Build vlastního exe
 
 Viz [docs/BUILD.md](docs/BUILD.md) (PyInstaller onedir).
+
+## Licence
+
+[GNU GPLv3](LICENSE).
